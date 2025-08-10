@@ -52,6 +52,7 @@ def sieve(u, v, primes, roots, q, xmax, ymax, threshold):
             r = l
         else:
             r = rnum * pow(rden, -1, l) % l
+
         llog = (l - l // 3).bit_length()
         hits = 0
         if r == l:
@@ -134,9 +135,11 @@ if __name__ == "__main__":
     rs = [(-v * pow(u, -1, l)) % l if u % l else l for l in ls]
 
     t0 = time.monotonic()
-    reports = sieve(u, v, ls, rs, 1000003, 1024, 1024, 90)
+    WIDTH = 1024
+    AREA = 2 * WIDTH ** 2
+    reports = sieve(u, v, ls, rs, 1000003, WIDTH, WIDTH, 90)
     t = time.monotonic() - t0
-    print(f"Sieved {4096 * 4096} in {t:.2f}s")
+    print(f"Sieved {AREA} in {t:.3f}s")
 
     for x, y in reports:
         if math.gcd(x, y) > 1:

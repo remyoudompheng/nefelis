@@ -1,0 +1,91 @@
+// Sieve on rational side.
+//
+// Naïve version: each workgroup handles a row of the sieving region.
+// Each workgroup computes the starting offset of all primes.
+
+#version 450
+
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+
+// Assume that the sieve region width is a valid shared memory size.
+// The sieve region is 0 <= x <= WIDTH and -WIDTH <= y < WIDTH
+#define WIDTH 16384
+
+#ifndef THRESHOLD
+#error THRESHOLD is missing
+#endif
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+// Enumeration of prime base and roots
+layout(binding = 0) readonly buffer Primes { uint primes[]; };
+layout(binding = 1) readonly buffer Roots { int roots[]; };
+layout(binding = 2) readonly buffer QBasis { ivec4 q; };
+layout(binding = 3) coherent buffer Output { ivec2 result[]; };
+#if DEBUG
+layout(binding = 4) coherent buffer Debug { uint qroots[]; };
+#endif
+
+shared uint row[WIDTH / 4];
+
+uint tidx = gl_LocalInvocationID.x;
+int y = int(gl_WorkGroupID.x) - WIDTH;
+
+#include <arith.comp>
+
+void doprime(uint pidx) {
+  const uint p = primes[pidx];
+  const uint logp = findMSB(p);
+  const float pinv = 1.0 / float(p);
+  // FIXME: move to precomputation
+  const int r = int(roots[pidx]);
+  const int rx = (r == p) ? 1 : r;
+  const int ry = (r == p) ? 0 : 1;
+
+  int qx = q.w * rx - q.y * ry;
+  int qy = q.x * ry - q.z * rx;
+  qx = int(modp_float(qx, p, pinv));
+  qy = int(modp_float(qy, p, pinv));
+
+  if (qy == 0) {
+    // FIXME
+    return;
+  }
+  const uint qr = mulmod(qx, invmod(qy, int(p)), p, pinv);
+
+  uint x = mulmod(int(qr), y, p, pinv);
+#if DEBUG
+  if (y == 1337)
+    qroots[pidx] = x;
+#endif
+  while (x < WIDTH) {
+    atomicAdd(row[x / 4], logp << (8 * (x % 4)));
+    x += p;
+  }
+}
+
+void main() {
+  for (uint i = 0; i < row.length(); i += gl_WorkGroupSize.x) {
+    row[i + tidx] = 0;
+  }
+  for (uint pidx = tidx; pidx < primes.length(); pidx += gl_WorkGroupSize.x) {
+    doprime(pidx);
+  }
+  barrier();
+  memoryBarrierShared();
+
+  for (uint i = 0; i < row.length(); i += gl_WorkGroupSize.x) {
+    u8vec4 logs = unpack8(row[i + tidx]);
+    for (uint ii = 0; ii < 4; ii++) {
+      if (logs[ii] > THRESHOLD) {
+        const uint x = 4 * (i + tidx) + ii;
+        const uint ridx = atomicAdd(result[0].x, 1);
+        if (ridx + 1 < result.length())
+          result[1 + ridx] = ivec2(q.x * x + q.y * y, q.z * x + q.w * y);
+      }
+    }
+  }
+}
