@@ -24,17 +24,27 @@ def sieve(u, v, primes, roots, q, threshold):
     mgr = kp.Manager()
     tprimes = mgr.tensor_t(np.array(primes, dtype=np.uint32))
     troots = mgr.tensor_t(np.array(roots, dtype=np.uint32))
+    tqroots = mgr.tensor_t(np.array(roots, dtype=np.uint32))
     tq = mgr.tensor_t(np.array([a, b, c, d], dtype=np.uint32))
     tout = mgr.tensor_t(np.zeros(2 * OUTLEN, dtype=np.int32))
     tdebug = mgr.tensor_t(np.array(roots, dtype=np.uint32))
 
-    shader1 = shader("sieve_rat_2sieve", {"THRESHOLD": threshold, "DEBUG": 1})
-    algo = mgr.algorithm(
-        [tprimes, troots, tq, tout, tdebug], shader1, (2 * WIDTH, 1, 1)
+    if DEBUG_ROOTS:
+        extra = {"DEBUG": 1}
+    else:
+        extra = {}
+    shader1 = shader("sieve_rat_1roots")
+    shader2 = shader("sieve_rat_2sieve", {"THRESHOLD": threshold} | extra)
+    algo1 = mgr.algorithm(
+        [tprimes, troots, tq, tqroots], shader1, (len(primes) // 256 + 1, 1, 1)
+    )
+    algo2 = mgr.algorithm(
+        [tprimes, tqroots, tq, tout, tdebug], shader2, (2 * WIDTH, 1, 1)
     )
     seq = mgr.sequence(total_timestamps=16)
     seq.record(kp.OpTensorSyncDevice([tprimes, troots, tq]))
-    seq.record(kp.OpAlgoDispatch(algo))
+    seq.record(kp.OpAlgoDispatch(algo1))
+    seq.record(kp.OpAlgoDispatch(algo2))
     seq.record(kp.OpTensorSyncLocal([tout, tdebug]))
     seq.eval()
 

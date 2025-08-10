@@ -22,11 +22,11 @@ layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
 // Enumeration of prime base and roots
 layout(binding = 0) readonly buffer Primes { uint primes[]; };
-layout(binding = 1) readonly buffer Roots { int roots[]; };
+layout(binding = 1) readonly buffer QRoots { int qroots[]; };
 layout(binding = 2) readonly buffer QBasis { ivec4 q; };
 layout(binding = 3) coherent buffer Output { ivec2 result[]; };
 #if DEBUG
-layout(binding = 4) coherent buffer Debug { uint qroots[]; };
+layout(binding = 4) coherent buffer Debug { uint debug[]; };
 #endif
 
 shared uint row[WIDTH / 4];
@@ -40,21 +40,9 @@ void doprime(uint pidx) {
   const uint p = primes[pidx];
   const uint logp = findMSB(p);
   const float pinv = 1.0 / float(p);
-  // FIXME: move to precomputation
-  const int r = int(roots[pidx]);
-  const int rx = (r == p) ? 1 : r;
-  const int ry = (r == p) ? 0 : 1;
 
-  int qx = q.w * rx - q.y * ry;
-  int qy = q.x * ry - q.z * rx;
-  qx = int(modp_float(qx, p, pinv));
-  qy = int(modp_float(qy, p, pinv));
-
-  if (qy == 0) {
-    // FIXME
-    return;
-  }
-  const uint qr = mulmod(qx, invmod(qy, int(p)), p, pinv);
+  const uint qr = qroots[pidx];
+  if (qr == p) return; // FIXME
 
   uint x = mulmod(int(qr), y, p, pinv);
 #if DEBUG
