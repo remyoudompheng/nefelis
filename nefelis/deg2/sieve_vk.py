@@ -54,6 +54,7 @@ class Siever:
 
     def sieve(self, q):
         u, v = self.poly
+        assert u % q != 0
         qr = (-v * pow(u, -1, q)) % q
         qred = flint.fmpz_mat([[q, 0], [qr, 1]]).lll()
         a, c, b, d = qred.entries()

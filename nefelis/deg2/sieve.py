@@ -19,6 +19,7 @@ The GPU takes care of the lattice sieve for a given special q:
 
 import argparse
 import json
+import logging
 import math
 import multiprocessing
 import multiprocessing.dummy
@@ -76,9 +77,12 @@ PARAMS = [
     (160, 100000, 18, 17, 20, 15, 100),
     (180, 150000, 19, 17, 25, 15, 200),
     (200, 200000, 19, 18, 25, 15, 500),
-    (220, 300000, 20, 18, 30, 15, 1000),
-    (240, 500000, 20, 19, 30, 15, 2000),
-    (260, 800000, 21, 19, 30, 15, 3500),
+    (220, 300000, 20, 18, 30, 15, 1500),
+    # 2 large primes
+    (240, 300000, 21, 20, 45, 15, 3000),
+    (260, 500000, 22, 20, 50, 15, 10000),
+    (280, 1_000_000, 23, 21, 55, 15, 25000),
+    (300, 2_000_000, 25, 23, 55, 15, 50000),
 ]
 
 
@@ -94,6 +98,7 @@ def main():
 
     N = args.N
     datadir = pathlib.Path(args.OUTDIR)
+    datadir.mkdir(exist_ok=True)
 
     ell = N // 2  # FIXME: support user ell
 
@@ -112,7 +117,7 @@ def main():
 
     ls = sieve_vk.smallprimes(B1)
     rs = [(-v * pow(u, -1, l)) % l if u % l else l for l in ls]
-    qs = [_q for _q in sieve_vk.smallprimes(10 * qmin) if _q >= qmin]
+    qs = [_q for _q in sieve_vk.smallprimes(10 * qmin) if _q >= qmin and u % _q != 0]
 
     LOGAREA = (qs[-1] * sieve_vk.WIDTH**2).bit_length()
     THRESHOLD = N.bit_length() // 2 + LOGAREA // 2 - COFACTOR_BITS
@@ -122,7 +127,7 @@ def main():
     )
     factorpool = multiprocessing.dummy.Pool(8)
 
-    with open(datadir / f"args.json", "w") as w:
+    with open(datadir / "args.json", "w") as w:
         z = int((-v * pow(u, -1, N)) % N)
         json.dump(
             {
@@ -135,8 +140,9 @@ def main():
         )
     AREA = 2 * sieve_vk.WIDTH**2
     seen = set()
-    relf = open(datadir / f"nefelis.rels", "w", buffering=1)
+    relf = open(datadir / "relations.sieve", "w", buffering=1)
     total = 0
+    duplicates = 0
 
     t0 = time.monotonic()
     total_area = 0
@@ -159,6 +165,12 @@ def main():
             values.append((x, y, vf, vg, B2f, B2g))
 
         for x, y, facf, facg in factorpool.imap(factor_fg, values):
+            # Normalize sign
+            if y < 0:
+                x, y = -x, -y
+            if (x, y) in seen:
+                duplicates += 1
+                continue
             # Ignore too large primes
             if facf is None:
                 continue
@@ -169,8 +181,6 @@ def main():
             seenf.update(facf)
             seeng.update(facg)
             seen.add((x, y))
-            if y < 0:
-                x, y = -x, -y
             relf.write(f"{x},{y}:{str_facg}:{str_facf}\n")
             nrels += 1
         print(f"# Found {nrels} relations for {q=} (time {dt:.3f}s)", file=relf)
@@ -183,17 +193,20 @@ def main():
         print(
             f"Sieved q={q} area {AREA} in {dt:.3f}s (speed {total_area / elapsed / 1e9:.3f}G/s): {len(reports)} reports {nrels} relations, {Qcount}/{Kcount} Q/K primes, total {total}"
         )
+        if total > 1.1 * Qcount + Kcount:
+            logging.info("Enough relations")
+            break
 
     # CADO-NFS requires that the relation file ends with \n
     # Print statistics in CADO-compatible format
-    elapsed_per_q = elapsed / total_q
+    # elapsed_per_q = elapsed / total_q
     rels_per_q = total / total_q
     rels_per_t = total / elapsed
     relf.write(f"# Total elapsed time {elapsed:.3f}s\n")
     relf.write(
         f"# Total {total} reports [{1 / rels_per_t:.3g}s/r, {rels_per_q:.3f}r/sq] in {elapsed:.2f} elapsed s\n"
     )
-    print(len(seen), "relations", total - len(seen), "duplicates")
+    print(total, "relations", duplicates, "duplicates")
     relf.close()
 
 

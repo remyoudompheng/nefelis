@@ -1,0 +1,303 @@
+"""
+Linear algebra for the Gaussian Integer method.
+
+The input is a list of relations:
+    product(pi^ai) = product(li^bi)
+where pi is a list of rational primes
+    li is a list of ideals of a quadratic field
+
+For a complex quadratic number field, there are no
+Schirokauer maps, and non-principal ideals become principal
+when taking h-th powers where h is the class number.
+
+If the ell argument is larger than h and larger than
+the order of the unit group (2, 4, 6), then we can ignore
+units, and process non-principal ideals as if they were principal.
+
+The basis will be as follows:
+    - all integers pi and all prime norms |li|
+    - all "positive" ideals li (represented by integer -li)
+
+Negative ideals conjugate(li) will be represented as |li|/li
+"""
+
+import json
+import logging
+import pathlib
+import random
+import sys
+
+import flint
+import numpy as np
+
+from nefelis.deg2 import filter
+from nefelis.deg2.linalg_impl import SpMV
+
+
+def read_relations(filepath: str | pathlib.Path):
+    with open(filepath) as f:
+        for line in f:
+            if line.startswith("#"):
+                continue
+            xy, facg_, facf_ = line.strip().split(":")
+            x, _, y = xy.partition(",")
+            facg = [int(w, 16) for w in facg_.split(",")]
+            facf = [int(w, 16) for w in facf_.split(",")]
+            yield int(x), int(y), facg, facf
+
+
+def to_sparse_matrix(rels):
+    """
+    Converts a list of relations into a representation suitable
+    for sparse matrix kernels.
+
+    The matrix rows may correspond to an unspecified permutation
+    of input relations.
+    """
+    stats = {}
+    for r in rels:
+        for p in r:
+            if r[p]:
+                stats[p] = stats.get(p, 0) + abs(r[p])
+    # Find densest columns above 33% fill ratio
+    dense_counts = []
+    for p, count in stats.items():
+        if count > len(rels) // 3:
+            dense_counts.append((count, p))
+    dense_counts.sort()
+    dense_p = sorted([p for _, p in dense_counts[len(dense_counts) % 4 :]])
+    assert len(dense_p) % 4 == 0
+
+    dense_weight = sum(stats[p] for p in dense_p) / float(len(rels))
+    logging.debug(f"Dense columns for {len(dense_p)} primes {dense_p}")
+    logging.info(
+        f"Dense block has {len(dense_p)} columns, average weight {dense_weight:.1f} per row"
+    )
+    sparse_weight = sum(
+        sum(abs(e) for p, e in r.items() if p not in dense_p) for r in rels
+    ) / float(len(rels))
+    logging.info(f"Sparse block has avg weight {sparse_weight:.1f} per row")
+    norm_plus = max(sum(abs(e) for p, e in r.items() if e > 0) for r in rels)
+    norm_minus = max(sum(abs(e) for p, e in r.items() if e < 0) for r in rels)
+
+    # To reduce divergence, we sort rows by the number of ±signs in the sparse part.
+    dense_set = frozenset(dense_p)
+    sign_rels = []
+    for r in rels:
+        nplus, nminus = 0, 0
+        for _p, _e in r.items():
+            if _p not in dense_p:
+                if _e > 0:
+                    nplus += 1
+                else:
+                    nminus += 1
+        sign_rels.append((nplus, nminus, r))
+    sign_rels.sort(key=lambda t: t[:2])
+    # print([(x, y) for x, y, z in sign_rels])
+    rels = [_r for _, _, _r in sign_rels]
+
+    # Dense coefficients must fit in int8 type
+    for r in rels:
+        for p in dense_p:
+            if p in r:
+                assert abs(r[p]) < 127
+
+    dense = np.zeros((len(rels), len(dense_p)), dtype=np.int8)
+    for i, r in enumerate(rels):
+        dense[i, :] = [r.get(p, 0) for p in dense_p]
+    dense_norm = max(np.sum(np.abs(dense[i, :])) for i in range(len(rels)))
+    logging.info(f"Dense block has max row norm {dense_norm}")
+
+    primes = dense_p + sorted(p for p in stats if p not in dense_set)
+
+    prime_idx = {p: idx for idx, p in enumerate(primes)}
+    plus = []
+    minus = []
+    for r in rels:
+        row_p, row_m = [], []
+        for p, e in r.items():
+            if p in dense_set:
+                continue
+            idx = prime_idx[p]
+            if e > 0:
+                row_p.extend(e * [idx])
+            else:
+                row_m.extend(-e * [idx])
+        row_p.sort()
+        row_m.sort()
+        plus.append(row_p)
+        minus.append(row_m)
+    return primes, dense, plus, minus, max(norm_plus, norm_minus)
+
+
+def main():
+    workdir = pathlib.Path(sys.argv[1])
+
+    with open(workdir / "args.json") as f:
+        doc = json.load(f)
+        n = doc["n"]
+        z = doc["z"]
+        f = doc["f"]
+        g = doc["g"]
+        # Check polynomials
+        assert sum(fi * z**i for i, fi in enumerate(f)) % n == 0
+        assert sum(gi * z**i for i, gi in enumerate(g)) % n == 0
+
+    # A ideal of K is positive if it corresponds to the first root of f given by FLINT.
+    # Otherwise it is negative.
+    roots_f = {}
+
+    rels = []
+    seen_xy = set()
+    duplicates = 0
+    for x, y, facg, facf in read_relations(workdir / "relations.sieve"):
+        if (x, y) in seen_xy:
+            duplicates += 1
+            continue
+        seen_xy.add((x, y))
+        rel = {}
+        # Sign convention: f(x) / g(x) == 1
+        # z zbar = f(z)
+        # x+yω is divisible by ω-r (norm l) iff x+yr=0 mod l
+        for _l in facf:
+            if _l not in roots_f:
+                roots_f[_l] = flint.nmod_poly(f, _l).roots()[0][0]
+            r = roots_f[_l]
+            if x + y * r == 0:
+                rel[-_l] = rel.get(-_l, 0) + 1
+            else:
+                assert x - y * r == 0
+                rel[_l] = rel.get(_l, 0) + 1
+                rel[-_l] = rel.get(-_l, 0) - 1
+        # u z = g(z)
+        u = g[1]
+        rel[u] = 1
+        for _l in facg:
+            rel[_l] = rel.get(_l, 0) - 1
+        rels.append(rel)
+
+    if duplicates:
+        logging.info(f"{duplicates} duplicate results in input file, ignored")
+
+    rels2, _ = filter.prune(rels, pathlib.Path(workdir))
+    rels3 = filter.filter(rels2, pathlib.Path(workdir))
+    # Truncate to obtain a square matrix
+    dim = len(set(key for r in rels3 for key in r))
+    rels3 = rels3[:dim]
+
+    weight = sum(len(r) for r in rels3)
+    basis, dense, plus, minus, norm = to_sparse_matrix(rels3)
+    dim = len(basis)
+    M = SpMV(dense, plus, minus, basis, weight)
+    ell = n // 2
+    poly = M.wiedemann_big(ell)
+    print("Computed characteristic poly", poly[:10], "...", poly[-10:])
+
+    poly = [ai * pow(poly[-1], -1, ell) % ell for ai in poly]
+    assert any(ai != 0 for ai in poly)
+    assert len(poly) <= dim + 1 and poly[0] == 0, (dim, len(poly), poly[0])
+
+    i0 = next(i for i, ai in enumerate(poly) if ai)
+    logging.info(f"Polynomial is divisible by X^{i0}")
+    wi = [random.randrange(ell) for _ in range(dim)]
+    poly_k = poly[i0:]
+    ker = M.polyeval(wi, ell, poly_k)
+    assert any(k for k in ker)
+
+    # Normalize kernel vector
+    idx0, k0 = next(
+        (idx, ki) for idx, ki in enumerate(ker) if ki != 0 and basis[idx] > 0
+    )
+    k0inv = pow(k0, -1, ell)
+    for i, ki in enumerate(ker):
+        ker[i] = ki * k0inv % ell
+    logging.info(f"Computing logarithms in base {basis[idx0]}")
+    gen = basis[idx0]
+
+    # Validate result
+    prime_idx = {l: idx for idx, l in enumerate(basis)}
+    for r in rels3:
+        assert sum(e * ker[prime_idx[l]] for l, e in r.items()) % ell == 0
+
+    assert len(basis) == len(ker)
+
+    # Build dlog database
+    dlog = {l: v for l, v in zip(basis, ker)}
+    # print(dlog)
+
+    added, nremoved = 0, 0
+    with open(workdir / "relations.removed") as f:
+        for line in f:
+            nremoved += 1
+            l, _, facs = line.partition("=")
+            rel = {
+                int(p): int(e) for p, _, e in (f.partition("^") for f in facs.split())
+            }
+            # Relations from Gaussian elimination are naturally ordered
+            # in a triangular shape.
+            if all(_l in dlog for _l in rel):
+                v = sum(_e * dlog[_l] for _l, _e in rel.items())
+                dlog[int(l)] = v % ell
+                added += 1
+            else:
+                pass
+                # logging.debug(f"incomplete relation for {l}")
+
+    logging.info(f"{added} logarithms deduced from {nremoved} removed relations")
+    logging.info(f"{len(dlog)} primes have known virtual logarithms")
+
+    logging.info("Collecting relations from full sieve results")
+    extra = rels.copy()
+    for iter in range(2, 5):
+        logging.info(f"Running pass {iter} for {len(extra)} remaining relations")
+        remaining = []
+        for rel in extra:
+            news = [l for l in rel if l not in dlog]
+            if len(news) == 0:
+                continue
+            if len(news) == 1:
+                l = news[0]
+                v = sum(_e * dlog[_p] for _p, _e in rel.items() if _p != l)
+                dlog[l] = v * pow(-rel[l], -1, ell) % ell
+            remaining.append(rel)
+        if len(remaining) == len(extra):
+            break
+        extra = remaining
+        logging.info(f"{len(dlog)} primes have known coordinates")
+
+    # Output result in a format similar to CADO
+    # Columns:
+    # prime, 0/1 (g/f), root, dlog
+    dlogs = []
+    coell = (n - 1) // ell
+    for l, v in list(dlog.items()):
+        if l > 0 or l == g[1]:
+            # rational prime
+            if g[1] % l == 0:
+                r = l
+            else:
+                r = -g[0] * pow(g[1], -1, l) % l
+            dlogs.append((l, 0, r, v))
+            # Check logarithm
+            # assert pow(gen, v * coell, n) == pow(l, coell, n), f"{l} != ± {gen}^{v}"
+            if pow(gen, v * coell, n) != pow(l, coell, n):
+                logging.error(f"FAIL {l} != ± {gen}^{v}")
+                del dlog[l]
+        else:
+            l = abs(l)
+            r = int(roots_f[l])
+            dlogs.append((l, 1, r, v))
+            if l in dlog:
+                r2 = l - r
+                v0 = dlog[l]
+                dlogs.append((l, 1, r2, (v0 - v) % ell))
+            # FIXME: check logarithms for non-rational ideals
+
+    with open(workdir / "dlog", "w") as w:
+        for row in sorted(dlogs):
+            w.write(" ".join(str(v) for v in row) + "\n")
+
+
+if __name__ == "__main__":
+    logging.getLogger().setLevel(level=logging.DEBUG)
+    main()
