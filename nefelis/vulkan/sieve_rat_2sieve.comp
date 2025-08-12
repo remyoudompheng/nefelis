@@ -13,6 +13,7 @@
 // Assume that the sieve region width is a valid shared memory size.
 // The sieve region is 0 <= x <= WIDTH and -WIDTH <= y < WIDTH
 #define WIDTH 16384
+#define LOGWIDTH 14
 
 #ifndef THRESHOLD
 #error THRESHOLD is missing
@@ -42,7 +43,8 @@ void doprime(uint pidx) {
   const float pinv = 1.0 / float(p);
 
   const uint qr = qroots[pidx];
-  if (qr == p) return; // FIXME
+  if (qr == p)
+    return; // FIXME
 
   uint x = mulmod(int(qr), y, p, pinv);
 #if DEBUG
@@ -65,10 +67,17 @@ void main() {
   barrier();
   memoryBarrierShared();
 
+  const uint ylog = findMSB(abs(y)) + 1;
   for (uint i = 0; i < row.length(); i += gl_WorkGroupSize.x) {
+    const int xylog = (4 * i < y) ? int(ylog) : findMSB(i) + 3;
     u8vec4 logs = unpack8(row[i + tidx]);
     for (uint ii = 0; ii < 4; ii++) {
-      if (logs[ii] > THRESHOLD) {
+#ifdef DEGREE
+      // Adjust threshold if x,y are small
+      if (int(logs[ii]) - DEGREE * xylog > THRESHOLD - DEGREE * LOGWIDTH) {
+#else
+      if (int(logs[ii]) - xylog > THRESHOLD - LOGWIDTH) {
+#endif
         const uint x = 4 * (i + tidx) + ii;
         const uint ridx = atomicAdd(result[0].x, 1);
         if (ridx + 1 < result.length())
