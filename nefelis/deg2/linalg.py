@@ -46,88 +46,6 @@ def read_relations(filepath: str | pathlib.Path):
             yield int(x), int(y), facg, facf
 
 
-def to_sparse_matrix(rels):
-    """
-    Converts a list of relations into a representation suitable
-    for sparse matrix kernels.
-
-    The matrix rows may correspond to an unspecified permutation
-    of input relations.
-    """
-    stats = {}
-    for r in rels:
-        for p in r:
-            if r[p]:
-                stats[p] = stats.get(p, 0) + abs(r[p])
-    # Find densest columns above 33% fill ratio
-    dense_counts = []
-    for p, count in stats.items():
-        if count > len(rels) // 3:
-            dense_counts.append((count, p))
-    dense_counts.sort()
-    dense_p = sorted([p for _, p in dense_counts[len(dense_counts) % 4 :]])
-    assert len(dense_p) % 4 == 0
-
-    dense_weight = sum(stats[p] for p in dense_p) / float(len(rels))
-    logging.debug(f"Dense columns for {len(dense_p)} primes {dense_p}")
-    logging.info(
-        f"Dense block has {len(dense_p)} columns, average weight {dense_weight:.1f} per row"
-    )
-    sparse_weight = sum(
-        sum(abs(e) for p, e in r.items() if p not in dense_p) for r in rels
-    ) / float(len(rels))
-    logging.info(f"Sparse block has avg weight {sparse_weight:.1f} per row")
-    norm_plus = max(sum(abs(e) for p, e in r.items() if e > 0) for r in rels)
-    norm_minus = max(sum(abs(e) for p, e in r.items() if e < 0) for r in rels)
-
-    # To reduce divergence, we sort rows by the number of ±signs in the sparse part.
-    dense_set = frozenset(dense_p)
-    sign_rels = []
-    for r in rels:
-        nplus, nminus = 0, 0
-        for _p, _e in r.items():
-            if _p not in dense_p:
-                if _e > 0:
-                    nplus += 1
-                else:
-                    nminus += 1
-        sign_rels.append((nplus, nminus, r))
-    sign_rels.sort(key=lambda t: t[:2])
-    # print([(x, y) for x, y, z in sign_rels])
-    rels = [_r for _, _, _r in sign_rels]
-
-    # Dense coefficients must fit in int8 type
-    for r in rels:
-        for p in dense_p:
-            if p in r:
-                assert abs(r[p]) < 127
-
-    dense = np.zeros((len(rels), len(dense_p)), dtype=np.int8)
-    for i, r in enumerate(rels):
-        dense[i, :] = [r.get(p, 0) for p in dense_p]
-    dense_norm = max(np.sum(np.abs(dense[i, :])) for i in range(len(rels)))
-    logging.info(f"Dense block has max row norm {dense_norm}")
-
-    primes = dense_p + sorted(p for p in stats if p not in dense_set)
-
-    prime_idx = {p: idx for idx, p in enumerate(primes)}
-    plus = []
-    minus = []
-    for r in rels:
-        row_p, row_m = [], []
-        for p, e in r.items():
-            if p in dense_set:
-                continue
-            idx = prime_idx[p]
-            if e > 0:
-                row_p.extend(e * [idx])
-            else:
-                row_m.extend(-e * [idx])
-        row_p.sort()
-        row_m.sort()
-        plus.append(row_p)
-        minus.append(row_m)
-    return primes, dense, plus, minus, max(norm_plus, norm_minus)
 
 
 def main():
@@ -185,10 +103,9 @@ def main():
     dim = len(set(key for r in rels3 for key in r))
     rels3 = rels3[:dim]
 
-    weight = sum(len(r) for r in rels3)
-    basis, dense, plus, minus, norm = to_sparse_matrix(rels3)
-    dim = len(basis)
-    M = SpMV(dense, plus, minus, basis, weight)
+    M = SpMV(rels3)
+    basis = M.basis
+    dim = M.dim
     ell = n // 2
     poly = M.wiedemann_big(ell)
     print("Computed characteristic poly", poly[:10], "...", poly[-10:])

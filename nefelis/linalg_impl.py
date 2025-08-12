@@ -26,7 +26,15 @@ class SpMV:
     to explain that following indices belong to another block of size 0xffff
     """
 
-    def __init__(self, dense, plus, minus, basis, weight, gpu_idx=0):
+    def __init__(self, rels: list[dict], gpu_idx=0):
+        """
+        Build internal representation of a sparse matrix where
+        input rows are given as dictionaries.
+
+        Dictionary keys are opaque labels corresponding to matrix columns.
+        """
+        weight = sum(len(r) for r in rels)
+        basis, dense, plus, minus, _norm = to_sparse_matrix(rels)
         dim, dense_n = dense.shape
         assert dim < 65536 * dense_n
         assert (dim * dense_n) % 4 == 0
@@ -227,6 +235,89 @@ class SpMV:
             f"Polyeval completed in {dt:.3f}s (GPU {gpu_dt:.3}s, {flops / 1e9:.2f} GFLOPS, {speed:.1f} SpMV/s)"
         )
         return [from_uvec(vout[i, :]) % l for i in range(dim)]
+
+def to_sparse_matrix(rels):
+    """
+    Converts a list of relations into a representation suitable
+    for sparse matrix kernels.
+
+    The matrix rows may correspond to an unspecified permutation
+    of input relations.
+    """
+    stats = {}
+    for r in rels:
+        for p in r:
+            if r[p]:
+                stats[p] = stats.get(p, 0) + abs(r[p])
+    # Find densest columns above 33% fill ratio
+    dense_counts = []
+    for p, count in stats.items():
+        if count > len(rels) // 3:
+            dense_counts.append((count, p))
+    dense_counts.sort()
+    dense_p = sorted([p for _, p in dense_counts[len(dense_counts) % 4 :]])
+    assert len(dense_p) % 4 == 0
+
+    dense_weight = sum(stats[p] for p in dense_p) / float(len(rels))
+    logging.debug(f"Dense columns for {len(dense_p)} primes {dense_p}")
+    logging.info(
+        f"Dense block has {len(dense_p)} columns, average weight {dense_weight:.1f} per row"
+    )
+    sparse_weight = sum(
+        sum(abs(e) for p, e in r.items() if p not in dense_p) for r in rels
+    ) / float(len(rels))
+    logging.info(f"Sparse block has avg weight {sparse_weight:.1f} per row")
+    norm_plus = max(sum(abs(e) for p, e in r.items() if e > 0) for r in rels)
+    norm_minus = max(sum(abs(e) for p, e in r.items() if e < 0) for r in rels)
+
+    # To reduce divergence, we sort rows by the number of ±signs in the sparse part.
+    dense_set = frozenset(dense_p)
+    sign_rels = []
+    for r in rels:
+        nplus, nminus = 0, 0
+        for _p, _e in r.items():
+            if _p not in dense_p:
+                if _e > 0:
+                    nplus += 1
+                else:
+                    nminus += 1
+        sign_rels.append((nplus, nminus, r))
+    sign_rels.sort(key=lambda t: t[:2])
+    # print([(x, y) for x, y, z in sign_rels])
+    rels = [_r for _, _, _r in sign_rels]
+
+    # Dense coefficients must fit in int8 type
+    for r in rels:
+        for p in dense_p:
+            if p in r:
+                assert abs(r[p]) < 127
+
+    dense = np.zeros((len(rels), len(dense_p)), dtype=np.int8)
+    for i, r in enumerate(rels):
+        dense[i, :] = [r.get(p, 0) for p in dense_p]
+    dense_norm = max(np.sum(np.abs(dense[i, :])) for i in range(len(rels)))
+    logging.info(f"Dense block has max row norm {dense_norm}")
+
+    primes = dense_p + sorted(p for p in stats if p not in dense_set)
+
+    prime_idx = {p: idx for idx, p in enumerate(primes)}
+    plus = []
+    minus = []
+    for r in rels:
+        row_p, row_m = [], []
+        for p, e in r.items():
+            if p in dense_set:
+                continue
+            idx = prime_idx[p]
+            if e > 0:
+                row_p.extend(e * [idx])
+            else:
+                row_m.extend(-e * [idx])
+        row_p.sort()
+        row_m.sort()
+        plus.append(row_p)
+        minus.append(row_m)
+    return primes, dense, plus, minus, max(norm_plus, norm_minus)
 
 
 def to_uvec(x: int, length: int):
