@@ -12,57 +12,81 @@ import flint
 from nefelis.vulkan import shader
 
 DEBUG_ROOTS = False
+DEBUG_TIMINGS = False
 WIDTH = 16384
 OUTLEN = 32768
 
 
-def sieve(u, v, primes, roots, q, threshold):
-    qr = (-v * pow(u, -1, q)) % q
-    qred = flint.fmpz_mat([[q, 0], [qr, 1]]).lll()
-    a, c, b, d = qred.entries()
+class Siever:
+    def __init__(self, u, v, primes, roots, threshold):
+        mgr = kp.Manager()
+        tprimes = mgr.tensor_t(np.array(primes, dtype=np.uint32))
+        troots = mgr.tensor_t(np.array(roots, dtype=np.uint32))
+        tqroots = mgr.tensor_t(np.array(roots, dtype=np.uint32))
+        tq = mgr.tensor_t(np.zeros(4, dtype=np.int32))
+        tout = mgr.tensor_t(np.zeros(2 * OUTLEN, dtype=np.int32))
+        tdebug = mgr.tensor_t(np.array(roots, dtype=np.uint32))
 
-    mgr = kp.Manager()
-    tprimes = mgr.tensor_t(np.array(primes, dtype=np.uint32))
-    troots = mgr.tensor_t(np.array(roots, dtype=np.uint32))
-    tqroots = mgr.tensor_t(np.array(roots, dtype=np.uint32))
-    tq = mgr.tensor_t(np.array([a, b, c, d], dtype=np.uint32))
-    tout = mgr.tensor_t(np.zeros(2 * OUTLEN, dtype=np.int32))
-    tdebug = mgr.tensor_t(np.array(roots, dtype=np.uint32))
+        if DEBUG_ROOTS:
+            extra = {"DEBUG": 1}
+        else:
+            extra = {}
+        shader1 = shader("sieve_rat_1roots")
+        shader2 = shader("sieve_rat_2sieve", {"THRESHOLD": threshold} | extra)
+        algo1 = mgr.algorithm(
+            [tprimes, troots, tq, tqroots], shader1, (len(primes) // 256 + 1, 1, 1)
+        )
+        algo2 = mgr.algorithm(
+            [tprimes, tqroots, tq, tout, tdebug], shader2, (2 * WIDTH, 1, 1)
+        )
 
-    if DEBUG_ROOTS:
-        extra = {"DEBUG": 1}
-    else:
-        extra = {}
-    shader1 = shader("sieve_rat_1roots")
-    shader2 = shader("sieve_rat_2sieve", {"THRESHOLD": threshold} | extra)
-    algo1 = mgr.algorithm(
-        [tprimes, troots, tq, tqroots], shader1, (len(primes) // 256 + 1, 1, 1)
-    )
-    algo2 = mgr.algorithm(
-        [tprimes, tqroots, tq, tout, tdebug], shader2, (2 * WIDTH, 1, 1)
-    )
-    seq = mgr.sequence(total_timestamps=16)
-    seq.record(kp.OpTensorSyncDevice([tprimes, troots, tq]))
-    seq.record(kp.OpAlgoDispatch(algo1))
-    seq.record(kp.OpAlgoDispatch(algo2))
-    seq.record(kp.OpTensorSyncLocal([tout, tdebug]))
-    seq.eval()
+        # Send constants
+        mgr.sequence().record(kp.OpTensorSyncDevice([tprimes, troots])).eval()
 
-    if DEBUG_ROOTS:
-        mgr.sequence().record(kp.OpTensorSyncLocal([tdebug])).eval()
-        for pidx, x in enumerate(tdebug.data()):
-            p = primes[pidx]
-            r = roots[pidx]
-            xx = a * int(x) + b * 1337
-            yy = c * int(x) + d * 1337
-            if r == p:
-                continue
-            assert (xx - r * yy) % p == 0, (p, r)
+        self.mgr = mgr
+        self.primes = primes
+        self.roots = roots
+        self.poly = (u, v)
+        self.tq = tq
+        self.tout = tout
+        self.algo1 = algo1
+        self.algo2 = algo2
 
-    bout = tout.data()
-    # print(bout.reshape((OUTLEN, 2)))
-    outlen = min(bout[0], OUTLEN - 1)
-    return [(int(bout[2 * i]), int(bout[2 * i + 1])) for i in range(1, outlen + 1)]
+    def sieve(self, q):
+        u, v = self.poly
+        qr = (-v * pow(u, -1, q)) % q
+        qred = flint.fmpz_mat([[q, 0], [qr, 1]]).lll()
+        a, c, b, d = qred.entries()
+
+        self.tout.data()[:2].fill(0)
+        self.tq.data()[:] = [a, b, c, d]
+        seq = self.mgr.sequence(total_timestamps=16)
+        seq.record(kp.OpTensorSyncDevice([self.tq, self.tout]))
+        seq.record(kp.OpAlgoDispatch(self.algo1))
+        seq.record(kp.OpAlgoDispatch(self.algo2))
+        seq.record(kp.OpTensorSyncLocal([self.tout]))
+        seq.eval()
+
+        if DEBUG_TIMINGS:
+            ts = seq.get_timestamps()
+            print([t1 - t0 for t0, t1 in zip(ts, ts[1:])])
+
+        if DEBUG_ROOTS:
+            tdebug = self.algo2.get_tensors()[-1]
+            self.mgr.sequence().record(kp.OpTensorSyncLocal([tdebug])).eval()
+            for pidx, x in enumerate(tdebug.data()):
+                p = self.primes[pidx]
+                r = self.roots[pidx]
+                xx = a * int(x) + b * 1337
+                yy = c * int(x) + d * 1337
+                if r == p:
+                    continue
+                assert (xx - r * yy) % p == 0, (p, r)
+
+        bout = self.tout.data()
+        # print(bout.reshape((OUTLEN, 2)))
+        outlen = min(bout[0], OUTLEN - 1)
+        return [(int(bout[2 * i]), int(bout[2 * i + 1])) for i in range(1, outlen + 1)]
 
 
 def smallprimes(B):
@@ -82,8 +106,9 @@ if __name__ == "__main__":
     ls = smallprimes(300_000)
     rs = [(-v * pow(u, -1, l)) % l if u % l else l for l in ls]
 
+    sv = Siever(u, v, ls, rs, 90)
     t0 = time.monotonic()
-    reports = sieve(u, v, ls, rs, 1000003, 90)
+    reports = sv.sieve(1000003)
     t = time.monotonic() - t0
     AREA = 2 * WIDTH**2
     print(f"Sieved {AREA} in {t:.3f}s (speed {AREA / t / 1e9:.3f}G/s)")

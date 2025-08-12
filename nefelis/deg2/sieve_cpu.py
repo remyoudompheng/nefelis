@@ -136,7 +136,7 @@ if __name__ == "__main__":
 
     t0 = time.monotonic()
     WIDTH = 1024
-    AREA = 2 * WIDTH ** 2
+    AREA = 2 * WIDTH**2
     reports = sieve(u, v, ls, rs, 1000003, WIDTH, WIDTH, 90)
     t = time.monotonic() - t0
     print(f"Sieved {AREA} in {t:.3f}s")
