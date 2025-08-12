@@ -30,8 +30,8 @@ import sys
 import flint
 import numpy as np
 
-from nefelis.deg2 import filter
-from nefelis.deg2.linalg_impl import SpMV
+from nefelis import filter
+from nefelis.linalg_impl import SpMV
 
 
 def read_relations(filepath: str | pathlib.Path):

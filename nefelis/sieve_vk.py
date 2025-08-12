@@ -18,7 +18,7 @@ OUTLEN = 32768
 
 
 class Siever:
-    def __init__(self, u, v, primes, roots, threshold):
+    def __init__(self, poly, primes, roots, threshold):
         mgr = kp.Manager()
         tprimes = mgr.tensor_t(np.array(primes, dtype=np.uint32))
         troots = mgr.tensor_t(np.array(roots, dtype=np.uint32))
@@ -46,16 +46,13 @@ class Siever:
         self.mgr = mgr
         self.primes = primes
         self.roots = roots
-        self.poly = (u, v)
+        self.poly = poly
         self.tq = tq
         self.tout = tout
         self.algo1 = algo1
         self.algo2 = algo2
 
-    def sieve(self, q):
-        u, v = self.poly
-        assert u % q != 0
-        qr = (-v * pow(u, -1, q)) % q
+    def sieve(self, q, qr):
         qred = flint.fmpz_mat([[q, 0], [qr, 1]]).lll()
         a, c, b, d = qred.entries()
 

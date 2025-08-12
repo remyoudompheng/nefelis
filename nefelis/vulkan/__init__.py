@@ -69,4 +69,3 @@ def is_discrete_gpu() -> bool:
 def stamp_period() -> int:
     _gpuinfo.load()
     return _gpuinfo.stamp_period
-

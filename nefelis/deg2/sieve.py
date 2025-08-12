@@ -33,7 +33,7 @@ try:
 except ImportError:
     pymqs = None
 
-from nefelis.deg2 import sieve_vk
+from nefelis import sieve_vk
 
 
 def factor_fg(args):
@@ -59,14 +59,15 @@ def factor_fg(args):
 SIEVER = None
 
 
-def worker_init(u, v, ls, rs, threshold):
+def worker_init(poly, ls, rs, threshold):
     global SIEVER
-    SIEVER = sieve_vk.Siever(u, v, ls, rs, threshold)
+    SIEVER = sieve_vk.Siever(poly, ls, rs, threshold)
 
 
-def worker_task(q):
+def worker_task(args):
+    q, qr = args
     t = time.monotonic()
-    reports = SIEVER.sieve(q)
+    reports = SIEVER.sieve(q, qr)
     return q, time.monotonic() - t, reports
 
 
@@ -118,12 +119,13 @@ def main():
     ls = sieve_vk.smallprimes(B1)
     rs = [(-v * pow(u, -1, l)) % l if u % l else l for l in ls]
     qs = [_q for _q in sieve_vk.smallprimes(10 * qmin) if _q >= qmin and u % _q != 0]
+    qrs = [-v * pow(u, -1, q) % q for q in qs]
 
     LOGAREA = (qs[-1] * sieve_vk.WIDTH**2).bit_length()
     THRESHOLD = N.bit_length() // 2 + LOGAREA // 2 - COFACTOR_BITS
 
     sievepool = multiprocessing.Pool(
-        1, initializer=worker_init, initargs=(u, v, ls, rs, THRESHOLD)
+        1, initializer=worker_init, initargs=([v, u], ls, rs, THRESHOLD)
     )
     factorpool = multiprocessing.dummy.Pool(8)
 
@@ -149,7 +151,7 @@ def main():
     total_q = 0
     seenf = set()
     seeng = set()
-    for q, dt, reports in sievepool.imap(worker_task, qs):
+    for q, dt, reports in sievepool.imap(worker_task, list(zip(qs, qrs))):
         nrels = 0
         print(f"# q={q}", file=relf)
         values = []
