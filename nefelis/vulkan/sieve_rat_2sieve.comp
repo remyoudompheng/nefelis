@@ -6,9 +6,8 @@
 #version 450
 
 #extension GL_EXT_control_flow_attributes : require
-#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
-#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
-#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
 
 // Assume that the sieve region width is a valid shared memory size.
 // The sieve region is 0 <= x <= WIDTH and -WIDTH <= y < WIDTH
@@ -34,7 +33,7 @@ int y = int(gl_WorkGroupID.x) - WIDTH;
 
 #include <arith.comp>
 
-void doprime(uint pidx) {
+void doprime(uint pidx, bool small) {
   const uint p = primes[pidx];
   const uint logp = findMSB(p);
   const float pinv = 1.0 / float(p);
@@ -48,9 +47,32 @@ void doprime(uint pidx) {
   if (y == 1337)
     qroots[pidx] = x;
 #endif
+
+  if (x >= WIDTH) return;
+  uint pstride = p;
+  /*
+  if ((y & 1) == 0 && pidx > 2) {
+	  // If y is even, we want only odd x.
+	  if ((x & 1) == 0) x += p;
+	  pstride = 2 * p;
+  }
+  */
+
+  if (small) {
+	  // For small primes, an entire subgroup sieves it.
+	  x += gl_SubgroupInvocationID * pstride;
+	  pstride *= gl_SubgroupSize;
+	  while (x < WIDTH) {
+             atomicAdd(row[x / 4], logp << (8 * (x % 4)));
+             x += pstride;
+	  }
+	  return;
+  }
+
+  // For large primes, each invocation sieves a different prime.
   while (x < WIDTH) {
     atomicAdd(row[x / 4], logp << (8 * (x % 4)));
-    x += p;
+    x += pstride;
   }
 }
 
@@ -58,8 +80,19 @@ void main() {
   for (uint i = 0; i < row.length(); i += gl_WorkGroupSize.x) {
     row[i + tidx] = 0;
   }
-  for (uint pidx = tidx; pidx < primes.length(); pidx += gl_WorkGroupSize.x) {
-    doprime(pidx);
+  barrier();
+  memoryBarrierShared();
+
+  // Tiny primes: we don't sieve them at all.
+  const uint N_TINY = 4;
+  // Small primes
+  const uint N_SMALL = N_TINY + 64;
+  for (uint pidx = N_TINY + gl_SubgroupID; pidx < N_SMALL; pidx += gl_NumSubgroups) {
+	doprime(pidx, true);
+  }
+  // Medium primes
+  for (uint pidx = N_SMALL + tidx; pidx < primes.length(); pidx += gl_WorkGroupSize.x) {
+    doprime(pidx, false);
   }
   barrier();
   memoryBarrierShared();
