@@ -121,7 +121,7 @@ def main():
     qs = [_q for _q in sieve_vk.smallprimes(10 * qmin) if _q >= qmin and u % _q != 0]
     qrs = [-v * pow(u, -1, q) % q for q in qs]
 
-    LOGAREA = (qs[-1] * sieve_vk.WIDTH**2).bit_length()
+    LOGAREA = qs[-1].bit_length() + 2 * I
     THRESHOLD = N.bit_length() // 2 + LOGAREA // 2 - COFACTOR_BITS
 
     sievepool = multiprocessing.Pool(
@@ -140,7 +140,7 @@ def main():
             },
             w,
         )
-    AREA = 2 * sieve_vk.WIDTH**2
+    AREA = 2 ** (2 * I + 1)
     seen = set()
     relf = open(datadir / "relations.sieve", "w", buffering=1)
     total = 0

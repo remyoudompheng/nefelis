@@ -13,12 +13,11 @@ from nefelis.vulkan import shader
 
 DEBUG_ROOTS = False
 DEBUG_TIMINGS = False
-WIDTH = 16384
-OUTLEN = 32768
+OUTLEN = 256 * 1024
 
 
 class Siever:
-    def __init__(self, poly, primes, roots, threshold):
+    def __init__(self, poly, primes, roots, threshold, I=14):
         mgr = kp.Manager()
         tprimes = mgr.tensor_t(np.array(primes, dtype=np.uint32))
         troots = mgr.tensor_t(np.array(roots, dtype=np.uint32))
@@ -31,8 +30,18 @@ class Siever:
             extra = {"DEBUG": 1}
         else:
             extra = {}
+
+        WIDTH = 1 << I
+        defines = {
+            "THRESHOLD": threshold,
+            "DEGREE": len(poly) - 1,
+            "WIDTH": 1 << I,
+            "LOGWIDTH": I,
+        }
+        if DEBUG_ROOTS:
+            defines |= {"DEBUG": 1}
         shader1 = shader("sieve_rat_1roots")
-        shader2 = shader("sieve_rat_2sieve", {"THRESHOLD": threshold} | extra)
+        shader2 = shader("sieve_rat_2sieve", defines)
         algo1 = mgr.algorithm(
             [tprimes, troots, tq, tqroots], shader1, (len(primes) // 256 + 1, 1, 1)
         )
@@ -108,6 +117,7 @@ if __name__ == "__main__":
     t0 = time.monotonic()
     reports = sv.sieve(1000003)
     t = time.monotonic() - t0
+    WIDTH = 16384
     AREA = 2 * WIDTH**2
     print(f"Sieved {AREA} in {t:.3f}s (speed {AREA / t / 1e9:.3f}G/s)")
 

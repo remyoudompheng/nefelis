@@ -236,6 +236,7 @@ class SpMV:
         )
         return [from_uvec(vout[i, :]) % l for i in range(dim)]
 
+
 def to_sparse_matrix(rels):
     """
     Converts a list of relations into a representation suitable

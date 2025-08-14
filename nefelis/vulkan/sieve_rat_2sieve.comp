@@ -12,9 +12,6 @@
 
 // Assume that the sieve region width is a valid shared memory size.
 // The sieve region is 0 <= x <= WIDTH and -WIDTH <= y < WIDTH
-#define WIDTH 16384
-#define LOGWIDTH 14
-
 #ifndef THRESHOLD
 #error THRESHOLD is missing
 #endif

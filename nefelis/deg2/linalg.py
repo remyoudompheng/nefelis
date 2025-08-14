@@ -46,8 +46,6 @@ def read_relations(filepath: str | pathlib.Path):
             yield int(x), int(y), facg, facf
 
 
-
-
 def main():
     workdir = pathlib.Path(sys.argv[1])
 
