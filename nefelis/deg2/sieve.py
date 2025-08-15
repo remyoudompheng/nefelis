@@ -45,7 +45,7 @@ def factor_fg(args):
         for _l, _e in flint.fmpz(vf).factor():
             facf += _e * [int(_l)]
     if any(_f.bit_length() > B2f for _f in facf):
-        return x, y, None, None
+        return None
 
     facg = []
     if pymqs is not None:
@@ -53,15 +53,18 @@ def factor_fg(args):
     else:
         for _l, _e in flint.fmpz(vg).factor():
             facg += _e * [int(_l)]
+    if any(_l.bit_length() > B2g for _l in facg):
+        return None
+
     return x, y, facf, facg
 
 
 SIEVER = None
 
 
-def worker_init(poly, ls, rs, threshold):
+def worker_init(poly, ls, rs, threshold, I):
     global SIEVER
-    SIEVER = sieve_vk.Siever(poly, ls, rs, threshold)
+    SIEVER = sieve_vk.Siever(poly, ls, rs, threshold, I)
 
 
 def worker_task(args):
@@ -97,6 +100,8 @@ def main():
     argp.add_argument("OUTDIR")
     args = argp.parse_args()
 
+    logging.getLogger().setLevel(level=logging.DEBUG)
+
     N = args.N
     datadir = pathlib.Path(args.OUTDIR)
     datadir.mkdir(exist_ok=True)
@@ -122,12 +127,12 @@ def main():
     qrs = [-v * pow(u, -1, q) % q for q in qs]
 
     LOGAREA = qs[-1].bit_length() + 2 * I
-    THRESHOLD = N.bit_length() // 2 + LOGAREA // 2 - COFACTOR_BITS
+    THRESHOLD = N.bit_length() // 2 + LOGAREA // 2 - qs[-1].bit_length() - COFACTOR_BITS
 
     sievepool = multiprocessing.Pool(
-        1, initializer=worker_init, initargs=([v, u], ls, rs, THRESHOLD)
+        1, initializer=worker_init, initargs=([v, u], ls, rs, THRESHOLD, I)
     )
-    factorpool = multiprocessing.dummy.Pool(8)
+    factorpool = multiprocessing.Pool(8)
 
     with open(datadir / "args.json", "w") as w:
         z = int((-v * pow(u, -1, N)) % N)
@@ -163,23 +168,21 @@ def main():
             # Output in Cado format
             # x,y:(factors of g(x) in hex):(factors of f(x) in hex)
             vf = abs(x * x + 2 * y * y)
-            vg = abs(u * x + v * y)
+            vg = abs((u * x + v * y) // q)
             values.append((x, y, vf, vg, B2f, B2g))
 
-        for x, y, facf, facg in factorpool.imap(factor_fg, values):
+        for item in factorpool.imap(factor_fg, values, chunksize=32):
+            if item is None:
+                continue
+            x, y, facf, facg = item
             # Normalize sign
             if y < 0:
                 x, y = -x, -y
             if (x, y) in seen:
                 duplicates += 1
                 continue
-            # Ignore too large primes
-            if facf is None:
-                continue
-            if any(_l.bit_length() > B2g for _l in facg):
-                continue
             str_facf = ",".join(f"{_l:x}" for _l in facf)
-            str_facg = ",".join(f"{_l:x}" for _l in facg)
+            str_facg = ",".join(f"{_l:x}" for _l in facg + [q])
             seenf.update(facf)
             seeng.update(facg)
             seen.add((x, y))
@@ -208,7 +211,7 @@ def main():
     relf.write(
         f"# Total {total} reports [{1 / rels_per_t:.3g}s/r, {rels_per_q:.3f}r/sq] in {elapsed:.2f} elapsed s\n"
     )
-    print(total, "relations", duplicates, "duplicates")
+    print(total, "relations", duplicates, f"duplicates in {elapsed:.3f}s")
     relf.close()
 
 
