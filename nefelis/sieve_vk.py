@@ -2,6 +2,7 @@
 Lattice sieve using Vulkan Compute shaders
 """
 
+import logging
 import math
 import time
 
@@ -24,7 +25,6 @@ class Siever:
         tqroots = mgr.tensor_t(np.array(roots, dtype=np.uint32))
         tq = mgr.tensor_t(np.zeros(4, dtype=np.int32))
         tout = mgr.tensor_t(np.zeros(2 * OUTLEN, dtype=np.int32))
-        tdebug = mgr.tensor_t(np.array(roots, dtype=np.uint32))
 
         if DEBUG_ROOTS:
             extra = {"DEBUG": 1}
@@ -32,21 +32,48 @@ class Siever:
             extra = {}
 
         WIDTH = 1 << I
+        WGROWS = 32
+        N_WG = 2 * WIDTH // WGROWS
+
         defines = {
             "THRESHOLD": threshold,
             "DEGREE": len(poly) - 1,
             "WIDTH": 1 << I,
             "LOGWIDTH": I,
+            "WGROWS": WGROWS,
         }
+
+        if primes[-1] > 4 * WIDTH:
+            # Manage huge primes
+            hugeidx = next(pidx for pidx, p in enumerate(primes) if p > 2 * WIDTH)
+            hugep = primes[hugeidx]
+            avg_bucket = WIDTH * (math.log(math.log(primes[-1]) / math.log(hugep)))
+            bucket = int(1.1 * avg_bucket / 8 + 1) * 8
+        
+            defines |= {
+                    "HUGE_PRIME": hugeidx,
+                    "BUCKET_SIZE": bucket,
+            }
+            thuge = mgr.tensor_t(np.zeros(N_WG * bucket * (WGROWS - 1), dtype=np.uint16).view(np.uint32))
+
+            memhuge = thuge.size() * 4
+            logging.info(f"Sieving with huge primes (primes[{hugeidx}]={hugep}, bucket size {bucket}, memory {memhuge>>20}MiB)")
+        else:
+            thuge = mgr.tensor_t(np.zeros(1, dtype=np.int32))
+
         if DEBUG_ROOTS:
             defines |= {"DEBUG": 1}
+            tdebug = mgr.tensor_t(np.array(roots, dtype=np.uint32))
+        else:
+            tdebug = mgr.tensor_t(np.zeros(1, dtype=np.int32))
+
         shader1 = shader("sieve_rat_1roots")
         shader2 = shader("sieve_rat_2sieve", defines)
         algo1 = mgr.algorithm(
             [tprimes, troots, tq, tqroots], shader1, (len(primes) // 256 + 1, 1, 1)
         )
         algo2 = mgr.algorithm(
-            [tprimes, tqroots, tq, tout, tdebug], shader2, (2 * WIDTH, 1, 1)
+            [tprimes, tqroots, tq, tout, thuge, tdebug], shader2, (N_WG, 1, 1)
         )
 
         # Send constants
@@ -60,6 +87,7 @@ class Siever:
         self.tout = tout
         self.algo1 = algo1
         self.algo2 = algo2
+        self.defines = defines
 
     def sieve(self, q, qr):
         qred = flint.fmpz_mat([[q, 0], [qr, 1]]).lll()

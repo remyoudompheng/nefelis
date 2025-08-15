@@ -15,6 +15,14 @@
 #error THRESHOLD is missing
 #endif
 
+#ifndef DEGREE
+#define DEGREE 1
+#endif
+
+#ifndef WGROWS
+#error missing WGROWS
+#endif
+
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
 // Enumeration of prime base and roots
@@ -22,18 +30,30 @@ layout(binding = 0) readonly buffer Primes { uint primes[]; };
 layout(binding = 1) readonly buffer QRoots { int qroots[]; };
 layout(binding = 2) readonly buffer QBasis { ivec4 q; };
 layout(binding = 3) coherent buffer Output { ivec2 result[]; };
+// Scratch buffers for very large primes
+// Each workgroup will handle WGROWS rows.
+#ifdef HUGE_PRIME
+layout(binding = 4) coherent buffer Huge { uint16_t huges[]; };
+#endif
+
 #if DEBUG
-layout(binding = 4) coherent buffer Debug { uint debug[]; };
+layout(binding = 5) coherent buffer Debug { uint debug[]; };
 #endif
 
 shared uint row[WIDTH / 4];
 
 uint tidx = gl_LocalInvocationID.x;
-int y = int(gl_WorkGroupID.x) - WIDTH;
+int y0 = int(gl_WorkGroupID.x) * WGROWS - WIDTH;
+
+#ifdef HUGE_PRIME
+// Start of huge buffers
+uint huge0 = gl_WorkGroupID.x * (WGROWS - 1) * BUCKET_SIZE;
+shared uint hugelen[WGROWS - 1];
+#endif
 
 #include <arith.comp>
 
-void doprime(uint pidx, bool small) {
+void doprime(uint pidx, int y, bool small) {
   const uint p = primes[pidx];
   const uint logp = findMSB(p);
   const float pinv = 1.0 / float(p);
@@ -48,25 +68,26 @@ void doprime(uint pidx, bool small) {
     qroots[pidx] = x;
 #endif
 
-  if (x >= WIDTH) return;
+  if (x >= WIDTH)
+    return;
   uint pstride = p;
   /*
   if ((y & 1) == 0 && pidx > 2) {
-	  // If y is even, we want only odd x.
-	  if ((x & 1) == 0) x += p;
-	  pstride = 2 * p;
+          // If y is even, we want only odd x.
+          if ((x & 1) == 0) x += p;
+          pstride = 2 * p;
   }
   */
 
   if (small) {
-	  // For small primes, an entire subgroup sieves it.
-	  x += gl_SubgroupInvocationID * pstride;
-	  pstride *= gl_SubgroupSize;
-	  while (x < WIDTH) {
-             atomicAdd(row[x / 4], logp << (8 * (x % 4)));
-             x += pstride;
-	  }
-	  return;
+    // For small primes, an entire subgroup sieves it.
+    x += gl_SubgroupInvocationID * pstride;
+    pstride *= gl_SubgroupSize;
+    while (x < WIDTH) {
+      atomicAdd(row[x / 4], logp << (8 * (x % 4)));
+      x += pstride;
+    }
+    return;
   }
 
   // For large primes, each invocation sieves a different prime.
@@ -76,43 +97,119 @@ void doprime(uint pidx, bool small) {
   }
 }
 
-void main() {
-  for (uint i = 0; i < row.length(); i += gl_WorkGroupSize.x) {
-    row[i + tidx] = 0;
+#ifdef HUGE_PRIME
+void prepare_huge(uint pidx) {
+  const uint p = primes[pidx];
+  const uint logp = findMSB(p);
+  // We store logp/2 in the upper bits of the huge buffer.
+  const uint logp_bits = clamp((logp - LOGWIDTH)/ 2, 0, 65536 / WIDTH);
+  const float pinv = 1.0 / float(p);
+
+  const uint qr = qroots[pidx];
+  if (qr == p)
+    return; // FIXME
+
+  uint x = mulmod(int(qr), y0, p, pinv);
+  // Fill 1st row now
+  if (x < WIDTH)
+    atomicAdd(row[x / 4], logp << (8 * (x % 4)));
+  for (uint j = 0; j < WGROWS - 1; j++) {
+    x += qr;
+    if (x >= p)
+      x -= p;
+    if (x < WIDTH) {
+      // FIXME: avoid bank conflict (j is uniform)
+      const uint hidx = atomicAdd(hugelen[j], 1);
+      huges[huge0 + j * BUCKET_SIZE + hidx] = uint16_t(x + WIDTH * logp_bits);
+    }
   }
-  barrier();
-  memoryBarrierShared();
+}
+
+void dohuge(int y) {
+  const int j = y - y0 - 1;
+  const uint bidx0 = huge0 + j * BUCKET_SIZE;
+  const uint blen = hugelen[j];
+  for (uint i = 0; i < blen; i += gl_WorkGroupSize.x) {
+    if (i + tidx < blen) {
+      uint x = huges[bidx0 + i + tidx];
+      const uint logp = LOGWIDTH + 2 * (x / WIDTH);
+      x %= WIDTH;
+      atomicAdd(row[x / 4], logp << (8 * (x % 4)));
+    }
+  }
+}
+#endif
+
+void dorow(int y) {
+  if (y0 > WIDTH)
+    return;
 
   // Tiny primes: we don't sieve them at all.
   const uint N_TINY = 4;
   // Small primes
   const uint N_SMALL = N_TINY + 64;
-  for (uint pidx = N_TINY + gl_SubgroupID; pidx < N_SMALL; pidx += gl_NumSubgroups) {
-	doprime(pidx, true);
+  for (uint pidx = N_TINY + gl_SubgroupID; pidx < N_SMALL;
+       pidx += gl_NumSubgroups) {
+    doprime(pidx, y, true);
   }
   // Medium primes
-  for (uint pidx = N_SMALL + tidx; pidx < primes.length(); pidx += gl_WorkGroupSize.x) {
-    doprime(pidx, false);
+#ifdef HUGE_PRIME
+  const uint medium_end = HUGE_PRIME;
+#else
+  const uint medium_end = primes.length();
+#endif
+  for (uint pidx = N_SMALL + tidx; pidx < medium_end;
+       pidx += gl_WorkGroupSize.x) {
+    doprime(pidx, y, false);
   }
+  // Huge primes
+#ifdef HUGE_PRIME
+  if (y == y0) {
+    for (uint pidx = HUGE_PRIME + tidx; pidx < primes.length();
+         pidx += gl_WorkGroupSize.x)
+      prepare_huge(pidx);
+    barrier();
+    memoryBarrier();
+  } else {
+    dohuge(y);
+  }
+#endif
   barrier();
   memoryBarrierShared();
 
   const uint ylog = findMSB(abs(y)) + 1;
   for (uint i = 0; i < row.length(); i += gl_WorkGroupSize.x) {
     const int xylog = (4 * i < y) ? int(ylog) : findMSB(i) + 3;
-    u8vec4 logs = unpack8(row[i + tidx]);
+    u8vec4 logs = unpack8(atomicExchange(row[i + tidx], 0));
     for (uint ii = 0; ii < 4; ii++) {
-#ifdef DEGREE
       // Adjust threshold if x,y are small
       if (int(logs[ii]) - DEGREE * xylog > THRESHOLD - DEGREE * LOGWIDTH) {
-#else
-      if (int(logs[ii]) - xylog > THRESHOLD - LOGWIDTH) {
-#endif
         const uint x = 4 * (i + tidx) + ii;
         const uint ridx = atomicAdd(result[0].x, 1);
         if (ridx + 1 < result.length())
           result[1 + ridx] = ivec2(q.x * x + q.y * y, q.z * x + q.w * y);
       }
     }
+  }
+
+  barrier();
+  memoryBarrierShared();
+}
+
+void main() {
+  for (uint i = 0; i < row.length(); i += gl_WorkGroupSize.x) {
+    row[i + tidx] = 0;
+  }
+
+#ifdef HUGE_PRIME
+  if (tidx < hugelen.length())
+    hugelen[tidx] = 0;
+#endif
+
+  barrier();
+  memoryBarrierShared();
+
+  for (int j = 0; j < WGROWS; j++) {
+    dorow(y0 + j);
   }
 }
