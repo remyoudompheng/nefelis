@@ -1,9 +1,9 @@
 """
-Sieve for the polynomial x^3+2
+Sieve for the polynomial x^3-2
 
 Notations:
     N a prime modulus
-    f(x) = x^3 + 2
+    f(x) = x^3 - 2
     g(x) = A x^2 + B x + C
 
 We assume that B^2 - 4AC < 0 (A > 0 and C > 0)
@@ -98,8 +98,8 @@ def main():
 
     B1, B2g, B2f, COFACTOR_BITS, I, qmin = get_params(N)
 
-    r = pow(-2, (2 * N - 1) // 3, N)
-    assert (r**3 + 2) % N == 0
+    r = pow(2, (2 * N - 1) // 3, N)
+    assert (r**3 - 2) % N == 0
     m = flint.fmpz_mat([[N, 0, 0], [int(r), -1, 0], [int(r * r), 0, -1]]).lll()
     print(m)
     g = None
@@ -141,7 +141,7 @@ def main():
         json.dump(
             {
                 "n": N,
-                "f": [2, 0, 0, 1],
+                "f": [-2, 0, 0, 1],
                 "g": g,
                 "z": int(r),
             },
@@ -169,7 +169,7 @@ def main():
             # print(f"{x}+{y}i", flint.fmpz(value).factor())
             # Output in Cado format
             # x,y:(factors of g(x) in hex):(factors of f(x) in hex)
-            vf = abs(x * x * x + 2 * y * y * y)
+            vf = abs(x * x * x - 2 * y * y * y)
             vg = abs(A * x * x + B * x * y + C * y * y)
             values.append((x, y, vf, vg, B2f, B2g))
 

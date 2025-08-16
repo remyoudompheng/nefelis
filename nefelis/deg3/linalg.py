@@ -1,28 +1,21 @@
 """
-Linear algebra for the Gaussian Integer method.
+Linear algebra for degree 3 Joux-Lercier (without Schirokauer maps)
 
 The input is a list of relations:
-    product(pi^ai) = product(li^bi)
-where pi is a list of rational primes
-    li is a list of ideals of a quadratic field
+    u^a product(ci^ai) = product(qi^bi)
+where ci are prime ideals in a cubic field
+      u is a fundamental unit
+      qi are prime ideals of a quadratic field
 
-For a complex quadratic number field, there are no
-Schirokauer maps, and non-principal ideals become principal
-when taking h-th powers where h is the class number.
-
-If the ell argument is larger than h and larger than
-the order of the unit group (2, 4, 6), then we can ignore
-units, and process non-principal ideals as if they were principal.
-
-The basis will be as follows:
-    - all integers pi and all prime norms |li|
-    - all "positive" ideals li (represented by integer -li)
-
-Negative ideals conjugate(li) will be represented as |li|/li
+In this subdirectory, we focus on the case where the cubic
+field has class number 1 and only 1 real root (the unit group
+has rank 1). In this case, we can replace the Schirokauer map
+by an explicit factorization of algebraic numbers.
 """
 
 import json
 import logging
+import math
 import pathlib
 import random
 import sys
@@ -31,6 +24,9 @@ import flint
 
 from nefelis import filter
 from nefelis.linalg_impl import SpMV
+from nefelis.deg3.cubic import CubicField
+
+DEBUG_RELS = False
 
 
 def read_relations(filepath: str | pathlib.Path):
@@ -58,37 +54,58 @@ def main():
         assert sum(fi * z**i for i, fi in enumerate(f)) % n == 0
         assert sum(gi * z**i for i, gi in enumerate(g)) % n == 0
 
-    # A ideal of K is positive if it corresponds to the first root of f given by FLINT.
-    # Otherwise it is negative.
-    roots_f = {}
-
     rels = []
     seen_xy = set()
     duplicates = 0
+    Kf = CubicField(-f[0])
+    A = g[2]
     for x, y, facg, facf in read_relations(workdir / "relations.sieve"):
         if (x, y) in seen_xy:
             duplicates += 1
             continue
         seen_xy.add((x, y))
+
         rel = {}
-        # Sign convention: f(x) / g(x) == 1
-        # z zbar = f(z)
-        # x+yω is divisible by ω-r (norm l) iff x+yr=0 mod l
+        # z = factor(f(z), Kf) = factor(g(z), Kg) / leading(g)
+        relf = {}
         for _l in facf:
-            if _l not in roots_f:
-                roots_f[_l] = flint.nmod_poly(f, _l).roots()[0][0]
-            r = roots_f[_l]
-            if x + y * r == 0:
-                rel[-_l] = rel.get(-_l, 0) + 1
-            else:
-                assert x - y * r == 0
-                rel[_l] = rel.get(_l, 0) + 1
-                rel[-_l] = rel.get(-_l, 0) - 1
-        # u z = g(z)
-        u = g[1]
-        rel[u] = 1
+            relf[_l] = relf.get(_l, 0) + 1
+        for (_l, _r), _e in Kf.factor(-x, y, list(relf.items())):
+            if _l == -1:
+                # FIXME: why is it broken?
+                continue
+            rel[f"f_{_l}_{_r}"] = _e
+        # If g(x,y) = Ax²+Bxy+Cy² is smooth and g(ω,1)=0
+        # let z=x-yω, Norm(z)=g(x,y)/A and Norm(Ax-yAω)=Ag(x,y)
+
         for _l in facg:
-            rel[_l] = rel.get(_l, 0) - 1
+            if A % _l == 0:
+                # If l divides A, consider the algebraic integer
+                # z = Ax - y (Aω)
+                # The ideal is determined by Ax/y mod l
+                # if val(Ax/y)=0, this is the ideal of the nonzero root
+                # if val(Ax/y)>0, this is the ideal at infinity
+                # if val(Ax/y)<0, this is impossible if x,y are coprime
+                if y % _l == 0:
+                    _r = 1  # FIXME
+                else:
+                    _r = _l
+            else:
+                # If l is coprime to A, the valuation of l is z is just e.
+                # The correct ideal above l is determined by -x/y mod l.
+                _r = _l if y % _l == 0 else -x * pow(y, -1, _l) % _l
+            key = f"g_{_l}_{_r}"
+            rel.setdefault(key, 0)
+            rel[key] = rel.get(key, 0) - 1
+        if rel is None:
+            # print("SKIP")
+            continue
+        rel[f"g_{A}"] = 1
+        if DEBUG_RELS and any(A % _l == 0 for _l in facg):
+            print(x, y)
+            print(facf)
+            print(facg)
+            print(rel)
         rels.append(rel)
 
     if duplicates:
@@ -118,16 +135,6 @@ def main():
     ker = M.polyeval(wi, ell, poly_k)
     assert any(k for k in ker)
 
-    # Normalize kernel vector
-    idx0, k0 = next(
-        (idx, ki) for idx, ki in enumerate(ker) if ki != 0 and basis[idx] > 0
-    )
-    k0inv = pow(k0, -1, ell)
-    for i, ki in enumerate(ker):
-        ker[i] = ki * k0inv % ell
-    logging.info(f"Computing logarithms in base {basis[idx0]}")
-    gen = basis[idx0]
-
     # Validate result
     prime_idx = {l: idx for idx, l in enumerate(basis)}
     for r in rels3:
@@ -140,18 +147,17 @@ def main():
     # print(dlog)
 
     added, nremoved = 0, 0
-    with open(workdir / "relations.removed") as f:
-        for line in f:
+    with open(workdir / "relations.removed") as fd:
+        for line in fd:
             nremoved += 1
             l, _, facs = line.partition("=")
-            rel = {
-                int(p): int(e) for p, _, e in (f.partition("^") for f in facs.split())
-            }
+            l = l.strip()
+            rel = {p: int(e) for p, _, e in (_f.partition("^") for _f in facs.split())}
             # Relations from Gaussian elimination are naturally ordered
             # in a triangular shape.
             if all(_l in dlog for _l in rel):
                 v = sum(_e * dlog[_l] for _l, _e in rel.items())
-                dlog[int(l)] = v % ell
+                dlog[l] = v % ell
                 added += 1
             else:
                 pass
@@ -179,34 +185,54 @@ def main():
         extra = remaining
         logging.info(f"{len(dlog)} primes have known coordinates")
 
-    # Output result in a format similar to CADO
-    # Columns:
-    # prime, 0/1 (g/f), root, dlog
-    dlogs = []
-    coell = (n - 1) // ell
-    for l, v in list(dlog.items()):
-        if l > 0 or l == g[1]:
-            # rational prime
-            if g[1] % l == 0:
-                r = l
-            else:
-                r = -g[0] * pow(g[1], -1, l) % l
-            dlogs.append((l, 0, r, v))
-            # Check logarithm
-            # assert pow(gen, v * coell, n) == pow(l, coell, n), f"{l} != ± {gen}^{v}"
-            if pow(gen, v * coell, n) != pow(l, coell, n):
-                logging.error(f"FAIL {l} != ± {gen}^{v}")
-                del dlog[l]
-        else:
-            l = abs(l)
-            r = int(roots_f[l])
-            dlogs.append((l, 1, r, v))
-            if l in dlog:
-                r2 = l - r
-                v0 = dlog[l]
-                dlogs.append((l, 1, r2, (v0 - v) % ell))
-            # FIXME: check logarithms for non-rational ideals
+    f_primes = {}
+    g_primes = {}
+    for key in dlog:
+        _l = int(key.split("_")[1])
+        if key.startswith("f"):
+            f_primes.setdefault(_l, []).append(key)
+        elif key.startswith("g"):
+            g_primes.setdefault(_l, []).append(key)
 
+    gen = None
+    for l in sorted(set(f_primes) | set(g_primes)):
+        if len(f_primes.get(l, [])) == 3:
+            # Beware l is not just the product of 3 primes.
+            roots = flint.nmod_poly(f, l).roots()
+            assert len(roots) == 3
+            z = l
+            for r, _ in roots:
+                rx, ry, rz = Kf.idealgen(l, int(r))
+                z /= rx + ry * Kf.j + rz * Kf.j**2
+            e = int(round(math.log(z) / math.log(Kf.u)))
+            dlog[f"Z_{l}"] = sum(dlog[k] for k in f_primes[l]) + e * dlog["f_1_0"]
+            if gen is None:
+                gen = f"Z_{l}"
+        if len(g_primes.get(l, [])) == 2:
+            dlog[f"Z_{l}"] = sum(dlog[k] for k in g_primes[l])
+            if gen is None:
+                gen = f"Z_{l}"
+
+    # Normalize kernel vector
+    ginv = pow(dlog[gen], -1, ell)
+    for k in dlog:
+        dlog[k] = dlog[k] * ginv % ell
+    logging.info(f"Computed logarithms in base {gen}")
+
+    # Check rational primes
+    checked = 0
+    grat = int(gen[2:])
+    for k in dlog:
+        if k.startswith("Z"):
+            krat = int(k[2:])
+            if pow(grat, dlog[k], n) not in (krat, n - krat):
+                logging.error(f"WRONG VALUE dlog({k}) = {dlog[k]}")
+                dlog[k] = None
+                continue
+            checked += 1
+    logging.info(f"Checked logarithms for {checked} rational primes")
+
+    dlogs = [(k, v) for k, v in dlog.items()]
     with open(workdir / "dlog", "w") as w:
         for row in sorted(dlogs):
             w.write(" ".join(str(v) for v in row) + "\n")
