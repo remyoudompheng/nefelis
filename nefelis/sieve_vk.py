@@ -26,11 +26,6 @@ class Siever:
         tq = mgr.tensor_t(np.zeros(4, dtype=np.int32))
         tout = mgr.tensor_t(np.zeros(2 * OUTLEN, dtype=np.int32))
 
-        if DEBUG_ROOTS:
-            extra = {"DEBUG": 1}
-        else:
-            extra = {}
-
         WIDTH = 1 << I
         WGROWS = 32
         N_WG = 2 * WIDTH // WGROWS
