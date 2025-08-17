@@ -1,7 +1,11 @@
 // Variant of spmv.comp for computations modulo a large integer.
+// To avoid redundant carries and excessive register use, the dense
+// block uses a single 64-bit accumulator and online carry propagation.
 //
 // BLEN is such that 2^(32 BLEN - 1) is larger than N p
 // where N is the norm of the matrix.
+//
+// Usually BLEN is between 8 and 32 (256-1024 bit moduli).
 //
 // Assumption: p[BLEN-2] > 2^16 (it should be larger than 2^32 / N)
 
@@ -26,7 +30,7 @@
 #extension GL_EXT_shader_explicit_arithmetic_types : require
 
 // Each thread handles a row.
-layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
 layout(binding = 0) readonly buffer Dense { int8_t dense[]; };
 layout(binding = 1) readonly buffer SparsePlus { uint16_t plus[]; };
@@ -92,20 +96,6 @@ void neg(inout uint[BLEN] x) {
   }
 }
 
-// Compute y = x * s
-void mul_small(out uint[BLEN] y, in uint[BLEN] x, int16_t s) {
-  if (s < 0) {
-    s = -s;
-    neg(x);
-  }
-  uint c = 0;
-  for (uint i = 0; i < BLEN; i++) {
-    uint64_t xs = uint64_t(x[i]) * uint64_t(s) + uint64_t(c);
-    y[i] = uint(xs);
-    c = uint(xs >> 32);
-  }
-}
-
 int16_t divp(uint[BLEN] x) {
   int64_t xhi = int64_t(pack64(u32vec2(x[BLEN - 2], x[BLEN - 1])));
   int64_t phi = int64_t(pack64(u32vec2(p[BLEN - 2], p[BLEN - 1])));
@@ -128,6 +118,8 @@ void modp(inout uint[BLEN] x) {
   }
 }
 
+shared int8_t denserow[DENSE_N][gl_WorkGroupSize.x];
+
 void main() {
   uint idx = iter[gl_WorkGroupID.x];
   uint off0 = ((idx & 1) == 0) ? 0 : N;
@@ -138,14 +130,17 @@ void main() {
   uint[BLEN] acc;
   for (uint i = 0; i < BLEN; i++)
     acc[i] = 0;
-  uint[BLEN] tmp;
-  for (uint i = 0; i < BLEN; i++)
-    tmp[i] = 0;
-  // Dense block
+  // Dense block: compute each word separately and batch carries
   uint dense_base = row * DENSE_N;
-  for (uint i = 0; i < DENSE_N; i++) {
-    mul_small(tmp, v[off0 + i], dense[dense_base + i]);
-    add(acc, tmp);
+  for (uint i = 0; i < DENSE_N; i++)
+    denserow[i][gl_LocalInvocationID.x] = dense[dense_base + i];
+  int carry = 0;
+  for (uint j = 0; j < BLEN; j++) {
+     int64_t accj = int64_t(carry);
+     for (uint i = 0; i < DENSE_N; i++)
+         accj += int64_t(v[off0 + i][j]) * int64_t(denserow[i][gl_LocalInvocationID.x]);
+     carry = int(accj >> 32);
+     acc[j] = uint(accj);
   }
   // +1 coefficients
   uint plus0 = idxPlus[row];

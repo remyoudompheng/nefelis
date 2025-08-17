@@ -1,7 +1,11 @@
 // Variant of spmv.comp for computations modulo a large integer.
+// To avoid addition with carry, accumulators are 64-bit integers,
+// normalized to 32-bit words after finishing each row.
 //
 // BLEN is such that 2^(32 BLEN - 1) is larger than N p
 // where N is the norm of the matrix.
+//
+// Usually BLEN is between 8 and 32 (256-1024 bit moduli).
 //
 // Assumption: p[BLEN-2] > 2^16 (it should be larger than 2^32 / N)
 
@@ -58,6 +62,20 @@ layout(binding = 8) coherent buffer Wout { uint[BLEN] wout[]; };
 // - (small) quotient by p
 // - add product by a small integer
 
+// Normalizes x into a long signed integer with 32-bit positive limbs.
+void norm(out uint[BLEN] res, int64_t[BLEN] x) {
+  // Assume that each abs(x[i]) is less than 2^63
+  // Invariant:
+  // sum(in[j] << 32j for j <= i) == sum(out[j] << 32j) + c << 32i
+  int c = 0;
+  for (uint i = 0; i < BLEN; i++) {
+    int64_t xi = x[i] + c;
+    res[i] = uint(xi);
+    // signed shift makes it correct
+    c = int(xi >> 32);
+  }
+}
+
 // Compute x += y
 void add(inout uint[BLEN] x, in uint[BLEN] y) {
   uint c = 0;
@@ -92,20 +110,6 @@ void neg(inout uint[BLEN] x) {
   }
 }
 
-// Compute y = x * s
-void mul_small(out uint[BLEN] y, in uint[BLEN] x, int16_t s) {
-  if (s < 0) {
-    s = -s;
-    neg(x);
-  }
-  uint c = 0;
-  for (uint i = 0; i < BLEN; i++) {
-    uint64_t xs = uint64_t(x[i]) * uint64_t(s) + uint64_t(c);
-    y[i] = uint(xs);
-    c = uint(xs >> 32);
-  }
-}
-
 int16_t divp(uint[BLEN] x) {
   int64_t xhi = int64_t(pack64(u32vec2(x[BLEN - 2], x[BLEN - 1])));
   int64_t phi = int64_t(pack64(u32vec2(p[BLEN - 2], p[BLEN - 1])));
@@ -135,17 +139,16 @@ void main() {
   uint row = gl_GlobalInvocationID.x;
   if (row >= N)
     return;
-  uint[BLEN] acc;
+  // Signed accumulators without carry.
+  // They will never excess norm(matrix) x 2^32
+  int64_t[BLEN] acc;
   for (uint i = 0; i < BLEN; i++)
     acc[i] = 0;
-  uint[BLEN] tmp;
-  for (uint i = 0; i < BLEN; i++)
-    tmp[i] = 0;
   // Dense block
   uint dense_base = row * DENSE_N;
   for (uint i = 0; i < DENSE_N; i++) {
-    mul_small(tmp, v[off0 + i], dense[dense_base + i]);
-    add(acc, tmp);
+    for (uint j = 0; j < BLEN; j++)
+      acc[j] += int64_t(v[off0 + i][j]) * int64_t(dense[dense_base + i]);
   }
   // +1 coefficients
   uint plus0 = idxPlus[row];
@@ -157,7 +160,8 @@ void main() {
       base += 0xffff;
       continue;
     }
-    add(acc, v[off0 + base + c]);
+    for (uint j = 0; j < BLEN; j++)
+      acc[j] += v[off0 + base + c][j];
   }
   // -1 coefficients
   uint minus0 = idxMinus[row];
@@ -169,11 +173,15 @@ void main() {
       base += 0xffff;
       continue;
     }
-    sub(acc, v[off0 + base + c]);
+    for (uint j = 0; j < BLEN; j++)
+      acc[j] -= v[off0 + base + c][j];
   }
   // Output result to next row
-  modp(acc);
-  v[off1 + row] = acc;
+  uint[BLEN] tmp;
+  norm(tmp, acc);
+  modp(tmp);
+  for (uint j = 0; j < BLEN; j++)
+    v[off1 + row][j] = tmp[j];
 #ifdef POLYEVAL
   // wout[row] += ak[idx+1] * acc
   uint[ALEN] w = wout[row];
@@ -184,7 +192,7 @@ void main() {
     for (uint j = 0; j < BLEN; j++) {
       if (i + j >= ALEN)
         break;
-      uint64_t wij = uint64_t(aki) * uint64_t(acc[j]) + w[i + j] + carry;
+      uint64_t wij = uint64_t(aki) * uint64_t(tmp[j]) + w[i + j] + carry;
       w[i + j] = uint(wij);
       carry = uint(wij >> 32);
     }
@@ -196,8 +204,10 @@ void main() {
   wout[row] = w;
 #else
   // FIXME: we cannot atomically add, the output sequence is: just v[0]
-  if (gl_GlobalInvocationID.x == 0)
-    wout[idx] = acc;
+  if (gl_GlobalInvocationID.x == 0) {
+    for (uint j = 0; j < BLEN; j++)
+      wout[idx][j] = tmp[j];
+  }
 #endif
   barrier();
   if (gl_LocalInvocationID.x == 0)

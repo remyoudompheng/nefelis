@@ -98,6 +98,70 @@ class SpMV:
             f"{self.flops} FLOPS per matrix multiplication (original weight {weight})"
         )
 
+    def shaders(self, defines):
+        if defines.get("POLYEVAL"):
+            # FIXME: polyeval does not like spmv_bigint2
+            return [(name, shader(name, defines)) for name in
+                    ("spmv_bigint", "spmv_bigint3")]
+        return [(name, shader(name, defines)) for name in
+                ("spmv_bigint", "spmv_bigint2", "spmv_bigint3")]
+
+    def _run(self, tensors, defines, ITERS, BATCHSIZE, N_WG):
+        mgr = self.mgr
+        algos = [(name, mgr.algorithm(tensors, kernel, workgroup=(N_WG, 1, 1)))
+                 for name, kernel in self.shaders(defines)]
+        best_algo = None
+        algostats = [[] for _ in algos]
+
+        mgr.sequence().record(kp.OpTensorSyncDevice(tensors)).eval()
+
+        t0 = time.monotonic()
+        t_print = t0
+        gpu_ticks = 0.0
+        count = 0
+        for i in range(ITERS // BATCHSIZE + 1):
+            if i * BATCHSIZE >= ITERS:
+                break
+            # Matrix multiplication is very fast so we launch multiple
+            # iterations per batch.
+            if best_algo is not None:
+                algo_idx = best_algo
+            elif i < 4:
+                # warmup
+                algo_idx = 0
+            elif 4 <= i < 4 + 8 * len(algos):
+                algo_idx = (i - 4) // 8
+            else:
+                algo_times = [min(s) * stamp_period() / BATCHSIZE for s in algostats]
+                algo_times_show = {_name: round(_t) * 1e-6 for (_name, _), _t in zip(algos, algo_times)}
+                logging.info(f"Matmul shader performance (ms/matmul) {algo_times_show}")
+                best_algo = min(range(len(algo_times)), key=lambda idx: algo_times[idx])
+                logging.info(f"Selecting shader {algos[best_algo][0]}")
+                algo_idx = best_algo
+
+            seq = mgr.sequence(total_timestamps=2 * BATCHSIZE)
+            for _ in range(min(BATCHSIZE, ITERS - i * BATCHSIZE)):
+                seq.record(kp.OpAlgoDispatch(algos[algo_idx][1]))
+                count += 1
+            seq.eval()
+
+            stamps = seq.get_timestamps()
+            if 4 <= i < 4 + 8 * len(algos):
+                algostats[algo_idx].append(stamps[-1] - stamps[0])
+            gpu_ticks += stamps[-1] - stamps[0]
+            if (t1 := time.monotonic()) > t_print + 10.0:
+                # print progress every 10 seconds
+                elapsed = t1 - t0
+                gpu_dt = gpu_ticks * stamp_period() * 1e-9
+                speed = BATCHSIZE * (i + 1) / gpu_dt
+                logging.info(
+                    f"{BATCHSIZE * (i + 1)} matrix muls done in {elapsed:.1f}s ({speed:.1f} SpMV/s, GPU time {gpu_dt:.1f}s)"
+                )
+                t_print = t1
+
+        assert count == ITERS
+        return gpu_ticks
+
     def wiedemann_big(self, l: int):
         "Perform Wiedemann algorithm for a single big modulus"
         WGSIZE = 128
@@ -117,7 +181,6 @@ class SpMV:
         assert pwords[-2] > 2**16
 
         defines = self.defines | {"BLEN": BLEN}
-        kernel = shader("spmv_bigint", defines)
 
         # Tensor holding M^k V and M^(k+1) V
         v = np.zeros((2, dim, BLEN), dtype=np.uint32)
@@ -130,22 +193,10 @@ class SpMV:
         xmod = mgr.tensor_t(np.array(pwords, dtype=np.uint32))
 
         tensors = self.tensors + [xv, xiter, xmod, xout]
-        algo = mgr.algorithm(tensors, kernel, workgroup=(N_WG, 1, 1))
-        mgr.sequence().record(kp.OpTensorSyncDevice(tensors)).eval()
+        t0 = time.monotonic()
 
         seq0 = from_uvec(v[0, 0, :])
-        t0 = time.monotonic()
-        gpu_ticks = 0.0
-        for i in range(0, ITERS, BATCHSIZE):
-            # Matrix multiplication is very fast so we launch multiple
-            # iterations per batch.
-            seq = mgr.sequence(total_timestamps=2 * BATCHSIZE)
-            for _ in range(BATCHSIZE):
-                seq.record(kp.OpAlgoDispatch(algo))
-            seq.eval()
-
-            stamps = seq.get_timestamps()
-            gpu_ticks += stamps[-1] - stamps[0]
+        gpu_ticks = self._run(tensors, defines, ITERS, BATCHSIZE, N_WG)
 
         mgr.sequence().record(kp.OpTensorSyncLocal([xout])).eval()
         vout = xout.data().reshape((ITERS, BLEN))
@@ -184,7 +235,6 @@ class SpMV:
         assert pwords[-2] > 2**16
 
         defines = self.defines | {"ALEN": ALEN, "BLEN": BLEN, "POLYEVAL": 1}
-        kernel = shader("spmv_bigint", defines)
 
         # Tensor holding M^k V and M^(k+1) V
         av = np.zeros((2, dim, BLEN), dtype=np.uint32)
@@ -204,26 +254,11 @@ class SpMV:
         xout = mgr.tensor_t(vout.flatten())
 
         tensors = self.tensors + [xv, xiter, xmod, xpoly, xout]
-        mgr.sequence().record(kp.OpTensorSyncDevice(tensors)).eval()
-        algo = mgr.algorithm(tensors, kernel, workgroup=(N_WG, 1, 1))
 
         t0 = time.monotonic()
-        gpu_ticks = 0.0
-        count = 0
-        for i in range(1, len(poly), BATCHSIZE):
-            # Matrix multiplication is very fast so we launch multiple
-            # iterations per batch.
-            seq = mgr.sequence(total_timestamps=2 * BATCHSIZE)
-            for _ in range(min(BATCHSIZE, len(poly) - i)):
-                count += 1
-                seq.record(kp.OpAlgoDispatch(algo))
-            seq.eval()
-
-            stamps = seq.get_timestamps()
-            gpu_ticks += stamps[-1] - stamps[0]
-        assert count == len(poly) - 1
-
+        gpu_ticks = self._run(tensors, defines, len(poly) - 1, BATCHSIZE, N_WG)
         dt = time.monotonic() - t0
+
         gpu_dt = gpu_ticks * stamp_period() * 1e-9
         flops = self.flops * len(poly) / gpu_dt
         speed = len(poly) / gpu_dt
