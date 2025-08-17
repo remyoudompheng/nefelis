@@ -27,6 +27,7 @@ import pathlib
 import time
 
 import flint
+import numpy as np
 
 try:
     import pymqs

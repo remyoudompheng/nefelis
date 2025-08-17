@@ -118,6 +118,42 @@ class Siever:
         outlen = min(bout[0], OUTLEN - 1)
         return [(int(bout[2 * i]), int(bout[2 * i + 1])) for i in range(1, outlen + 1)]
 
+    def sievelarge(self, q, qr):
+        """
+        Handle coordinate change on CPU side.
+        """
+        qred = flint.fmpz_mat([[q, 0], [qr, 1]]).lll()
+        a, c, b, d = qred.entries()
+        tqroots = self.algo1.get_tensors()[-1]
+        qroots = tqroots.data()
+        for pidx, (l, rorig) in enumerate(zip(self.primes, self.roots)):
+            rx, ry = (1, 0) if rorig == l else (rorig, 1)
+            rnum = d * rx - b * ry
+            rden = a * ry - c * rx
+            if rden % l == 0:
+                r = l
+            else:
+                r = rnum * pow(rden, -1, l) % l
+            qroots[pidx] = r
+
+        self.tout.data()[:2].fill(0)
+        self.tq.data()[:] = [1, 0, 0, 1]
+        seq = self.mgr.sequence(total_timestamps=16)
+        seq.record(kp.OpTensorSyncDevice([self.tq, self.tout, tqroots]))
+        # don't run shader 1
+        seq.record(kp.OpAlgoDispatch(self.algo2))
+        seq.record(kp.OpTensorSyncLocal([self.tout]))
+        seq.eval()
+
+        bout = self.tout.data()
+        bout = bout.reshape((OUTLEN, 2))
+        outlen = min(bout[0, 0], OUTLEN - 1)
+        results = []
+        for i in range(1, outlen + 1):
+            x, y = int(bout[i, 0]), int(bout[i, 1])
+            results.append((int(a * x + b * y), int(c * x + d * y)))
+        return results
+
 
 def smallprimes(B):
     l = np.ones(B, dtype=np.uint8)

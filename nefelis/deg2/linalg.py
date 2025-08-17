@@ -45,6 +45,20 @@ def read_relations(filepath: str | pathlib.Path):
             yield int(x), int(y), facg, facf
 
 
+def idealgen(f: list[int], l: int, r: int):
+    """
+    Try to find a generator of ideal (l,r) in number field Q[x]/(f)
+    """
+    m = flint.fmpz_mat([[l, 0], [int(r), 1]]).lll()
+    u1, v1, u2, v2 = m.entries()
+    c, b, a = f
+    for u, v in [(u1, v1), (u2, v2), (u1 + u2, v1 + v2), (u1 - u2, v1 - v2)]:
+        if a * u**2 + b * u * v + c * v**2 == l:
+            # Note that f(x,y) is the norm of x-yω
+            return u, -v
+    return None
+
+
 def main():
     workdir = pathlib.Path(sys.argv[1])
 
@@ -77,11 +91,17 @@ def main():
         for _l in facf:
             if _l not in roots_f:
                 roots_f[_l] = flint.nmod_poly(f, _l).roots()[0][0]
-            r = roots_f[_l]
-            if x + y * r == 0:
+            r0 = roots_f[_l]
+
+            if y % _l:
+                r = x * pow(y, -1, _l) % _l
+                assert (f[2] * r**2 + f[1] * r + f[0]) % _l == 0
+            else:
+                r = _l
+                assert f[2] % _l == 0
+            if r == r0:
                 rel[-_l] = rel.get(-_l, 0) + 1
             else:
-                assert x - y * r == 0
                 rel[_l] = rel.get(_l, 0) + 1
                 rel[-_l] = rel.get(-_l, 0) - 1
         # u z = g(z)
@@ -112,7 +132,7 @@ def main():
     assert len(poly) <= dim + 1 and poly[0] == 0, (dim, len(poly), poly[0])
 
     i0 = next(i for i, ai in enumerate(poly) if ai)
-    logging.info(f"Polynomial is divisible by X^{i0}")
+    logging.info(f"Polynomial of degree {len(poly) - 1} is divisible by X^{i0}")
     wi = [random.randrange(ell) for _ in range(dim)]
     poly_k = poly[i0:]
     ker = M.polyeval(wi, ell, poly_k)
@@ -125,8 +145,24 @@ def main():
     k0inv = pow(k0, -1, ell)
     for i, ki in enumerate(ker):
         ker[i] = ki * k0inv % ell
+
     logging.info(f"Computing logarithms in base {basis[idx0]}")
     gen = basis[idx0]
+
+    bad_indexes = set()
+    if len(poly) < dim + 1:
+        logging.info("Computing another kernel vector, solution may not be unique")
+        wi = [random.randrange(ell) for _ in range(dim)]
+        poly_k = poly[i0:]
+        ker2 = M.polyeval(wi, ell, poly_k)
+        assert any(k for k in ker2)
+
+        k1inv = pow(ker2[idx0], -1, ell)
+        for i in range(len(ker2)):
+            ker2[i] = ker2[i] * k1inv % ell
+            if ker2[i] != ker[i]:
+                logging.info(f"Ambiguous logarithm for prime {basis[i]}")
+                bad_indexes.add(i)
 
     # Validate result
     prime_idx = {l: idx for idx, l in enumerate(basis)}
@@ -136,12 +172,12 @@ def main():
     assert len(basis) == len(ker)
 
     # Build dlog database
-    dlog = {l: v for l, v in zip(basis, ker)}
+    dlog = {l: v for l, v in zip(basis, ker) if prime_idx[l] not in bad_indexes}
     # print(dlog)
 
     added, nremoved = 0, 0
-    with open(workdir / "relations.removed") as f:
-        for line in f:
+    with open(workdir / "relations.removed") as fd:
+        for line in fd:
             nremoved += 1
             l, _, facs = line.partition("=")
             rel = {
@@ -184,6 +220,8 @@ def main():
     # prime, 0/1 (g/f), root, dlog
     dlogs = []
     coell = (n - 1) // ell
+    z_checked = 0
+    k_checked = 0
     for l, v in list(dlog.items()):
         if l > 0 or l == g[1]:
             # rational prime
@@ -197,19 +235,47 @@ def main():
             if pow(gen, v * coell, n) != pow(l, coell, n):
                 logging.error(f"FAIL {l} != ± {gen}^{v}")
                 del dlog[l]
+            else:
+                z_checked += 1
         else:
             l = abs(l)
             r = int(roots_f[l])
+            # Find an explicit generator of this
+            zl = idealgen(f, l, r)
+            if zl is None:
+                logging.warning(
+                    f"Unable to find a generator of ideal ({l},{r}) for checks"
+                )
+            else:
+                xl, yl = zl
+                x = xl + z * yl
+                if pow(gen, v * coell, n) != pow(x, coell, n):
+                    logging.error(f"FAIL {xl}+{yl}*ω != ± {gen}^{v}")
+                    continue
+                k_checked += 1
             dlogs.append((l, 1, r, v))
             if l in dlog:
                 r2 = l - r
                 v0 = dlog[l]
                 dlogs.append((l, 1, r2, (v0 - v) % ell))
-            # FIXME: check logarithms for non-rational ideals
 
-    with open(workdir / "dlog", "w") as w:
+    logging.info(
+        f"Successfully checked logarithms for {z_checked} rational and {k_checked} algebraic ideals"
+    )
+
+    with open(workdir / "dlog2", "w") as w:
         for row in sorted(dlogs):
             w.write(" ".join(str(v) for v in row) + "\n")
+
+    # Same with string keys
+    with open(workdir / "dlog", "w") as w:
+        # rational primes first
+        for l, pol_idx, r, v in sorted(dlogs):
+            if pol_idx == 0:
+                w.write(f"Z_{l} {v}\n")
+        for l, pol_idx, r, v in sorted(dlogs):
+            if pol_idx == 1:
+                w.write(f"f_{l}_{r} {v}\n")
 
 
 if __name__ == "__main__":
