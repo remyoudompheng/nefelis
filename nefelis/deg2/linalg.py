@@ -48,15 +48,38 @@ def read_relations(filepath: str | pathlib.Path):
 def idealgen(f: list[int], l: int, r: int):
     """
     Try to find a generator of ideal (l,r) in number field Q[x]/(f)
+
+    Returns (x,y) and a list of extra ideals p[i]^e[i]
+    such that (x+yω) = (l,r) * prod(p[i]^e[i])
     """
-    m = flint.fmpz_mat([[l, 0], [int(r), 1]]).lll()
+    # r-ω belongs to the ideal, but this is really Ar-ω where ω is integral.
+    if r == l:
+        m = flint.fmpz_mat([[0, l], [1, 0]]).lll()
+    else:
+        m = flint.fmpz_mat([[l, 0], [int(r), 1]]).lll()
     u1, v1, u2, v2 = m.entries()
     c, b, a = f
+    best = None
     for u, v in [(u1, v1), (u2, v2), (u1 + u2, v1 + v2), (u1 - u2, v1 - v2)]:
-        if a * u**2 + b * u * v + c * v**2 == l:
-            # Note that f(x,y) is the norm of x-yω
-            return u, -v
-    return None
+        if u == 0 or v == 0:
+            continue
+        norm = a * u**2 + b * u * v + c * v**2
+        if best is None or norm < best[0]:
+            best = (norm, (u, v))
+    if best is None:
+        raise ValueError("failed to find a generator")
+
+    norm, (u, v) = best
+    # print(f"Ideal ({l},{r}) => found generator {u}-{v}ω of norm {norm//l}l")
+    k = best[0] // l
+    # Note that f(x,y) is the norm of x-yω
+    ideals = []
+    for _l, _e in flint.fmpz(k).factor():
+        r = u * pow(v, -1, _l) % _l if v % _l else _l
+        if v % _l:
+            assert (a * r * r + b * r + c) % _l == 0
+        ideals.append((_l, r, _e))
+    return u, -v, ideals
 
 
 def main():
@@ -79,6 +102,11 @@ def main():
     rels = []
     seen_xy = set()
     duplicates = 0
+
+    assert f[1] ** 2 - 4 * f[0] * f[2] < 0
+    # FIXME: this script uses keys +l for rational ideals
+    # and -l for split ideals of the quadratic fields,
+    # which is extremely confusing.
     for x, y, facg, facf in read_relations(workdir / "relations.sieve"):
         if (x, y) in seen_xy:
             duplicates += 1
@@ -90,8 +118,11 @@ def main():
         # x+yω is divisible by ω-r (norm l) iff x+yr=0 mod l
         for _l in facf:
             if _l not in roots_f:
-                roots_f[_l] = flint.nmod_poly(f, _l).roots()[0][0]
-            r0 = roots_f[_l]
+                roots_f[_l] = [int(_r) for _r, _ in flint.nmod_poly(f, _l).roots()]
+                if f[2] % _l == 0:
+                    # infinity is the main root
+                    roots_f[_l] = [_l] + roots_f[_l]
+            r0 = roots_f[_l][0]
 
             if y % _l:
                 r = x * pow(y, -1, _l) % _l
@@ -99,11 +130,17 @@ def main():
             else:
                 r = _l
                 assert f[2] % _l == 0
+
             if r == r0:
                 rel[-_l] = rel.get(-_l, 0) + 1
             else:
+                assert r == roots_f[_l][1]
                 rel[_l] = rel.get(_l, 0) + 1
                 rel[-_l] = rel.get(-_l, 0) - 1
+        # Apply leading coefficient of f
+        # for _l, _e in afacs:
+        #    rel[-_l] = rel.get(-_l, 0) - _e
+
         # u z = g(z)
         u = g[1]
         rel[u] = 1
@@ -167,6 +204,9 @@ def main():
     # Validate result
     prime_idx = {l: idx for idx, l in enumerate(basis)}
     for r in rels3:
+        if any(prime_idx[l] in bad_indexes for l in r):
+            logging.error("Skip check for bad relation {r}")
+            continue
         assert sum(e * ker[prime_idx[l]] for l, e in r.items()) % ell == 0
 
     assert len(basis) == len(ker)
@@ -222,8 +262,23 @@ def main():
     coell = (n - 1) // ell
     z_checked = 0
     k_checked = 0
+
+    # When considering algebraic integer, the leading coefficient of f
+    # must be cancelled using the "roots at infinity".
+    Ainvlog = 0
+    if f[2] != 1:
+        for _l, _e in flint.fmpz(f[2]).factor():
+            Ainvlog -= _e * dlog[-_l]
+
     for l, v in list(dlog.items()):
-        if l > 0 or l == g[1]:
+        # The key u=g[1] actually represents u/A
+        if l == g[1]:
+            if pow(gen, (v - Ainvlog) * coell, n) != pow(l, coell, n):
+                logging.error(f"FAIL {l} != ± {gen}^{v}")
+                raise ValueError("wrong logarithm of constant coefficients")
+
+            dlogs.append((l, "CONSTANT", r, v))
+        elif l > 0:
             # rational prime
             if g[1] % l == 0:
                 r = l
@@ -234,30 +289,53 @@ def main():
             # assert pow(gen, v * coell, n) == pow(l, coell, n), f"{l} != ± {gen}^{v}"
             if pow(gen, v * coell, n) != pow(l, coell, n):
                 logging.error(f"FAIL {l} != ± {gen}^{v}")
-                del dlog[l]
+                raise ValueError(f"Incorrect logarithm of rational prime {l}")
             else:
+                # print(f"Checked rational {l} {v}")
                 z_checked += 1
         else:
             l = abs(l)
-            r = int(roots_f[l])
-            # Find an explicit generator of this
-            zl = idealgen(f, l, r)
-            if zl is None:
-                logging.warning(
-                    f"Unable to find a generator of ideal ({l},{r}) for checks"
-                )
-            else:
-                xl, yl = zl
-                x = xl + z * yl
-                if pow(gen, v * coell, n) != pow(x, coell, n):
-                    logging.error(f"FAIL {xl}+{yl}*ω != ± {gen}^{v}")
+            for r in roots_f[l]:
+                r = int(r)
+                # Find an explicit generator of this (with some extra small ideals)
+                # Note that l * ideals is a factorization of root(A) (xl + yl ω)
+
+                xl, yl, ideals = idealgen(f, l, r)
+                if r == roots_f[l][0]:
+                    vv = v
+                else:
+                    if l not in dlog:
+                        # logging.warning(f"Cannot check ideal {(l, r)}")
+                        break
+                    vv = dlog[l] - v
+
+                logz = vv + Ainvlog
+                for _l, _r, _e in ideals:
+                    r0 = roots_f.get(_l)
+                    if r0 is None or _l not in dlog or -_l not in dlog:
+                        logging.warning(f"missing small ideal {_l},{_r} in factor base")
+                        logz = None
+                        break
+                    if _r == r0[0]:
+                        logz += _e * (dlog[-_l])
+                    else:
+                        logz += _e * (dlog[_l] - dlog[-_l])
+                if logz is None:
                     continue
-                k_checked += 1
-            dlogs.append((l, 1, r, v))
-            if l in dlog:
-                r2 = l - r
-                v0 = dlog[l]
-                dlogs.append((l, 1, r2, (v0 - v) % ell))
+
+                if logz is None:
+                    logging.warning(
+                        f"Unable to check logarithm of {xl}+{yl}i in ideal ({l},{r})"
+                    )
+                else:
+                    zz = xl + z * yl
+                    if pow(gen, logz * coell, n) != pow(zz, coell, n):
+                        logging.error(f"FAIL {xl}+{yl}*ω != ± {gen}^{logz}")
+                        raise
+                    # logging.debug(f"Checked algebraic {xl}+{yl}*ω == ± {gen}^{logz}")
+                    k_checked += 1
+
+                dlogs.append((l, 1, r, vv))
 
     logging.info(
         f"Successfully checked logarithms for {z_checked} rational and {k_checked} algebraic ideals"
@@ -276,6 +354,9 @@ def main():
         for l, pol_idx, r, v in sorted(dlogs):
             if pol_idx == 1:
                 w.write(f"f_{l}_{r} {v}\n")
+        for l, pol_idx, r, v in sorted(dlogs):
+            if pol_idx == "CONSTANT":
+                w.write(f"CONSTANT {v}\n")
 
 
 if __name__ == "__main__":

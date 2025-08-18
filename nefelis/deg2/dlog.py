@@ -220,7 +220,8 @@ class Descent:
                 for _l in facg:
                     if _l != q:
                         facs.append((f"Z_{_l}", -1))
-                facs.append((f"Z_{u}", 1))
+                # The CONSTANT accounts for leading coefficients of f and g
+                facs.append(("CONSTANT", 1))
 
                 missing = [_l for _l in facg if _l not in self.zlogs and _l != q]
                 keep = (

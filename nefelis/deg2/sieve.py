@@ -27,7 +27,6 @@ import pathlib
 import time
 
 import flint
-import numpy as np
 
 try:
     import pymqs
@@ -35,6 +34,7 @@ except ImportError:
     pymqs = None
 
 from nefelis import sieve_vk
+from nefelis.deg2.polyselect import polyselect
 
 
 def factor_fg(args):
@@ -87,9 +87,9 @@ PARAMS = [
     (260, 500000, 21, 20, 30, 14, 50000),
     (280, 1000_000, 21, 20, 35, 14, 100000),
     (300, 1500_000, 22, 21, 40, 14, 250000),
-    (320, 4000_000, 23, 21, 45, 14, 500000),
+    (320, 2000_000, 23, 21, 45, 14, 500000),
     # 2 large primes
-    (340, 3000_000, 23, 22, 55, 14, 800000),
+    (340, 3000_000, 23, 22, 55, 14, 1000000),
 ]
 
 
@@ -115,14 +115,20 @@ def main():
     assert flint.fmpz(ell).is_prime()
 
     B1, B2g, B2f, COFACTOR_BITS, I, qmin = get_params(N)
+    logging.info(
+        f"Sieving with B1={B1 / 1000:.0f}k log(B2)={B2g},{B2f} q={qmin}.. {COFACTOR_BITS} cofactor bits"
+    )
 
-    r = flint.fmpz_mod(-2, flint.fmpz_mod_ctx(N)).sqrt()
-    m = flint.fmpz_mat([[0, N], [-1, int(r)]]).lll()
-    u, v = m.table()[0]
-    print(u * r + v)
-    assert u * r + v == 0
-    print(f"{u = }")
-    print(f"{v = }")
+    f, g = polyselect(N)
+    C, B, A = f
+    v, u = g
+
+    r = v * pow(-u, -1, N) % N
+    assert (u * r + v) % N == 0
+    assert (A * r * r + B * r + C) % N == 0
+    print(f"f = {A} x^2 + {B} x + {C}")
+    print(f"{u = } size {u.bit_length()}")
+    print(f"{v = } size {v.bit_length()}")
 
     ls = sieve_vk.smallprimes(B1)
     rs = [(-v * pow(u, -1, l)) % l if u % l else l for l in ls]
@@ -142,7 +148,7 @@ def main():
         json.dump(
             {
                 "n": N,
-                "f": [2, 0, 1],  # FIXME
+                "f": [C, B, A],
                 "g": [int(v), int(u)],
                 "z": z,
             },
@@ -164,13 +170,14 @@ def main():
         print(f"# q={q}", file=relf)
         values = []
         for x, y in reports:
+            x, y = int(x), int(y)
             if math.gcd(x, y) != 1:
                 continue
             # value = u * x + v * y
             # print(f"{x}+{y}i", flint.fmpz(value).factor())
             # Output in Cado format
             # x,y:(factors of g(x) in hex):(factors of f(x) in hex)
-            vf = abs(x * x + 2 * y * y)
+            vf = abs(A * x * x + B * x * y + C * y * y)
             vg = abs((u * x + v * y) // q)
             values.append((x, y, vf, vg, B2f, B2g))
 
