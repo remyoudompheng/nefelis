@@ -148,7 +148,7 @@ class Descent:
                 cofacs = flint.fmpz(xu).factor_smooth(32)
                 cofacs += [(_l, -_e) for _l, _e in flint.fmpz(xv).factor_smooth(32)]
                 cofacs.sort()
-                if cofacs[-1][0] < best[1][-1][0]:
+                if not cofacs or (cofacs[-1][0] < best[1][-1][0]):
                     if any(not flint.fmpz(_l).is_prime() for _l, _ in cofacs):
                         cofacs = flint.fmpz(xu).factor()
                         cofacs += [(_l, -_e) for _l, _e in flint.fmpz(xv).factor()]
@@ -160,6 +160,8 @@ class Descent:
                     )
                     best = facs, cofacs
 
+            if not cofacs:
+                break
             if i > 100 and cofacs[-1][0].bit_length() < self.MAX_QBITS:
                 break
 
