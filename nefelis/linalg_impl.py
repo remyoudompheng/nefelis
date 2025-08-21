@@ -6,6 +6,7 @@ import flint
 import kp
 import numpy as np
 
+from nefelis import lingen
 from nefelis.vulkan import shader, stamp_period
 
 
@@ -101,15 +102,21 @@ class SpMV:
     def shaders(self, defines):
         if defines.get("POLYEVAL"):
             # FIXME: polyeval does not like spmv_bigint2
-            return [(name, shader(name, defines)) for name in
-                    ("spmv_bigint", "spmv_bigint3")]
-        return [(name, shader(name, defines)) for name in
-                ("spmv_bigint", "spmv_bigint2", "spmv_bigint3")]
+            return [
+                (name, shader(name, defines))
+                for name in ("spmv_bigint", "spmv_bigint3")
+            ]
+        return [
+            (name, shader(name, defines))
+            for name in ("spmv_bigint", "spmv_bigint2", "spmv_bigint3")
+        ]
 
     def _run(self, tensors, defines, ITERS, BATCHSIZE, N_WG):
         mgr = self.mgr
-        algos = [(name, mgr.algorithm(tensors, kernel, workgroup=(N_WG, 1, 1)))
-                 for name, kernel in self.shaders(defines)]
+        algos = [
+            (name, mgr.algorithm(tensors, kernel, workgroup=(N_WG, 1, 1)))
+            for name, kernel in self.shaders(defines)
+        ]
         best_algo = None
         algostats = [[] for _ in algos]
 
@@ -133,7 +140,9 @@ class SpMV:
                 algo_idx = (i - 4) // 8
             else:
                 algo_times = [min(s) * stamp_period() / BATCHSIZE for s in algostats]
-                algo_times_show = {_name: round(_t) * 1e-6 for (_name, _), _t in zip(algos, algo_times)}
+                algo_times_show = {
+                    _name: round(_t) * 1e-6 for (_name, _), _t in zip(algos, algo_times)
+                }
                 logging.info(f"Matmul shader performance (ms/matmul) {algo_times_show}")
                 best_algo = min(range(len(algo_times)), key=lambda idx: algo_times[idx])
                 logging.info(f"Selecting shader {algos[best_algo][0]}")
@@ -162,8 +171,13 @@ class SpMV:
         assert count == ITERS
         return gpu_ticks
 
-    def wiedemann_big(self, l: int):
-        "Perform Wiedemann algorithm for a single big modulus"
+    def wiedemann_big(self, l: int, blockm=1) -> list[int]:
+        """
+        Perform Wiedemann algorithm for a single big modulus
+
+        If blockm > 1, a block Wiedemann algorithm (with 1 vector but multiple sequences)
+        is used.
+        """
         WGSIZE = 128
         mgr = self.mgr
         dim = self.dim
@@ -173,14 +187,15 @@ class SpMV:
             BATCHSIZE = 32
         else:
             BATCHSIZE = 64
-        ITERS = (2 * dim // BATCHSIZE + 2) * BATCHSIZE
+        ITERS = dim + dim // blockm + 32
+        ITERS = (ITERS // BATCHSIZE + 2) * BATCHSIZE
 
         # FIXME: use actual norm
         BLEN = (l.bit_length() + 8 + 31) // 32
         pwords = to_uvec(l, BLEN)
         assert pwords[-2] > 2**16
 
-        defines = self.defines | {"BLEN": BLEN}
+        defines = self.defines | {"BLEN": BLEN, "BLOCKM": blockm}
 
         # Tensor holding M^k V and M^(k+1) V
         v = np.zeros((2, dim, BLEN), dtype=np.uint32)
@@ -189,33 +204,41 @@ class SpMV:
         xv = mgr.tensor_t(v.flatten())
         xiter = mgr.tensor_t(np.zeros(N_WG, dtype=np.uint32))
         # Output sequence out[k] = S M^k V
-        xout = mgr.tensor_t(np.zeros(ITERS * BLEN, dtype=np.uint32))
+        xout = mgr.tensor_t(np.zeros(ITERS * blockm * BLEN, dtype=np.uint32))
         xmod = mgr.tensor_t(np.array(pwords, dtype=np.uint32))
 
         tensors = self.tensors + [xv, xiter, xmod, xout]
         t0 = time.monotonic()
 
-        seq0 = from_uvec(v[0, 0, :])
         gpu_ticks = self._run(tensors, defines, ITERS, BATCHSIZE, N_WG)
 
+        logging.info(f"Computing a Krylov sequence of length {ITERS}")
         mgr.sequence().record(kp.OpTensorSyncLocal([xout])).eval()
-        vout = xout.data().reshape((ITERS, BLEN))
-        sequence = [seq0] + [from_uvec(vout[i, :]) for i in range(ITERS)]
+        vout = xout.data().reshape((ITERS, blockm, BLEN))
+        sequences = []
+        for j in range(blockm):
+            seq = [from_uvec(v[0, j, :])] + [
+                from_uvec(vout[i, j, :]) for i in range(ITERS)
+            ]
+            sequences.append(seq)
 
         dt = time.monotonic() - t0
         gpu_dt = gpu_ticks * stamp_period() * 1e-9
         flops = self.flops * ITERS / gpu_dt
         speed = ITERS / gpu_dt
 
-        poly = berlekamp_massey(sequence, l)
+        t1 = time.monotonic()
+        poly = lingen.lingen(sequences, dim, l)
         assert len(poly) <= dim + 1, len(poly)
 
         dt = time.monotonic() - t0
+        lingen_dt = time.monotonic() - t1
+        logging.info(f"Lingen completed in {lingen_dt:.3f}s (N={dim} m={blockm} n=1)")
         logging.info(
             f"Wiedemann completed in {dt:.3f}s (GPU {gpu_dt:.3}s, {flops / 1e9:.2f} GFLOPS, {speed:.1f} SpMV/s)"
         )
 
-        return poly
+        return [int(ai) for ai in list(poly)]
 
     def polyeval(self, v, l: int, poly: list[int]) -> list[int]:
         """

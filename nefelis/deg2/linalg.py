@@ -21,11 +21,11 @@ The basis will be as follows:
 Negative ideals conjugate(li) will be represented as |li|/li
 """
 
+import argparse
 import json
 import logging
 import pathlib
 import random
-import sys
 
 import flint
 
@@ -83,7 +83,11 @@ def idealgen(f: list[int], l: int, r: int):
 
 
 def main():
-    workdir = pathlib.Path(sys.argv[1])
+    argp = argparse.ArgumentParser()
+    argp.add_argument("--blockw", type=int, help="Use Block Wiedemann with size m=ARG n=1")
+    argp.add_argument("WORKDIR")
+    args = argp.parse_args()
+    workdir = pathlib.Path(args.WORKDIR)
 
     with open(workdir / "args.json") as f:
         doc = json.load(f)
@@ -161,7 +165,7 @@ def main():
     basis = M.basis
     dim = M.dim
     ell = n // 2
-    poly = M.wiedemann_big(ell)
+    poly = M.wiedemann_big(ell, blockm=args.blockw or 1)
     print("Computed characteristic poly", poly[:10], "...", poly[-10:])
 
     poly = [ai * pow(poly[-1], -1, ell) % ell for ai in poly]

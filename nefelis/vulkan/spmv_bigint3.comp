@@ -53,7 +53,7 @@ layout(binding = 9) coherent buffer Wout { uint[ALEN] wout[]; };
 #else
 // Output buffer for Wiedemann algorithm sequence: wout[iter] = sum(v[idx] where
 // wsel[idx]=1)
-layout(binding = 8) coherent buffer Wout { uint[BLEN] wout[]; };
+layout(binding = 8) coherent buffer Wout { uint[BLOCKM][BLEN] wout[]; };
 #endif
 
 // Big integer arithmetic. We need:
@@ -190,9 +190,9 @@ void main() {
   }
   wout[row] = w;
 #else
-  // FIXME: we cannot atomically add, the output sequence is: just v[0]
-  if (gl_GlobalInvocationID.x == 0)
-    wout[idx] = acc;
+  // FIXME: we cannot atomically add, the output sequence is: just v[0] .. v[m-1]
+  if (gl_GlobalInvocationID.x < BLOCKM)
+    wout[idx][gl_GlobalInvocationID.x] = acc;
 #endif
   barrier();
   if (gl_LocalInvocationID.x == 0)

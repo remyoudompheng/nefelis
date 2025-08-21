@@ -77,8 +77,9 @@ def lingen(sequences, N: int, l: int):
     minpoly = FP[0, 0]
     assert 0 < minpoly.degree() <= N
     # Adjust result to match FLINT minpoly convention
-    # (reversed and monic)
-    minpoly = minpoly.reverse()
+    # (reversed and monic) => minpoly(1/X)*X^N
+    shift = N - minpoly.degree()
+    minpoly = minpoly.reverse().left_shift(shift)
     minpoly /= minpoly[minpoly.degree()]
     return minpoly
 
