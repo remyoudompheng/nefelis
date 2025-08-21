@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools"]
+requires = ["setuptools", "cython"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -18,6 +18,10 @@ dependencies = [
   "tqdm>=4.0",
   "networkx>=3.2"
 ]
+
+[tool.setuptools]
+packages = ["nefelis"]
+ext-modules = [{name = "nefelis_flint_extras", sources = ["nefelis/nefelis_flint_extras.pyx"], libraries = ["flint"]}]
 
 [tool.setuptools.package-data]
 nefelis = ["vulkan"]
