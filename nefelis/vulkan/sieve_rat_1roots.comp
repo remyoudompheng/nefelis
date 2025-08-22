@@ -25,10 +25,10 @@ void doprime(uint pidx) {
   const int rx = (r == p) ? 1 : r;
   const int ry = (r == p) ? 0 : 1;
 
-  int qx = q.w * rx - q.y * ry;
-  int qy = q.x * ry - q.z * rx;
-  qx = int(modp_float(qx, p, pinv));
-  qy = int(modp_float(qy, p, pinv));
+  int64_t qqx = int64_t(q.w) * int64_t(rx) - int64_t(q.y) * int64_t(ry);
+  int64_t qqy = int64_t(q.x) * int64_t(ry) - int64_t(q.z) * int64_t(rx);
+  int qx = int(modp_float(qqx, p, pinv));
+  int qy = int(modp_float(qqy, p, pinv));
 
   const uint qr = (qy == 0) ? p : mulmod(qx, invmod(qy, int(p)), p, pinv);
   qroots[pidx] = qr;
