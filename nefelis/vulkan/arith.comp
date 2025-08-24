@@ -42,30 +42,6 @@ uint modp_float(uvec3 big, uint p, float pinv) {
   return modp_float(n, p, pinv);
 }
 
-#ifdef BLEN
-uint modp_float(uint bign[BLEN], uint p, float pinv) {
-  uint l = bign.length();
-  int64_t n = int(bign[l - 1]); // preserve sign
-  for (int i = int(l) - 2; i >= 0; i--) {
-    n = (n << 32) | bign[i];
-    [[unroll]]
-    for (int _ = 0; _ < 2; _++) {
-      float q = float(n) * pinv;
-      // q = qm * 2^shift where qm is int32
-      int e;
-      frexp(q, e);
-      int shift = max(0, e - 24);
-      int qm = int(round(ldexp(q, -shift)));
-      if (qm == 0)
-        break;
-      n -= (int64_t(qm) * int64_t(p)) << shift;
-    }
-    // Now n is small (32 bits)
-  }
-  return modp_float(int(n), p, pinv);
-}
-#endif
-
 // Assumes that n is 31 bits.
 // Throughput (Radeon 780M): 73G/s (59G/s for n % p)
 uint modp_float(int n, uint p, float pinv) {
