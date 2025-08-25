@@ -20,7 +20,6 @@ import pathlib
 import time
 
 import flint
-import numpy as np
 
 try:
     import pymqs
@@ -28,18 +27,19 @@ except ImportError:
     pymqs = None
 
 from nefelis import sieve_vk
+from nefelis.deg3.polyselect import polyselect
 
 
 class Factorer:
     def __init__(self, f, g, B2f, B2g):
         self.f = f
-        assert self.f == [-2, 0, 0, 1]
         self.g = g
         self.B2f = B2f
         self.B2g = B2g
 
     def factor_fg(self, q, chunk):
         res = []
+        f = self.f
         C, B, A = self.g
         for x, y in chunk:
             x, y = int(x), int(y)
@@ -49,7 +49,7 @@ class Factorer:
             # print(f"{x}+{y}i", flint.fmpz(value).factor())
             # Output in Cado format
             # x,y:(factors of g(x) in hex):(factors of f(x) in hex)
-            vf = abs(x * x * x - 2 * y * y * y)
+            vf = abs(x * x * (f[3] * x + f[2] * y) + y * y * (f[1] * x + f[0] * y))
             vg = abs(A * x * x + B * x * y + C * y * y) // q
 
             facf = []
@@ -70,7 +70,7 @@ class Factorer:
             if any(_l.bit_length() > self.B2g for _l in facg):
                 continue
 
-            idealf = [x * pow(y, -1, _l) % _l for _l in facf]
+            idealf = [x * pow(y, -1, _l) % _l if y % _l else _l for _l in facf]
             idealg = [x * pow(y, -1, _l) % _l if y % _l else _l for _l in facg]
             res.append((x, y, facf, facg, idealf, idealg))
 
@@ -107,6 +107,26 @@ def worker_task(args):
 
 PARAMS = [
     # bitsize, B1g, B2g, B2f, cofactor bits, I=logwidth, qmin
+    (120, 10_000, 16, 14, 16, 12, 20),
+    (140, 20_000, 16, 15, 17, 13, 30),
+    (160, 30_000, 17, 15, 18, 14, 100),
+    (180, 50_000, 17, 16, 19, 14, 500),
+    (200, 100_000, 18, 16, 20, 14, 3000),
+    (220, 150_000, 18, 17, 20, 14, 6000),
+    (240, 200_000, 19, 17, 25, 14, 10000),
+    (260, 300_000, 20, 18, 25, 14, 20000),
+    (280, 400_000, 20, 19, 25, 14, 40000),
+    (300, 600_000, 21, 19, 28, 14, 70000),
+    (320, 1_000_000, 22, 20, 30, 14, 150000),
+    (340, 2_000_000, 23, 22, 35, 14, 300000),
+    (360, 3_000_000, 23, 22, 35, 14, 600000),
+    (380, 4_000_000, 24, 22, 37, 14, 1000_000),
+    (400, 5_000_000, 24, 23, 40, 14, 2000_000),
+    (420, 7_000_000, 25, 23, 45, 14, 4000_000),
+]
+
+PARAMS_NOSM = [
+    # bitsize, B1g, B2g, B2f, cofactor bits, I=logwidth, qmin
     (120, 10000, 16, 14, 16, 12, 20),
     (140, 30_000, 17, 16, 17, 13, 30),
     (160, 50_000, 18, 17, 18, 14, 100),
@@ -121,17 +141,22 @@ PARAMS = [
     (340, 2_000_000, 23, 22, 35, 14, 300000),
     (360, 3_000_000, 24, 22, 37, 14, 600000),
     (380, 4_000_000, 24, 23, 45, 14, 900_000),
-    # 2 large primes
-    # (340, 800_000, 23, 22, 50, 14, 400000),
 ]
 
 
-def get_params(N):
-    return min(PARAMS, key=lambda p: abs(p[0] - N.bit_length()))[1:]
+def get_params(N, nosm=False):
+    return min(
+        PARAMS_NOSM if nosm else PARAMS, key=lambda p: abs(p[0] - N.bit_length())
+    )[1:]
 
 
 def main():
     argp = argparse.ArgumentParser()
+    argp.add_argument(
+        "--nosm",
+        action="store_true",
+        help="Choose simple polynomials to avoid Schirokauer maps",
+    )
     argp.add_argument("--ncpu", type=int, help="CPU threads for factoring")
     argp.add_argument("N", type=int)
     argp.add_argument("OUTDIR")
@@ -149,26 +174,38 @@ def main():
     assert flint.fmpz(N).is_prime()
     assert flint.fmpz(ell).is_prime()
 
-    B1, B2g, B2f, COFACTOR_BITS, I, qmin = get_params(N)
+    B1, B2g, B2f, COFACTOR_BITS, I, qmin = get_params(N, nosm=args.nosm)
     logging.info(
         f"Sieving with B1={B1 / 1000:.0f}k log(B2)={B2g},{B2f} q={qmin}.. {COFACTOR_BITS} cofactor bits"
     )
 
-    r = pow(2, (2 * N - 1) // 3, N)
-    assert (r**3 - 2) % N == 0
-    m = flint.fmpz_mat([[N, 0, 0], [int(r), -1, 0], [int(r * r), 0, -1]]).lll()
-    print(m)
-    g = None
-    for row in m.table():
-        if row[1] ** 2 < 4 * row[0] * row[2]:
-            g = [int(_) for _ in row]
-            break
-    if g is None:
-        raise ValueError("could not generate suitable polynomial")
+    if args.nosm:
+        r = pow(2, (2 * N - 1) // 3, N)
+        assert (r**3 - 2) % N == 0
+        m = flint.fmpz_mat([[N, 0, 0], [int(r), -1, 0], [int(r * r), 0, -1]]).lll()
+        print(m)
+        g = None
+        for row in m.table():
+            if row[1] ** 2 < 4 * row[0] * row[2]:
+                g = [int(_) for _ in row]
+                break
+        if g is None:
+            raise ValueError("could not generate suitable polynomial")
+        f = [-2, 0, 0, 1]
+    else:
+        f, g = polyselect(N)
+        C, B, A = g
+        for r, _ in flint.fmpz_mod_poly(f, flint.fmpz_mod_poly_ctx(N)).roots():
+            if A * r * r + B * r + C == 0:
+                break
+        assert A * r * r + B * r + C == 0
+        r = int(r)
 
+    print(f"f = {f[3]}*x^3+{f[2]}*x^2+{f[1]}*x+{f[0]}")
     C, B, A = g
     assert (A * r * r + B * r + C) % N == 0
     print(f"g = {A} x² + {B} x + {C}")
+    print(f"Root r = {r}")
 
     ls, rs = [], []
     for _l in sieve_vk.smallprimes(B1):
@@ -184,8 +221,9 @@ def main():
 
     LOGAREA = qs[-1][0].bit_length() + 2 * I
     # We sieve g(x) which has size log2(N)/3 + 2 log2(x) but has a known factor q
+    gsize = max(_gi.bit_length() for _gi in g)
     THRESHOLD = (
-        N.bit_length() // 3 + 2 * LOGAREA // 2 - qs[-1][0].bit_length() - COFACTOR_BITS
+        gsize + 2 * LOGAREA // 2 - qs[-1][0].bit_length() - COFACTOR_BITS
     )
 
     sievepool = multiprocessing.Pool(
@@ -194,14 +232,14 @@ def main():
     factorpool = multiprocessing.Pool(
         args.ncpu or os.cpu_count(),
         initializer=factorer_init,
-        initargs=([-2, 0, 0, 1], g, B2f, B2g),
+        initargs=(f, g, B2f, B2g),
     )
 
     with open(datadir / "args.json", "w") as w:
         json.dump(
             {
                 "n": N,
-                "f": [-2, 0, 0, 1],
+                "f": f,
                 "g": g,
                 "z": int(r),
             },

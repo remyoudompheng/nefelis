@@ -10,7 +10,10 @@ import flint
 logger = logging.getLogger("polyselect")
 
 # fmt:off
-SMALLPRIMES = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97]
+# Choose 30 primes: if we test 2^30 polynomials one of them
+# might be split modulo all these primes simultaneously.
+SMALLPRIMES = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47,
+               53, 59, 61, 67, 71, 73, 79, 83, 89, 97, 101, 103, 109, 113]
 # fmt:on
 
 SQUARES = set((l, i * i % l) for l in SMALLPRIMES for i in range(l))
@@ -188,7 +191,7 @@ class Polyselect:
         self.N = N
         self.l = l
 
-    def process(self, D: int, a: int, b: int, c: int, d: int):
+    def process(self, D: int, a: int, b: int, c: int, d: int, global_best: float = 1e9):
         """
         Tries pairs of polynomials with f=ax³+bx²+cx+d.
         """
@@ -237,7 +240,7 @@ class Polyselect:
             # Using typical parameters, the smoothness probability
             # is ~30% less sensitive to the lognorm of f than to the lognorm of g.
             score = gbits + ag + 0.7 * (fbits + af)
-            if score < self.best:
+            if score < self.best and score < global_best:
                 self.best = score
                 logging.debug(
                     f"GOOD! {D=} {f} "
@@ -282,6 +285,8 @@ def polyselect(N: int, bound: int | None = None):
 
     l = N // 2
     counter = 0
+    best = 1e9
+    best_fg = None
 
     def irreducibles():
         nonlocal counter
@@ -315,14 +320,12 @@ def polyselect(N: int, bound: int | None = None):
                             continue
 
                         counter += 1
-                        yield D, a, b, c, d
+                        yield D, a, b, c, d, best
 
     logging.info(f"Starting polynomial selection with degree 3 and bound {bound}")
     logging.info(f"Base score {N.bit_length() // 3}")
 
     pool = Pool(initializer=worker_init, initargs=(N, l))
-    best = 1e9
-    best_fg = None
 
     t0 = time.monotonic()
     for item in pool.imap_unordered(worker_do, irreducibles(), chunksize=32):
