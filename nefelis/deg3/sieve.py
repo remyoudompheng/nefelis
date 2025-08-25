@@ -10,15 +10,17 @@ We assume that B^2 - 4AC < 0 (A > 0 and C > 0)
 """
 
 import argparse
+import itertools
 import json
 import logging
 import math
 import multiprocessing
-import multiprocessing.dummy
+import os
 import pathlib
 import time
 
 import flint
+import numpy as np
 
 try:
     import pymqs
@@ -28,24 +30,64 @@ except ImportError:
 from nefelis import sieve_vk
 
 
-def factor_fg(args):
-    x, y, vf, vg, B2f, B2g = args
-    facf = []
-    if pymqs is not None:
-        facf = pymqs.factor(int(vf))
-    else:
-        for _l, _e in flint.fmpz(vf).factor():
-            facf += _e * [int(_l)]
-    if any(_f.bit_length() > B2f for _f in facf):
-        return x, y, None, None
+class Factorer:
+    def __init__(self, f, g, B2f, B2g):
+        self.f = f
+        assert self.f == [-2, 0, 0, 1]
+        self.g = g
+        self.B2f = B2f
+        self.B2g = B2g
 
-    facg = []
-    if pymqs is not None:
-        facg = pymqs.factor(int(vg))
-    else:
-        for _l, _e in flint.fmpz(vg).factor():
-            facg += _e * [int(_l)]
-    return x, y, facf, facg
+    def factor_fg(self, q, chunk):
+        res = []
+        C, B, A = self.g
+        for x, y in chunk:
+            x, y = int(x), int(y)
+            if math.gcd(x, y) != 1:
+                continue
+            # value = u * x + v * y
+            # print(f"{x}+{y}i", flint.fmpz(value).factor())
+            # Output in Cado format
+            # x,y:(factors of g(x) in hex):(factors of f(x) in hex)
+            vf = abs(x * x * x - 2 * y * y * y)
+            vg = abs(A * x * x + B * x * y + C * y * y) // q
+
+            facf = []
+            if pymqs is not None:
+                facf = pymqs.factor(int(vf))
+            else:
+                for _l, _e in flint.fmpz(vf).factor():
+                    facf += _e * [int(_l)]
+            if any(_f.bit_length() > self.B2f for _f in facf):
+                continue
+
+            facg = []
+            if pymqs is not None:
+                facg = pymqs.factor(int(vg))
+            else:
+                for _l, _e in flint.fmpz(vg).factor():
+                    facg += _e * [int(_l)]
+            if any(_l.bit_length() > self.B2g for _l in facg):
+                continue
+
+            idealf = [x * pow(y, -1, _l) % _l for _l in facf]
+            idealg = [x * pow(y, -1, _l) % _l if y % _l else _l for _l in facg]
+            res.append((x, y, facf, facg, idealf, idealg))
+
+        return res
+
+
+FACTORER = None
+
+
+def factorer_init(f, g, B2f, B2g):
+    global FACTORER
+    FACTORER = Factorer(f, g, B2f, B2g)
+
+
+def factorer_task(args):
+    q, chunk = args
+    return FACTORER.factor_fg(q, chunk)
 
 
 SIEVER = None
@@ -53,7 +95,7 @@ SIEVER = None
 
 def worker_init(g, ls, rs, threshold, I):
     global SIEVER
-    SIEVER = sieve_vk.Siever(g, ls, rs, threshold, I)
+    SIEVER = sieve_vk.Siever(g, ls, rs, threshold, I=I)
 
 
 def worker_task(args):
@@ -65,14 +107,22 @@ def worker_task(args):
 
 PARAMS = [
     # bitsize, B1g, B2g, B2f, cofactor bits, I=logwidth, qmin
-    (120, 20000, 16, 16, 16, 15, 20),
-    (160, 50_000, 18, 17, 18, 15, 100),
-    (200, 100_000, 19, 18, 20, 15, 3000),
-    (220, 150_000, 20, 18, 20, 15, 6000),
-    (240, 200_000, 20, 19, 25, 15, 10000),
-    (260, 300_000, 21, 19, 30, 15, 20000),
-    (280, 500_000, 21, 20, 30, 15, 40000),
-    (300, 600_000, 22, 20, 30, 15, 70000),
+    (120, 10000, 16, 14, 16, 12, 20),
+    (140, 30_000, 17, 16, 17, 13, 30),
+    (160, 50_000, 18, 17, 18, 14, 100),
+    (180, 70_000, 19, 17, 19, 14, 500),
+    (200, 100_000, 19, 18, 20, 14, 3000),
+    (220, 150_000, 20, 18, 20, 14, 6000),
+    (240, 200_000, 20, 19, 25, 14, 10000),
+    (260, 300_000, 20, 19, 25, 14, 20000),
+    (280, 500_000, 21, 20, 30, 14, 40000),
+    (300, 600_000, 22, 20, 30, 14, 70000),
+    (320, 1_000_000, 23, 21, 30, 14, 150000),
+    (340, 2_000_000, 23, 22, 35, 14, 300000),
+    (360, 3_000_000, 24, 22, 37, 14, 600000),
+    (380, 4_000_000, 24, 23, 45, 14, 900_000),
+    # 2 large primes
+    # (340, 800_000, 23, 22, 50, 14, 400000),
 ]
 
 
@@ -82,9 +132,12 @@ def get_params(N):
 
 def main():
     argp = argparse.ArgumentParser()
+    argp.add_argument("--ncpu", type=int, help="CPU threads for factoring")
     argp.add_argument("N", type=int)
     argp.add_argument("OUTDIR")
     args = argp.parse_args()
+
+    logging.getLogger().setLevel(level=logging.DEBUG)
 
     N = args.N
     datadir = pathlib.Path(args.OUTDIR)
@@ -97,6 +150,9 @@ def main():
     assert flint.fmpz(ell).is_prime()
 
     B1, B2g, B2f, COFACTOR_BITS, I, qmin = get_params(N)
+    logging.info(
+        f"Sieving with B1={B1 / 1000:.0f}k log(B2)={B2g},{B2f} q={qmin}.. {COFACTOR_BITS} cofactor bits"
+    )
 
     r = pow(2, (2 * N - 1) // 3, N)
     assert (r**3 - 2) % N == 0
@@ -135,7 +191,11 @@ def main():
     sievepool = multiprocessing.Pool(
         1, initializer=worker_init, initargs=(g, ls, rs, THRESHOLD, I)
     )
-    factorpool = multiprocessing.Pool(8)
+    factorpool = multiprocessing.Pool(
+        args.ncpu or os.cpu_count(),
+        initializer=factorer_init,
+        initargs=([-2, 0, 0, 1], g, B2f, B2g),
+    )
 
     with open(datadir / "args.json", "w") as w:
         json.dump(
@@ -154,6 +214,7 @@ def main():
     duplicates = 0
 
     t0 = time.monotonic()
+    last_log = 0
     total_area = 0
     total_q = 0
     seenf = set()
@@ -161,44 +222,30 @@ def main():
     for q, qr, dt, reports in sievepool.imap(worker_task, qs):
         nrels = 0
         print(f"# q={q} r={qr}", file=relf)
-        values = []
-        for x, y in reports:
-            if math.gcd(x, y) != 1:
-                continue
-            # value = u * x + v * y
-            # print(f"{x}+{y}i", flint.fmpz(value).factor())
-            # Output in Cado format
-            # x,y:(factors of g(x) in hex):(factors of f(x) in hex)
-            vf = abs(x * x * x - 2 * y * y * y)
-            vg = abs(A * x * x + B * x * y + C * y * y)
-            values.append((x, y, vf, vg, B2f, B2g))
 
-        for x, y, facf, facg in factorpool.imap(factor_fg, values, chunksize=32):
-            # Normalize sign
-            if y < 0:
-                x, y = -x, -y
-            if (x, y) in seen:
-                duplicates += 1
-                continue
-            # Ignore too large primes
-            if facf is None:
-                continue
-            if any(_l.bit_length() > B2g for _l in facg):
-                continue
-            str_facf = ",".join(f"{_l:x}" for _l in facf)
-            str_facg = ",".join(f"{_l:x}" for _l in facg)
-            for _l in facf:
-                _r = x * pow(y, -1, _l) % _l
-                # assert (r**3 + 2) % _l == 0, (x, y, _l, r)
-                seenf.add((_l, _r))
-            for _l in facg:
-                if A % _l == 0:
+        batchsize = 64
+        chunks = ((q, chunk) for chunk in itertools.batched(reports, batchsize))
+        for reschunk in factorpool.imap_unordered(factorer_task, chunks):
+            for x, y, facf, facg, idealf, idealg in reschunk:
+                # Normalize sign
+                if y < 0:
+                    x, y = -x, -y
+                xy = x + (y << 32)
+                if xy in seen:
+                    duplicates += 1
                     continue
-                _r = x * pow(y, -1, _l) % _l
-                seeng.add((_l, _r))
-            seen.add((x, y))
-            relf.write(f"{x},{y}:{str_facg}:{str_facf}\n")
-            nrels += 1
+                # facg will omit q
+                str_facf = ",".join(f"{_l:x}" for _l in facf)
+                str_facg = ",".join(f"{_l:x}" for _l in facg + [q])
+                for _l, _r in zip(facf, idealf):
+                    seenf.add((_l << 32) | _r)
+                for _l, _r in zip(facg, idealg):
+                    seeng.add((_l << 32) | _r)
+                seen.add(xy)
+                relf.write(f"{x},{y}:{str_facg}:{str_facf}\n")
+                nrels += 1
+        if nrels:
+            seeng.add((q << 32) | qr)
         print(f"# Found {nrels} relations for {q=} (time {dt:.3f}s)", file=relf)
         total_q += 1
         total += nrels
@@ -206,9 +253,13 @@ def main():
         elapsed = time.monotonic() - t0
         gcount = len(seeng)
         fcount = len(seenf)
-        print(
-            f"Sieved q={q} r={qr} area {AREA} in {dt:.3f}s (speed {total_area / elapsed / 1e9:.3f}G/s): {len(reports)} reports {nrels} relations, {gcount}/{fcount} Kg/Kf primes, total {total}"
-        )
+        if elapsed < 2 or elapsed > last_log + 1:
+            # Don't log too often.
+            last_log = elapsed
+            print(
+                f"Sieved q={q} r={qr:<8} area {total_area / 1e9:.0f}G in {dt:.3f}s (speed {total_area / elapsed / 1e9:.3f}G/s): "
+                f"{nrels}/{len(reports)} relations, {gcount}/{fcount} Kg/Kf primes, total {total}"
+            )
         if total > 1.1 * (fcount + gcount):
             logging.info("Enough relations")
             break
