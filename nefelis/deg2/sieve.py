@@ -18,11 +18,12 @@ The GPU takes care of the lattice sieve for a given special q:
 """
 
 import argparse
+import itertools
 import json
 import logging
 import math
 import multiprocessing
-import multiprocessing.dummy
+import os
 import pathlib
 import time
 
@@ -37,35 +38,72 @@ from nefelis import sieve_vk
 from nefelis.deg2.polyselect import polyselect
 
 
-def factor_fg(args):
-    x, y, vf, vg, B2f, B2g = args
-    facf = []
-    if pymqs is not None:
-        facf = pymqs.factor(int(vf))
-    else:
-        for _l, _e in flint.fmpz(vf).factor():
-            facf += _e * [int(_l)]
-    if any(_f.bit_length() > B2f for _f in facf):
-        return None
+class Factorer:
+    def __init__(self, f, g, B2f, B2g):
+        self.f = f
+        self.g = g
+        self.B2f = B2f
+        self.B2g = B2g
 
-    facg = []
-    if pymqs is not None:
-        facg = pymqs.factor(int(vg))
-    else:
-        for _l, _e in flint.fmpz(vg).factor():
-            facg += _e * [int(_l)]
-    if any(_l.bit_length() > B2g for _l in facg):
-        return None
+    def factor_fg(self, q, chunk):
+        res = []
+        C, B, A = self.f
+        v, u = self.g
+        for x, y in chunk:
+            x, y = int(x), int(y)
+            if math.gcd(x, y) != 1:
+                continue
+            # value = u * x + v * y
+            # print(f"{x}+{y}i", flint.fmpz(value).factor())
+            # Output in Cado format
+            # x,y:(factors of g(x) in hex):(factors of f(x) in hex)
+            vf = abs(A * x * x + B * x * y + C * y * y)
+            vg = abs((u * x + v * y) // q)
 
-    return x, y, facf, facg
+            facf = []
+            if pymqs is not None:
+                facf += pymqs.factor(int(vf))
+            else:
+                for _l, _e in flint.fmpz(vf).factor():
+                    facf += _e * [int(_l)]
+            if any(_f.bit_length() > self.B2f for _f in facf):
+                continue
+
+            facg = [q]
+            if pymqs is not None:
+                facg += pymqs.factor(int(vg))
+            else:
+                for _l, _e in flint.fmpz(vg).factor():
+                    facg += _e * [int(_l)]
+            if any(_l.bit_length() > self.B2g for _l in facg):
+                continue
+
+            idealf = [x * pow(y, -1, _l) % _l if y % _l else _l for _l in facf]
+            idealg = [x * pow(y, -1, _l) % _l if y % _l else _l for _l in facg]
+            res.append((x, y, facf, facg, idealf, idealg))
+
+        return res
+
+
+FACTORER = None
+
+
+def factorer_init(f, g, B2f, B2g):
+    global FACTORER
+    FACTORER = Factorer(f, g, B2f, B2g)
+
+
+def factorer_task(args):
+    q, chunk = args
+    return FACTORER.factor_fg(q, chunk)
 
 
 SIEVER = None
 
 
-def worker_init(poly, ls, rs, threshold, I):
+def worker_init(*args):
     global SIEVER
-    SIEVER = sieve_vk.Siever(poly, ls, rs, threshold, I)
+    SIEVER = sieve_vk.Siever(*args)
 
 
 def worker_task(args):
@@ -141,15 +179,19 @@ def main():
     sievepool = multiprocessing.Pool(
         1, initializer=worker_init, initargs=([v, u], ls, rs, THRESHOLD, I)
     )
-    factorpool = multiprocessing.Pool(8)
+    factorpool = multiprocessing.Pool(
+        os.cpu_count(),
+        initializer=factorer_init,
+        initargs=(f, g, B2f, B2g),
+    )
 
     with open(datadir / "args.json", "w") as w:
         z = int((-v * pow(u, -1, N)) % N)
         json.dump(
             {
                 "n": N,
-                "f": [C, B, A],
-                "g": [int(v), int(u)],
+                "f": f,
+                "g": g,
                 "z": z,
             },
             w,
@@ -161,6 +203,7 @@ def main():
     duplicates = 0
 
     t0 = time.monotonic()
+    last_log = 0
     total_area = 0
     total_q = 0
     seenf = set()
@@ -168,36 +211,26 @@ def main():
     for q, dt, reports in sievepool.imap(worker_task, list(zip(qs, qrs))):
         nrels = 0
         print(f"# q={q}", file=relf)
-        values = []
-        for x, y in reports:
-            x, y = int(x), int(y)
-            if math.gcd(x, y) != 1:
-                continue
-            # value = u * x + v * y
-            # print(f"{x}+{y}i", flint.fmpz(value).factor())
-            # Output in Cado format
-            # x,y:(factors of g(x) in hex):(factors of f(x) in hex)
-            vf = abs(A * x * x + B * x * y + C * y * y)
-            vg = abs((u * x + v * y) // q)
-            values.append((x, y, vf, vg, B2f, B2g))
 
-        for item in factorpool.imap(factor_fg, values, chunksize=32):
-            if item is None:
-                continue
-            x, y, facf, facg = item
-            # Normalize sign
-            if y < 0:
-                x, y = -x, -y
-            if (x, y) in seen:
-                duplicates += 1
-                continue
-            str_facf = ",".join(f"{_l:x}" for _l in facf)
-            str_facg = ",".join(f"{_l:x}" for _l in facg + [q])
-            seenf.update(facf)
-            seeng.update(facg)
-            seen.add((x, y))
-            relf.write(f"{x},{y}:{str_facg}:{str_facf}\n")
-            nrels += 1
+        batchsize = 64
+        chunks = ((q, chunk) for chunk in itertools.batched(reports, batchsize))
+        for reschunk in factorpool.imap_unordered(factorer_task, chunks):
+            for x, y, facf, facg, idealf, idealg in reschunk:
+                # Normalize sign
+                if y < 0:
+                    x, y = -x, -y
+                xy = x + (y << 32)
+                if xy in seen:
+                    duplicates += 1
+                    continue
+                # facg will omit q
+                str_facf = ",".join(f"{_l:x}" for _l in facf)
+                str_facg = ",".join(f"{_l:x}" for _l in facg)
+                seenf.update(facf)
+                seeng.update(facg)
+                seen.add(xy)
+                relf.write(f"{x},{y}:{str_facg}:{str_facf}\n")
+                nrels += 1
         print(f"# Found {nrels} relations for {q=} (time {dt:.3f}s)", file=relf)
         total_q += 1
         total += nrels
@@ -205,9 +238,13 @@ def main():
         elapsed = time.monotonic() - t0
         Qcount = len(seenf | seeng)
         Kcount = len(seenf)
-        print(
-            f"Sieved q={q} area {AREA} in {dt:.3f}s (speed {total_area / elapsed / 1e9:.3f}G/s): {len(reports)} reports {nrels} relations, {Qcount}/{Kcount} Q/K primes, total {total}"
-        )
+        if elapsed < 2 or elapsed > last_log + 1:
+            # Don't log too often.
+            last_log = elapsed
+            print(
+                f"Sieved q={q:<8} area {total_area / 1e9:.0f}G in {dt:.3f}s (speed {total_area / elapsed / 1e9:.3f}G/s): "
+                f"{nrels}/{len(reports)} relations, {Qcount}/{Kcount} Q/K primes, total {total}"
+            )
         if total > 1.1 * Qcount + Kcount:
             logging.info("Enough relations")
             break

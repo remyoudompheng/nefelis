@@ -127,7 +127,7 @@ class Polyselect:
                         f"g {gsize:.2f} score {score:.2f}"
                     )
                     assert (a * v**2 - b * u * v + c * u**2) % N == 0
-                    g = v, u
+                    g = int(v), int(u)
 
         if g is None:
             return None
@@ -146,7 +146,9 @@ def worker_do(args):
     return WORKER.process(*args)
 
 
-def polyselect(N: int, bound: int | None = None):
+def polyselect(
+    N: int, bound: int | None = None
+) -> tuple[tuple[int, int, int], tuple[int, int]]:
     """
     Select a good quadratic polynomial for discrete logarithm modulo N,
     with coefficient smaller than given bound.
