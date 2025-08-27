@@ -125,9 +125,28 @@ PARAMS = [
     (260, 500000, 21, 20, 30, 14, 50000),
     (280, 1000_000, 21, 20, 35, 14, 100000),
     (300, 1500_000, 22, 21, 40, 14, 250000),
-    (320, 2000_000, 23, 21, 45, 14, 500000),
+    # (320, 2000_000, 23, 21, 45, 14, 500000),
+    # (340, 3000_000, 23, 22, 55, 14, 1000000),
     # 2 large primes
-    (340, 3000_000, 23, 22, 55, 14, 1000000),
+    # (300, 1000_000, 22, 21, 55, 14, 250000),
+    (320, 1500_000, 23, 21, 60, 14, 700000),
+    (340, 2500_000, 23, 22, 65, 14, 1500000),
+]
+
+# Parameters for trial division
+PARAMS2 = [
+    # bitsize, B1f, thrF
+    (200, 0, 0),
+    (220, 100_000, 22),
+    (240, 150_000, 24),
+    (260, 300_000, 24),
+    (280, 400_000, 26),
+    (300, 500_000, 28),
+    (320, 600_000, 30),
+    (340, 800_000, 30),
+    # (360, 300_000, 23),
+    # (380, 400_000, 24),
+    # (400, 1_000_000, 30),
 ]
 
 
@@ -135,8 +154,16 @@ def get_params(N):
     return min(PARAMS, key=lambda p: abs(p[0] - N.bit_length()))[1:]
 
 
+def get_params2(N):
+    return min(PARAMS2, key=lambda p: abs(p[0] - N.bit_length()))[1:]
+
+
 def main():
     argp = argparse.ArgumentParser()
+    argp.add_argument("--ncpu", type=int, help="CPU threads for factoring")
+    argp.add_argument(
+        "--nogpufactor", action="store_true", help="Don't perform trial division on GPU"
+    )
     argp.add_argument("N", type=int)
     argp.add_argument("OUTDIR")
     args = argp.parse_args()
@@ -152,9 +179,12 @@ def main():
     assert flint.fmpz(N).is_prime()
     assert flint.fmpz(ell).is_prime()
 
-    B1, B2g, B2f, COFACTOR_BITS, I, qmin = get_params(N)
+    B1g, B2g, B2f, COFACTOR_BITS, I, qmin = get_params(N)
+    B1f, thr2 = 0, 0
+    if not args.nogpufactor:
+        B1f, thr2 = get_params2(N)
     logging.info(
-        f"Sieving with B1={B1 / 1000:.0f}k log(B2)={B2g},{B2f} q={qmin}.. {COFACTOR_BITS} cofactor bits"
+        f"Sieving with B1={B1g / 1000:.0f}k,{B1f / 1000:.0f}k log(B2)={B2g},{B2f} q={qmin}.. {COFACTOR_BITS} cofactor bits"
     )
 
     f, g = polyselect(N)
@@ -168,19 +198,35 @@ def main():
     print(f"{u = } size {u.bit_length()}")
     print(f"{v = } size {v.bit_length()}")
 
-    ls = sieve_vk.smallprimes(B1)
+    ls = sieve_vk.smallprimes(B1g)
     rs = [(-v * pow(u, -1, l)) % l if u % l else l for l in ls]
     qs = [_q for _q in sieve_vk.smallprimes(10 * qmin) if _q >= qmin and u % _q != 0]
     qrs = [-v * pow(u, -1, q) % q for q in qs]
+
+    f = [C, B, A]
+    g = [int(v), int(u)]
+    ls2, rs2 = None, None
+    if B1f:
+        ls2, rs2 = [], []
+        for _l in sieve_vk.smallprimes(B1f):
+            _rs = flint.nmod_poly(f, _l).roots()
+            for _r, _ in _rs:
+                ls2.append(_l)
+                rs2.append(_r)
+            if f[2] % _l == 0:
+                ls2.append(_l)
+                rs2.append(_r)
 
     LOGAREA = qs[-1].bit_length() + 2 * I
     THRESHOLD = N.bit_length() // 2 + LOGAREA // 2 - qs[-1].bit_length() - COFACTOR_BITS
 
     sievepool = multiprocessing.Pool(
-        1, initializer=worker_init, initargs=([v, u], ls, rs, THRESHOLD, I)
+        1,
+        initializer=worker_init,
+        initargs=([v, u], ls, rs, THRESHOLD, I, f, ls2, rs2, thr2),
     )
     factorpool = multiprocessing.Pool(
-        os.cpu_count(),
+        args.ncpu or os.cpu_count(),
         initializer=factorer_init,
         initargs=(f, g, B2f, B2g),
     )

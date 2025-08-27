@@ -5,7 +5,7 @@
 #version 450
 
 #extension GL_EXT_control_flow_attributes : require
-#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
 
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
@@ -15,11 +15,19 @@ layout(binding = 1) readonly buffer Roots { int roots[]; };
 layout(binding = 2) readonly buffer QBasis { ivec4 q; };
 layout(binding = 3) writeonly buffer QRoots { uint qroots[]; };
 
+layout(binding = 4) writeonly buffer Out1 { uint out1[]; };
+layout(binding = 5) writeonly buffer Out2 { uint out2[]; };
+
+#ifdef THRESHOLD2
+layout(binding = 6) readonly buffer P2 { uint primes2[]; };
+layout(binding = 7) readonly buffer R2 { uint roots2[]; };
+layout(binding = 8) writeonly buffer Q2 { i16vec2 qroots2[]; };
+#endif
+
 #include <arith.comp>
 
 void doprime(uint pidx) {
   const uint p = primes[pidx];
-  const uint logp = findMSB(p);
   const float pinv = 1.0 / float(p);
   const int r = int(roots[pidx]);
   const int rx = (r == p) ? 1 : r;
@@ -34,8 +42,69 @@ void doprime(uint pidx) {
   qroots[pidx] = qr;
 }
 
+#ifdef THRESHOLD2
+void doprime2(uint pidx) {
+  const uint p = primes2[pidx];
+  const float pinv = 1.0 / float(p);
+  const int r = int(roots2[pidx]);
+  const int rx = (r == p) ? 1 : r;
+  const int ry = (r == p) ? 0 : 1;
+
+  int64_t qqx = int64_t(q.w) * int64_t(rx) - int64_t(q.y) * int64_t(ry);
+  int64_t qqy = int64_t(q.x) * int64_t(ry) - int64_t(q.z) * int64_t(rx);
+  int qx = int(modp_float(qqx, p, pinv));
+  int qy = int(modp_float(qqy, p, pinv));
+
+  if (qy == 0) {
+    qroots2[pidx] = i16vec2(1, 0);
+    return;
+  }
+
+  const uint qr = mulmod(qx, invmod(qy, int(p)), p, pinv);
+  // Lattice reduction for x=qr*y mod p
+  ivec2 ui = ivec2(qr, 1);
+  ivec2 vi = ivec2(p, 0);
+  vec2 u = vec2(qr, 1);
+  vec2 v = vec2(p, 0);
+  float nu = dot(u, u);
+  float nv = dot(v, v);
+  while (true) {
+    // At most 20 iterations
+    float q = round(dot(u, v) / nu);
+    if (q == 0)
+      break;
+    v -= q * u;
+    vi -= int(q) * ui;
+    nv = dot(v, v);
+    // Now nv < nu
+    // Swap u and v
+    vec2 uu = u;
+    u = v;
+    v = uu;
+    ivec2 uui = ui;
+    ui = vi;
+    vi = uui;
+    float n = nu;
+    nu = nv;
+    nv = nu;
+  }
+  // Now u and v should be less than 16 bits.
+  qroots2[pidx] = i16vec2(u);
+}
+
+#endif
+
 void main() {
   const uint pidx = gl_GlobalInvocationID.x;
+  if (pidx == 0) {
+    // Reset output buffer lengths.
+    out1[0] = 0;
+    out2[0] = 0;
+  }
   if (pidx < primes.length())
     doprime(gl_GlobalInvocationID.x);
+#ifdef THRESHOLD2
+  if (pidx < primes2.length())
+    doprime2(pidx);
+#endif
 }

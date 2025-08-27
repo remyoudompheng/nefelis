@@ -54,19 +54,20 @@ class Factorer:
 
             facf = []
             if pymqs is not None:
-                facf = pymqs.factor(int(vf))
+                facf += pymqs.factor(int(vf))
             else:
                 for _l, _e in flint.fmpz(vf).factor():
                     facf += _e * [int(_l)]
             if any(_f.bit_length() > self.B2f for _f in facf):
                 continue
 
-            facg = []
+            facg = [q]
             if pymqs is not None:
-                facg = pymqs.factor(int(vg))
+                facg += pymqs.factor(int(vg))
             else:
                 for _l, _e in flint.fmpz(vg).factor():
                     facg += _e * [int(_l)]
+
             if any(_l.bit_length() > self.B2g for _l in facg):
                 continue
 
@@ -93,9 +94,9 @@ def factorer_task(args):
 SIEVER = None
 
 
-def worker_init(g, ls, rs, threshold, I):
+def worker_init(g, ls, rs, threshold, I, f, ls2, rs2, threshold2):
     global SIEVER
-    SIEVER = sieve_vk.Siever(g, ls, rs, threshold, I=I)
+    SIEVER = sieve_vk.Siever(g, ls, rs, threshold, I, f, ls2, rs2, threshold2)
 
 
 def worker_task(args):
@@ -122,7 +123,27 @@ PARAMS = [
     (360, 3_000_000, 23, 22, 35, 14, 600000),
     (380, 4_000_000, 24, 22, 37, 14, 1000_000),
     (400, 5_000_000, 24, 23, 40, 14, 2000_000),
-    (420, 7_000_000, 25, 23, 45, 14, 4000_000),
+    # (420, 7_000_000, 25, 23, 45, 14, 4000_000)
+    # 2 large primes
+    (420, 5_000_000, 25, 23, 65, 14, 4000_000),
+]
+
+# Parameters for GPU factor
+PARAMS2 = [
+    # bitsize, B1f, thrF
+    (200, 0, 0),
+    (240, 60_000, 30),
+    (260, 60_000, 20),
+    (280, 100_000, 21),
+    (300, 150_000, 22),
+    (320, 200_000, 22),
+    (340, 300_000, 22),
+    (360, 300_000, 23),
+    (380, 400_000, 24),
+    (400, 1_000_000, 30),
+    # (420, 1_000_000, 32),
+    # Fast variants (2 large primes on f side)
+    (420, 600_000, 30),
 ]
 
 PARAMS_NOSM = [
@@ -150,12 +171,19 @@ def get_params(N, nosm=False):
     )[1:]
 
 
+def get_params2(N):
+    return min(PARAMS2, key=lambda p: abs(p[0] - N.bit_length()))[1:]
+
+
 def main():
     argp = argparse.ArgumentParser()
     argp.add_argument(
         "--nosm",
         action="store_true",
         help="Choose simple polynomials to avoid Schirokauer maps",
+    )
+    argp.add_argument(
+        "--nogpufactor", action="store_true", help="Don't perform trial division on GPU"
     )
     argp.add_argument("--ncpu", type=int, help="CPU threads for factoring")
     argp.add_argument("N", type=int)
@@ -174,9 +202,12 @@ def main():
     assert flint.fmpz(N).is_prime()
     assert flint.fmpz(ell).is_prime()
 
-    B1, B2g, B2f, COFACTOR_BITS, I, qmin = get_params(N, nosm=args.nosm)
+    B1g, B2g, B2f, COFACTOR_BITS, I, qmin = get_params(N, nosm=args.nosm)
+    B1f, thr2 = 0, 0
+    if not args.nogpufactor:
+        B1f, thr2 = get_params2(N)
     logging.info(
-        f"Sieving with B1={B1 / 1000:.0f}k log(B2)={B2g},{B2f} q={qmin}.. {COFACTOR_BITS} cofactor bits"
+        f"Sieving with B1={B1g / 1000:.0f}k,{B1f / 1000:.0f}k log(B2)={B2g},{B2f} q={qmin}.. {COFACTOR_BITS} cofactor bits"
     )
 
     if args.nosm:
@@ -208,7 +239,7 @@ def main():
     print(f"Root r = {r}")
 
     ls, rs = [], []
-    for _l in sieve_vk.smallprimes(B1):
+    for _l in sieve_vk.smallprimes(B1g):
         _rs = flint.nmod_poly(g, _l).roots()
         for _r, _ in _rs:
             ls.append(_l)
@@ -222,12 +253,21 @@ def main():
     LOGAREA = qs[-1][0].bit_length() + 2 * I
     # We sieve g(x) which has size log2(N)/3 + 2 log2(x) but has a known factor q
     gsize = max(_gi.bit_length() for _gi in g)
-    THRESHOLD = (
-        gsize + 2 * LOGAREA // 2 - qs[-1][0].bit_length() - COFACTOR_BITS
-    )
+    THRESHOLD = gsize + 2 * LOGAREA // 2 - qs[-1][0].bit_length() - COFACTOR_BITS
+
+    ls2, rs2 = None, None
+    if B1f > 0:
+        ls2, rs2 = [], []
+        for _l in sieve_vk.smallprimes(B1f):
+            _rs = flint.nmod_poly(f, _l).roots()
+            for _r, _ in _rs:
+                ls2.append(_l)
+                rs2.append(_r)
 
     sievepool = multiprocessing.Pool(
-        1, initializer=worker_init, initargs=(g, ls, rs, THRESHOLD, I)
+        1,
+        initializer=worker_init,
+        initargs=(g, ls, rs, THRESHOLD, I, f, ls2, rs2, thr2),
     )
     factorpool = multiprocessing.Pool(
         args.ncpu or os.cpu_count(),
@@ -274,7 +314,7 @@ def main():
                     continue
                 # facg will omit q
                 str_facf = ",".join(f"{_l:x}" for _l in facf)
-                str_facg = ",".join(f"{_l:x}" for _l in facg + [q])
+                str_facg = ",".join(f"{_l:x}" for _l in facg)
                 for _l, _r in zip(facf, idealf):
                     seenf.add((_l << 32) | _r)
                 for _l, _r in zip(facg, idealg):

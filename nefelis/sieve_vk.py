@@ -10,7 +10,7 @@ import numpy as np
 import kp
 import flint
 
-from nefelis.vulkan import shader
+from nefelis.vulkan import shader, stamp_period
 
 DEBUG_ROOTS = False
 DEBUG_TIMINGS = False
@@ -18,7 +18,19 @@ OUTLEN = 256 * 1024
 
 
 class Siever:
-    def __init__(self, poly, primes, roots, threshold, I=14):
+    def __init__(
+        self,
+        poly,
+        primes,
+        roots,
+        threshold,
+        I=14,
+        poly2=None,
+        primes2=None,
+        roots2=None,
+        threshold2=None,
+        /,
+    ):
         mgr = kp.Manager()
         tprimes = mgr.tensor_t(np.array(primes, dtype=np.uint32))
         troots = mgr.tensor_t(np.array(roots, dtype=np.uint32))
@@ -36,7 +48,19 @@ class Siever:
             "WIDTH": 1 << I,
             "LOGWIDTH": I,
             "WGROWS": WGROWS,
+            "FACS_PER_OUTPUT": FACS_PER_OUTPUT,
         }
+
+        GPU_FACTOR = False
+        if primes2:
+            assert primes2 and roots2 and len(primes2) == len(roots2) and threshold2
+            GPU_FACTOR = True
+            tprimes2 = mgr.tensor_t(np.array(primes2, dtype=np.uint32))
+            troots2 = mgr.tensor_t(np.array(roots2, dtype=np.uint32))
+            tqroots2 = mgr.tensor_t(np.zeros(len(roots2), dtype=np.uint32))
+            touttemp = mgr.tensor_t(np.zeros(4 * OUTLEN, dtype=np.int32))
+            defines["DEGREE2"] = len(poly2) - 1
+            defines["THRESHOLD2"] = threshold2
 
         if primes[-1] > 4 * WIDTH:
             # Manage huge primes
@@ -44,15 +68,19 @@ class Siever:
             hugep = primes[hugeidx]
             avg_bucket = WIDTH * (math.log(math.log(primes[-1]) / math.log(hugep)))
             bucket = int(1.1 * avg_bucket / 8 + 1) * 8
-        
+
             defines |= {
-                    "HUGE_PRIME": hugeidx,
-                    "BUCKET_SIZE": bucket,
+                "HUGE_PRIME": hugeidx,
+                "BUCKET_SIZE": bucket,
             }
-            thuge = mgr.tensor_t(np.zeros(N_WG * bucket * (WGROWS - 1), dtype=np.uint16).view(np.uint32))
+            thuge = mgr.tensor_t(
+                np.zeros(N_WG * bucket * (WGROWS - 1), dtype=np.uint16).view(np.uint32)
+            )
 
             memhuge = thuge.size() * 4
-            logging.info(f"Sieving with huge primes (primes[{hugeidx}]={hugep}, bucket size {bucket}, memory {memhuge>>20}MiB)")
+            logging.info(
+                f"Sieving with huge primes (primes[{hugeidx}]={hugep}, bucket size {bucket}, memory {memhuge >> 20}MiB)"
+            )
         else:
             thuge = mgr.tensor_t(np.zeros(1, dtype=np.int32))
 
@@ -62,14 +90,27 @@ class Siever:
         else:
             tdebug = mgr.tensor_t(np.zeros(1, dtype=np.int32))
 
-        shader1 = shader("sieve_rat_1roots")
+        shader1 = shader("sieve_rat_1roots", defines)
         shader2 = shader("sieve_rat_2sieve", defines)
-        algo1 = mgr.algorithm(
-            [tprimes, troots, tq, tqroots], shader1, (len(primes) // 256 + 1, 1, 1)
-        )
+        tensors1 = [tprimes, troots, tq, tqroots, tout]
+        if GPU_FACTOR:
+            tensors1 += [touttemp, tprimes2, troots2, tqroots2]
+        else:
+            tensors1 += [tout]
+        algo1 = mgr.algorithm(tensors1, shader1, (len(primes) // 256 + 1, 1, 1))
         algo2 = mgr.algorithm(
-            [tprimes, tqroots, tq, tout, thuge, tdebug], shader2, (N_WG, 1, 1)
+            [tprimes, tqroots, tq, touttemp if GPU_FACTOR else tout, thuge, tdebug],
+            shader2,
+            (N_WG, 1, 1),
         )
+        if GPU_FACTOR:
+            shader3 = shader("sieve_3factor", defines)
+            algo3 = mgr.algorithm(
+                [tprimes2, tqroots2, tq, touttemp, tout],
+                shader3,
+                (OUTLEN // 256, 1, 1),
+            )
+            mgr.sequence().record(kp.OpTensorSyncDevice([tprimes2, troots2])).eval()
 
         # Send constants
         mgr.sequence().record(kp.OpTensorSyncDevice([tprimes, troots])).eval()
@@ -82,36 +123,69 @@ class Siever:
         self.tout = tout
         self.algo1 = algo1
         self.algo2 = algo2
+        if GPU_FACTOR:
+            self.algo3 = algo3
+        else:
+            self.algo3 = None
         self.defines = defines
 
     def sieve(self, q, qr):
         qred = flint.fmpz_mat([[q, 0], [qr, 1]]).lll()
         a, c, b, d = qred.entries()
 
-        self.tout.data()[:2].fill(0)
         self.tq.data()[:] = [a, b, c, d]
         seq = self.mgr.sequence(total_timestamps=16)
-        seq.record(kp.OpTensorSyncDevice([self.tq, self.tout]))
+        seq.record(kp.OpTensorSyncDevice([self.tq]))
         seq.record(kp.OpAlgoDispatch(self.algo1))
         seq.record(kp.OpAlgoDispatch(self.algo2))
+        if self.algo3 is not None:
+            seq.record(kp.OpAlgoDispatch(self.algo3))
         seq.record(kp.OpTensorSyncLocal([self.tout]))
         seq.eval()
 
         if DEBUG_TIMINGS:
             ts = seq.get_timestamps()
-            print([t1 - t0 for t0, t1 in zip(ts, ts[1:])])
+            print(
+                [round((t1 - t0) * stamp_period() * 1e-6) for t0, t1 in zip(ts, ts[1:])]
+            )
 
         if DEBUG_ROOTS:
-            tdebug = self.algo2.get_tensors()[-1]
-            self.mgr.sequence().record(kp.OpTensorSyncLocal([tdebug])).eval()
-            for pidx, x in enumerate(tdebug.data()):
-                p = self.primes[pidx]
-                r = self.roots[pidx]
-                xx = a * int(x) + b * 1337
-                yy = c * int(x) + d * 1337
-                if r == p:
-                    continue
+            print("Q", a, b, c, d)
+            tprimes = self.algo1.get_tensors()[0]
+            troots = self.algo1.get_tensors()[1]
+            tqroots = self.algo1.get_tensors()[3]
+            self.mgr.sequence().record(
+                kp.OpTensorSyncLocal([tprimes, troots, tqroots])
+            ).eval()
+            for p, r, qr in zip(tprimes.data(), troots.data(), tqroots.data()):
+                # p, r, qr = int(p), int(r), int(qr)
+                if qr == p:
+                    xx, yy = a, c
+                else:
+                    xx = a * qr + b
+                    yy = c * qr + d
                 assert (xx - r * yy) % p == 0, (p, r)
+            del p, r, qr
+            if self.algo3:
+                tprimes2 = self.algo1.get_tensors()[6]
+                troots2 = self.algo1.get_tensors()[7]
+                tqroots2 = self.algo1.get_tensors()[8]
+                self.mgr.sequence().record(
+                    kp.OpTensorSyncLocal([tprimes2, troots2, tqroots2])
+                ).eval()
+                qroots2 = (
+                    tqroots2.data().view(np.int16).reshape((len(tprimes2.data()), 2))
+                )
+                for p, r, qr in zip(tprimes2.data(), troots2.data(), qroots2):
+                    p, r, qrx, qry = int(p), int(r), int(qr[0]), int(qr[1])
+                    # This is such that:
+                    # qrx * y == qry * x mod p IFF X/Y=r mod p where X,Y = Q(x,y)
+                    xx = a * qrx + b * qry
+                    yy = c * qrx + d * qry
+                    if r == p:
+                        assert yy % p == 0
+                    else:
+                        assert (r * yy - xx) % p == 0, (p, r, qrx, qry)
 
         bout = self.tout.data()
         # print(bout.reshape((OUTLEN, 2)))

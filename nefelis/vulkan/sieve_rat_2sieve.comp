@@ -102,7 +102,7 @@ void prepare_huge(uint pidx) {
   const uint p = primes[pidx];
   const uint logp = findMSB(p);
   // We store logp/2 in the upper bits of the huge buffer.
-  const uint logp_bits = clamp((logp - LOGWIDTH)/ 2, 0, 65536 / WIDTH);
+  const uint logp_bits = clamp((logp - LOGWIDTH) / 2, 0, 65536 / WIDTH);
   const float pinv = 1.0 / float(p);
 
   const uint qr = qroots[pidx];
@@ -187,7 +187,12 @@ void dorow(int y) {
         const uint x = 4 * (i + tidx) + ii;
         const uint ridx = atomicAdd(result[0].x, 1);
         if (ridx + 1 < result.length())
+#ifdef THRESHOLD2
+          // don't multiply by Q matrix yet
+          result[1 + ridx] = ivec2(x, y);
+#else
           result[1 + ridx] = ivec2(q.x * x + q.y * y, q.z * x + q.w * y);
+#endif
       }
     }
   }
