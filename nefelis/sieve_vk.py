@@ -48,7 +48,6 @@ class Siever:
             "WIDTH": 1 << I,
             "LOGWIDTH": I,
             "WGROWS": WGROWS,
-            "FACS_PER_OUTPUT": FACS_PER_OUTPUT,
         }
 
         GPU_FACTOR = False

@@ -292,7 +292,7 @@ def polyselect(N: int, bound: int | None = None):
         nonlocal counter
         # Assume that a > 0, 0 < d <= a
         for a in range(1, bound):
-            #logging.debug(f"Trying a={a}")
+            # logging.debug(f"Trying a={a}")
             for b in range(-bound, bound):
                 for c in range(-bound, bound):
                     for d in range(1, a + 1):

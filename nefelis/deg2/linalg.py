@@ -84,7 +84,9 @@ def idealgen(f: list[int], l: int, r: int):
 
 def main():
     argp = argparse.ArgumentParser()
-    argp.add_argument("--blockw", type=int, help="Use Block Wiedemann with size m=ARG n=1")
+    argp.add_argument(
+        "--blockw", type=int, help="Use Block Wiedemann with size m=ARG n=1"
+    )
     argp.add_argument("WORKDIR")
     args = argp.parse_args()
     workdir = pathlib.Path(args.WORKDIR)
