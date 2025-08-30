@@ -89,8 +89,11 @@ def main():
     )
     argp.add_argument("WORKDIR")
     args = argp.parse_args()
-    workdir = pathlib.Path(args.WORKDIR)
+    main_impl(args)
 
+
+def main_impl(args):
+    workdir = pathlib.Path(args.WORKDIR)
     with open(workdir / "args.json") as f:
         doc = json.load(f)
         n = doc["n"]
@@ -163,10 +166,10 @@ def main():
     dim = len(set(key for r in rels3 for key in r))
     rels3 = rels3[:dim]
 
+    ell = n // 2  # FIXME
     M = SpMV(rels3)
     basis = M.basis
     dim = M.dim
-    ell = n // 2
     poly = M.wiedemann_big(ell, blockm=args.blockw or 1)
     print("Computed characteristic poly", poly[:10], "...", poly[-10:])
 

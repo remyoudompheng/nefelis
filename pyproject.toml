@@ -19,12 +19,17 @@ dependencies = [
   "networkx>=3.2"
 ]
 
+[project.scripts]
+nefelis = "nefelis:main"
+
 [tool.setuptools]
-packages = ["nefelis"]
 ext-modules = [{name = "nefelis_flint_extras", sources = ["nefelis/nefelis_flint_extras.pyx"], libraries = ["flint"]}]
 
+[tool.setuptools.packages.find]
+include = ['nefelis*']
+
 [tool.setuptools.package-data]
-nefelis = ["vulkan"]
+nefelis = ["vulkan/*.comp"]
 
 [tool.pytest.ini_options]
 addopts = "--doctest-modules"

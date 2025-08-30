@@ -187,13 +187,16 @@ def main():
     )
     argp.add_argument("--ncpu", type=int, help="CPU threads for factoring")
     argp.add_argument("N", type=int)
-    argp.add_argument("OUTDIR")
+    argp.add_argument("WORKDIR")
     args = argp.parse_args()
 
     logging.getLogger().setLevel(level=logging.DEBUG)
+    main_impl(args)
 
+
+def main_impl(args):
     N = args.N
-    datadir = pathlib.Path(args.OUTDIR)
+    datadir = pathlib.Path(args.WORKDIR)
     datadir.mkdir(exist_ok=True)
 
     ell = N // 2  # FIXME: support user ell
@@ -341,6 +344,9 @@ def main():
         if total > 1.1 * (fcount + gcount):
             logging.info("Enough relations")
             break
+
+    factorpool.close()
+    sievepool.close()
 
     # CADO-NFS requires that the relation file ends with \n
     # Print statistics in CADO-compatible format

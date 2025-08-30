@@ -165,13 +165,16 @@ def main():
         "--nogpufactor", action="store_true", help="Don't perform trial division on GPU"
     )
     argp.add_argument("N", type=int)
-    argp.add_argument("OUTDIR")
+    argp.add_argument("WORKDIR")
     args = argp.parse_args()
 
     logging.getLogger().setLevel(level=logging.DEBUG)
+    main_impl(args)
 
+
+def main_impl(args):
     N = args.N
-    datadir = pathlib.Path(args.OUTDIR)
+    datadir = pathlib.Path(args.WORKDIR)
     datadir.mkdir(exist_ok=True)
 
     ell = N // 2  # FIXME: support user ell

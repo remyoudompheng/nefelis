@@ -13,12 +13,12 @@ has rank 1). In this case, we can replace the Schirokauer map
 by an explicit factorization of algebraic numbers.
 """
 
+import argparse
 import json
 import logging
 import math
 import pathlib
 import random
-import sys
 
 import flint
 
@@ -42,7 +42,17 @@ def read_relations(filepath: str | pathlib.Path):
 
 
 def main():
-    workdir = pathlib.Path(sys.argv[1])
+    argp = argparse.ArgumentParser()
+    argp.add_argument(
+        "--blockw", type=int, help="Use Block Wiedemann with size m=ARG n=1"
+    )
+    argp.add_argument("WORKDIR")
+    args = argp.parse_args()
+    main_impl(args)
+
+
+def main_impl(args):
+    workdir = pathlib.Path(args.WORKDIR)
 
     with open(workdir / "args.json") as f:
         doc = json.load(f)
@@ -121,7 +131,7 @@ def main():
     basis = M.basis
     dim = M.dim
     ell = n // 2
-    poly = M.wiedemann_big(ell)
+    poly = M.wiedemann_big(ell, blockm=args.blockw or 1)
     print("Computed characteristic poly", poly[:10], "...", poly[-10:])
 
     poly = [ai * pow(poly[-1], -1, ell) % ell for ai in poly]
