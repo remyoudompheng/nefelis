@@ -131,7 +131,7 @@ class SpMV:
             # FIXME: polyeval does not like spmv_bigint2
             return [
                 (name, shader(name, defines))
-                for name in ("spmv_bigint", "spmv_bigint2", "spmv_bigint3")
+                for name in ("spmv_bigint", "spmv_bigint3")
             ]
         return [
             (name, shader(name, defines))
