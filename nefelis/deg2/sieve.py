@@ -37,6 +37,8 @@ except ImportError:
 from nefelis import sieve_vk
 from nefelis.deg2.polyselect import polyselect
 
+logger = logging.getLogger("sieve")
+
 
 class Factorer:
     def __init__(self, f, g, B2f, B2g):
@@ -186,7 +188,7 @@ def main_impl(args):
     B1f, thr2 = 0, 0
     if not args.nogpufactor:
         B1f, thr2 = get_params2(N)
-    logging.info(
+    logger.info(
         f"Sieving with B1={B1g / 1000:.0f}k,{B1f / 1000:.0f}k log(B2)={B2g},{B2f} q={qmin}.. {COFACTOR_BITS} cofactor bits"
     )
 
@@ -197,9 +199,9 @@ def main_impl(args):
     r = v * pow(-u, -1, N) % N
     assert (u * r + v) % N == 0
     assert (A * r * r + B * r + C) % N == 0
-    print(f"f = {A} x^2 + {B} x + {C}")
-    print(f"{u = } size {u.bit_length()}")
-    print(f"{v = } size {v.bit_length()}")
+    logger.info(f"f = {A} x^2 + {B} x + {C}")
+    logger.info(f"{u = } size {u.bit_length()}")
+    logger.info(f"{v = } size {v.bit_length()}")
 
     ls = sieve_vk.smallprimes(B1g)
     rs = [(-v * pow(u, -1, l)) % l if u % l else l for l in ls]
@@ -290,12 +292,12 @@ def main_impl(args):
         if elapsed < 2 or elapsed > last_log + 1:
             # Don't log too often.
             last_log = elapsed
-            print(
+            logger.info(
                 f"Sieved q={q:<8} area {total_area / 1e9:.0f}G in {dt:.3f}s (speed {total_area / elapsed / 1e9:.3f}G/s): "
                 f"{nrels}/{len(reports)} relations, {Qcount}/{Kcount} Q/K primes, total {total}"
             )
         if total > 1.1 * Qcount + Kcount:
-            logging.info("Enough relations")
+            logger.info("Enough relations")
             break
 
     # CADO-NFS requires that the relation file ends with \n
@@ -307,7 +309,7 @@ def main_impl(args):
     relf.write(
         f"# Total {total} reports [{1 / rels_per_t:.3g}s/r, {rels_per_q:.3f}r/sq] in {elapsed:.2f} elapsed s\n"
     )
-    print(total, "relations", duplicates, f"duplicates in {elapsed:.3f}s")
+    logger.info(f"{total} relations {duplicates} duplicates in {elapsed:.3f}s")
     relf.close()
 
 

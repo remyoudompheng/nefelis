@@ -11,6 +11,8 @@ from nefelis.vulkan import shader, stamp_period
 
 DEBUG_NO_SORT_ROWS = False
 
+logger = logging.getLogger("linalg")
+
 
 def berlekamp_massey(seq: list[int], l: int):
     ctx = flint.fmpz_mod_poly_ctx(l)
@@ -116,11 +118,11 @@ class SpMV:
         self.mgr = mgr
         self.tensors = [xd, xdbig, xplus, xminus, xidxp, xidxm, xell]
         bitsize = 32 * sum(t.size() for t in self.tensors)
-        logging.debug(f"Matrix format using {bitsize / weight:.1f} bits/coefficient")
-        logging.debug(f"Using bigint arithmetic with {BLEN=} {ALEN=}")
+        logger.debug(f"Matrix format using {bitsize / weight:.1f} bits/coefficient")
+        logger.debug(f"Using bigint arithmetic with {BLEN=} {ALEN=}")
         self.flops = 2 * dim * dense_n + size_plus + size_minus
         self.weight = weight
-        logging.debug(
+        logger.debug(
             f"{self.flops} FLOPS per matrix multiplication (original weight {weight})"
         )
 
@@ -168,9 +170,9 @@ class SpMV:
                 algo_times_show = {
                     _name: round(_t) * 1e-6 for (_name, _), _t in zip(algos, algo_times)
                 }
-                logging.info(f"Matmul shader performance (ms/matmul) {algo_times_show}")
+                logger.info(f"Matmul shader performance (ms/matmul) {algo_times_show}")
                 best_algo = min(range(len(algo_times)), key=lambda idx: algo_times[idx])
-                logging.info(f"Selecting shader {algos[best_algo][0]}")
+                logger.info(f"Selecting shader {algos[best_algo][0]}")
                 algo_idx = best_algo
 
             seq = mgr.sequence(total_timestamps=2 * BATCHSIZE)
@@ -188,7 +190,7 @@ class SpMV:
                 elapsed = t1 - t0
                 gpu_dt = gpu_ticks * stamp_period() * 1e-9
                 speed = BATCHSIZE * (i + 1) / gpu_dt
-                logging.info(
+                logger.info(
                     f"{BATCHSIZE * (i + 1)} matrix muls done in {elapsed:.1f}s ({speed:.1f} SpMV/s, GPU time {gpu_dt:.1f}s)"
                 )
                 t_print = t1
@@ -229,7 +231,7 @@ class SpMV:
 
         tensors = self.tensors + [xv, xiter, xout]
 
-        logging.info(f"Computing a Krylov sequence of length {ITERS}")
+        logger.info(f"Computing a Krylov sequence of length {ITERS}")
 
         t0 = time.monotonic()
         self.ell = l
@@ -255,8 +257,8 @@ class SpMV:
 
         dt = time.monotonic() - t0
         lingen_dt = time.monotonic() - t1
-        logging.info(f"Lingen completed in {lingen_dt:.3f}s (N={dim} m={blockm} n=1)")
-        logging.info(
+        logger.info(f"Lingen completed in {lingen_dt:.3f}s (N={dim} m={blockm} n=1)")
+        logger.info(
             f"Wiedemann completed in {dt:.3f}s (GPU {gpu_dt:.3}s, {flops / 1e9:.2f} GFLOPS, {speed:.1f} SpMV/s)"
         )
 
@@ -306,7 +308,7 @@ class SpMV:
         mgr.sequence().record(kp.OpTensorSyncLocal([xout])).eval()
         vout = xout.data().reshape((dim, ALEN))
         dt = time.monotonic() - t0
-        logging.info(
+        logger.info(
             f"Polyeval completed in {dt:.3f}s (GPU {gpu_dt:.3}s, {flops / 1e9:.2f} GFLOPS, {speed:.1f} SpMV/s)"
         )
         return [from_uvec(vout[i, :]) % l for i in range(dim)]
@@ -339,16 +341,16 @@ def to_sparse_matrix(rels):
     assert len(dense_p) % 4 == 0
 
     dense_weight = sum(stats[p] for p in dense_p) / float(len(rels))
-    logging.debug(f"Dense columns for {len(dense_p)} primes {dense_p}")
-    logging.debug(f"Dense big columns for {dense_big}")
-    logging.info(
+    logger.debug(f"Dense columns for {len(dense_p)} primes {dense_p}")
+    logger.debug(f"Dense big columns for {dense_big}")
+    logger.info(
         f"Dense block has {len(dense_p)} columns, average weight {dense_weight:.1f} per row"
     )
     dense_set = frozenset(dense_p + dense_big)
     sparse_weight = sum(
         sum(abs(e) for p, e in r.items() if p not in dense_set) for r in rels
     ) / float(len(rels))
-    logging.info(f"Sparse block has avg weight {sparse_weight:.1f} per row")
+    logger.info(f"Sparse block has avg weight {sparse_weight:.1f} per row")
 
     # To reduce divergence, we sort rows by the number of ±signs in the sparse part.
     sign_rels = []
@@ -376,7 +378,7 @@ def to_sparse_matrix(rels):
     for i, r in enumerate(rels):
         dense[i, :] = [r.get(p, 0) for p in dense_p]
     dense_norm = max(np.sum(np.abs(dense[i, :])) for i in range(len(rels)))
-    logging.info(f"Dense block has max row norm {dense_norm}")
+    logger.info(f"Dense block has max row norm {dense_norm}")
 
     matbig = []
     for k in dense_big:

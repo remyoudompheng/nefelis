@@ -29,6 +29,8 @@ except ImportError:
 from nefelis import sieve_vk
 from nefelis.deg3.polyselect import polyselect
 
+logger = logging.getLogger("sieve")
+
 
 class Factorer:
     def __init__(self, f, g, B2f, B2g):
@@ -217,7 +219,7 @@ def main_impl(args):
         r = pow(2, (2 * N - 1) // 3, N)
         assert (r**3 - 2) % N == 0
         m = flint.fmpz_mat([[N, 0, 0], [int(r), -1, 0], [int(r * r), 0, -1]]).lll()
-        print(m)
+        # print(m)
         g = None
         for row in m.table():
             if row[1] ** 2 < 4 * row[0] * row[2]:
@@ -235,11 +237,11 @@ def main_impl(args):
         assert A * r * r + B * r + C == 0
         r = int(r)
 
-    print(f"f = {f[3]}*x^3+{f[2]}*x^2+{f[1]}*x+{f[0]}")
+    logger.info(f"f = {f[3]}*x^3+{f[2]}*x^2+{f[1]}*x+{f[0]}")
     C, B, A = g
     assert (A * r * r + B * r + C) % N == 0
-    print(f"g = {A} x² + {B} x + {C}")
-    print(f"Root r = {r}")
+    logger.info(f"g = {A} x² + {B} x + {C}")
+    logger.info(f"Root r = {r}")
 
     ls, rs = [], []
     for _l in sieve_vk.smallprimes(B1g):
@@ -337,7 +339,7 @@ def main_impl(args):
         if elapsed < 2 or elapsed > last_log + 1:
             # Don't log too often.
             last_log = elapsed
-            print(
+            logger.info(
                 f"Sieved q={q} r={qr:<8} area {total_area / 1e9:.0f}G in {dt:.3f}s (speed {total_area / elapsed / 1e9:.3f}G/s): "
                 f"{nrels}/{len(reports)} relations, {gcount}/{fcount} Kg/Kf primes, total {total}"
             )
@@ -357,7 +359,7 @@ def main_impl(args):
     relf.write(
         f"# Total {total} reports [{1 / rels_per_t:.3g}s/r, {rels_per_q:.3f}r/sq] in {elapsed:.2f} elapsed s\n"
     )
-    print(total, "relations", duplicates, f"duplicates in {elapsed:.3f}s")
+    logger.info(f"{total} relations {duplicates} duplicates in {elapsed:.3f}s")
     relf.close()
 
 

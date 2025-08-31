@@ -33,12 +33,23 @@ def main():
     argp.add_argument("WORKDIR", nargs="?")
     args = argp.parse_args()
 
-    logging.getLogger().setLevel(logging.INFO)
-    if args.verbose:
-        logging.getLogger().setLevel(logging.DEBUG)
+    # Logger names should have length <= 6 (poly, sieve, linalg, dlog)
+    level = logging.DEBUG if args.verbose else logging.INFO
+    logging.basicConfig(
+        level=level,
+        force=True,
+        style="{",
+        format="{relativeCreatedSecs: >9.3f}s {levelname[0]} {name:<6s} {message}",
+    )
+
+    def add_relative_seconds(record):
+        record.relativeCreatedSecs = record.relativeCreated / 1000.0
+        return True
+
+    logging.getLogger().handlers[0].addFilter(add_relative_seconds)
 
     if args.WORKDIR is None:
-        logging.info("Creating temporary directory for results")
+        logging.getLogger("main").info("Creating temporary directory for results")
         with tempfile.TemporaryDirectory(prefix="nefelis") as tmpdir:
             args.WORKDIR = tmpdir
             main_impl(args)

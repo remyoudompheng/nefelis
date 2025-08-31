@@ -5,6 +5,8 @@ from multiprocessing import Pool
 
 import flint
 
+logger = logging.getLogger("poly")
+
 # fmt:off
 SMALLPRIMES = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97]
 # fmt:on
@@ -121,7 +123,7 @@ class Polyselect:
                 score = gsize + 0.5 * fbits
                 if score < self.best:
                     self.best = score
-                    logging.debug(
+                    logger.debug(
                         f"GOOD! {D=} {f} "
                         f"fsize={math.log2(fsize) / 2:.1f} a(f)={alph:.2f} normf={fbits:.2f} "
                         f"g {gsize:.2f} score {score:.2f}"
@@ -188,7 +190,7 @@ def polyselect(
 
                     yield D, a, b, c, rD
 
-    logging.info(f"Starting polynomial selection with degree 2 and bound {bound}")
+    logger.info(f"Starting polynomial selection with degree 2 and bound {bound}")
     pool = Pool(initializer=worker_init, initargs=(N,))
     best = 1e9
     best_fg = None
@@ -197,7 +199,7 @@ def polyselect(
             continue
         f, g, score = item
         if score < best:
-            logging.info(f"Found polynomials {f=} {g=} {score=:.2f}")
+            logger.info(f"Found polynomials {f=} {g=} {score=:.2f}")
             best = score
             best_fg = f, g
 

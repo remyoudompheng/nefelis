@@ -32,6 +32,8 @@ import flint
 from nefelis import filter
 from nefelis.linalg_impl import SpMV
 
+logger = logging.getLogger("linalg")
+
 
 def read_relations(filepath: str | pathlib.Path):
     with open(filepath) as f:
@@ -158,7 +160,7 @@ def main_impl(args):
         rels.append(rel)
 
     if duplicates:
-        logging.info(f"{duplicates} duplicate results in input file, ignored")
+        logger.info(f"{duplicates} duplicate results in input file, ignored")
 
     rels2, _ = filter.prune(rels, pathlib.Path(workdir))
     rels3 = filter.filter(rels2, pathlib.Path(workdir))
@@ -171,14 +173,14 @@ def main_impl(args):
     basis = M.basis
     dim = M.dim
     poly = M.wiedemann_big(ell, blockm=args.blockw or 1)
-    print("Computed characteristic poly", poly[:10], "...", poly[-10:])
+    logger.info(f"Computed characteristic poly {poly[:3]}...{poly[-3:]}")
 
     poly = [ai * pow(poly[-1], -1, ell) % ell for ai in poly]
     assert any(ai != 0 for ai in poly)
     assert len(poly) <= dim + 1 and poly[0] == 0, (dim, len(poly), poly[0])
 
     i0 = next(i for i, ai in enumerate(poly) if ai)
-    logging.info(f"Polynomial of degree {len(poly) - 1} is divisible by X^{i0}")
+    logger.info(f"Polynomial of degree {len(poly) - 1} is divisible by X^{i0}")
     wi = [random.randrange(ell) for _ in range(dim)]
     poly_k = poly[i0:]
     ker = M.polyeval(wi, ell, poly_k)
@@ -192,12 +194,12 @@ def main_impl(args):
     for i, ki in enumerate(ker):
         ker[i] = ki * k0inv % ell
 
-    logging.info(f"Computing logarithms in base {basis[idx0]}")
+    logger.info(f"Computing logarithms in base {basis[idx0]}")
     gen = basis[idx0]
 
     bad_indexes = set()
     if len(poly) < dim + 1:
-        logging.info("Computing another kernel vector, solution may not be unique")
+        logger.info("Computing another kernel vector, solution may not be unique")
         wi = [random.randrange(ell) for _ in range(dim)]
         poly_k = poly[i0:]
         ker2 = M.polyeval(wi, ell, poly_k)
@@ -207,14 +209,14 @@ def main_impl(args):
         for i in range(len(ker2)):
             ker2[i] = ker2[i] * k1inv % ell
             if ker2[i] != ker[i]:
-                logging.info(f"Ambiguous logarithm for prime {basis[i]}")
+                logger.info(f"Ambiguous logarithm for prime {basis[i]}")
                 bad_indexes.add(i)
 
     # Validate result
     prime_idx = {l: idx for idx, l in enumerate(basis)}
     for r in rels3:
         if any(prime_idx[l] in bad_indexes for l in r):
-            logging.error("Skip check for bad relation {r}")
+            logger.error("Skip check for bad relation {r}")
             continue
         assert sum(e * ker[prime_idx[l]] for l, e in r.items()) % ell == 0
 
@@ -240,15 +242,15 @@ def main_impl(args):
                 added += 1
             else:
                 pass
-                # logging.debug(f"incomplete relation for {l}")
+                # logger.debug(f"incomplete relation for {l}")
 
-    logging.info(f"{added} logarithms deduced from {nremoved} removed relations")
-    logging.info(f"{len(dlog)} primes have known virtual logarithms")
+    logger.info(f"{added} logarithms deduced from {nremoved} removed relations")
+    logger.info(f"{len(dlog)} primes have known virtual logarithms")
 
-    logging.info("Collecting relations from full sieve results")
+    logger.info("Collecting relations from full sieve results")
     extra = rels.copy()
     for iter in range(2, 5):
-        logging.info(f"Running pass {iter} for {len(extra)} remaining relations")
+        logger.info(f"Running pass {iter} for {len(extra)} remaining relations")
         remaining = []
         for rel in extra:
             news = [l for l in rel if l not in dlog]
@@ -262,7 +264,7 @@ def main_impl(args):
         if len(remaining) == len(extra):
             break
         extra = remaining
-        logging.info(f"{len(dlog)} primes have known coordinates")
+        logger.info(f"{len(dlog)} primes have known coordinates")
 
     # Output result in a format similar to CADO
     # Columns:
@@ -283,7 +285,7 @@ def main_impl(args):
         # The key u=g[1] actually represents u/A
         if l == g[1]:
             if pow(gen, (v - Ainvlog) * coell, n) != pow(l, coell, n):
-                logging.error(f"FAIL {l} != ± {gen}^{v}")
+                logger.error(f"FAIL {l} != ± {gen}^{v}")
                 raise ValueError("wrong logarithm of constant coefficients")
 
             dlogs.append((l, "CONSTANT", r, v))
@@ -297,7 +299,7 @@ def main_impl(args):
             # Check logarithm
             # assert pow(gen, v * coell, n) == pow(l, coell, n), f"{l} != ± {gen}^{v}"
             if pow(gen, v * coell, n) != pow(l, coell, n):
-                logging.error(f"FAIL {l} != ± {gen}^{v}")
+                logger.error(f"FAIL {l} != ± {gen}^{v}")
                 raise ValueError(f"Incorrect logarithm of rational prime {l}")
             else:
                 # print(f"Checked rational {l} {v}")
@@ -314,7 +316,7 @@ def main_impl(args):
                     vv = v
                 else:
                     if l not in dlog:
-                        # logging.warning(f"Cannot check ideal {(l, r)}")
+                        # logger.warning(f"Cannot check ideal {(l, r)}")
                         break
                     vv = dlog[l] - v
 
@@ -322,7 +324,7 @@ def main_impl(args):
                 for _l, _r, _e in ideals:
                     r0 = roots_f.get(_l)
                     if r0 is None or _l not in dlog or -_l not in dlog:
-                        logging.warning(f"missing small ideal {_l},{_r} in factor base")
+                        logger.warning(f"missing small ideal {_l},{_r} in factor base")
                         logz = None
                         break
                     if _r == r0[0]:
@@ -333,20 +335,20 @@ def main_impl(args):
                     continue
 
                 if logz is None:
-                    logging.warning(
+                    logger.warning(
                         f"Unable to check logarithm of {xl}+{yl}i in ideal ({l},{r})"
                     )
                 else:
                     zz = xl + z * yl
                     if pow(gen, logz * coell, n) != pow(zz, coell, n):
-                        logging.error(f"FAIL {xl}+{yl}*ω != ± {gen}^{logz}")
+                        logger.error(f"FAIL {xl}+{yl}*ω != ± {gen}^{logz}")
                         raise
-                    # logging.debug(f"Checked algebraic {xl}+{yl}*ω == ± {gen}^{logz}")
+                    # logger.debug(f"Checked algebraic {xl}+{yl}*ω == ± {gen}^{logz}")
                     k_checked += 1
 
                 dlogs.append((l, 1, r, vv))
 
-    logging.info(
+    logger.info(
         f"Successfully checked logarithms for {z_checked} rational and {k_checked} algebraic ideals"
     )
 

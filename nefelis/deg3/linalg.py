@@ -28,6 +28,8 @@ from nefelis.deg3.cubic import CubicField
 
 DEBUG_RELS = False
 
+logger = logging.getLogger("linalg")
+
 
 def read_relations(filepath: str | pathlib.Path):
     with open(filepath) as f:
@@ -139,7 +141,7 @@ def main_impl(args):
     assert len(poly) <= dim + 1 and poly[0] == 0, (dim, len(poly), poly[0])
 
     i0 = next(i for i, ai in enumerate(poly) if ai)
-    logging.info(f"Polynomial is divisible by X^{i0}")
+    logger.info(f"Polynomial is divisible by X^{i0}")
     wi = [random.randrange(ell) for _ in range(dim)]
     poly_k = poly[i0:]
     ker = M.polyeval(wi, ell, poly_k)
@@ -149,7 +151,7 @@ def main_impl(args):
     prime_idx = {l: idx for idx, l in enumerate(basis)}
     for r in rels3:
         assert sum(e * ker[prime_idx[l]] for l, e in r.items()) % ell == 0
-    logging.info("Checked element of matrix right kernel")
+    logger.info("Checked element of matrix right kernel")
 
     assert len(basis) == len(ker)
 
@@ -172,15 +174,15 @@ def main_impl(args):
                 added += 1
             else:
                 pass
-                # logging.debug(f"incomplete relation for {l}")
+                # logger.debug(f"incomplete relation for {l}")
 
-    logging.info(f"{added} logarithms deduced from {nremoved} removed relations")
-    logging.info(f"{len(dlog)} primes have known virtual logarithms")
+    logger.info(f"{added} logarithms deduced from {nremoved} removed relations")
+    logger.info(f"{len(dlog)} primes have known virtual logarithms")
 
-    logging.info("Collecting relations from full sieve results")
+    logger.info("Collecting relations from full sieve results")
     extra = rels.copy()
     for iter in range(2, 5):
-        logging.info(f"Running pass {iter} for {len(extra)} remaining relations")
+        logger.info(f"Running pass {iter} for {len(extra)} remaining relations")
         remaining = []
         for rel in extra:
             news = [l for l in rel if l not in dlog]
@@ -194,7 +196,7 @@ def main_impl(args):
         if len(remaining) == len(extra):
             break
         extra = remaining
-        logging.info(f"{len(dlog)} primes have known coordinates")
+        logger.info(f"{len(dlog)} primes have known coordinates")
 
     f_primes = {}
     g_primes = {}
@@ -228,7 +230,7 @@ def main_impl(args):
     ginv = pow(dlog[gen], -1, ell)
     for k in dlog:
         dlog[k] = dlog[k] * ginv % ell
-    logging.info(f"Computed logarithms in base {gen}")
+    logger.info(f"Computed logarithms in base {gen}")
 
     # Check rational primes
     checked = 0
@@ -237,11 +239,11 @@ def main_impl(args):
         if k.startswith("Z"):
             krat = int(k[2:])
             if pow(grat, dlog[k], n) not in (krat, n - krat):
-                logging.error(f"WRONG VALUE dlog({k}) = {dlog[k]}")
+                logger.error(f"WRONG VALUE dlog({k}) = {dlog[k]}")
                 dlog[k] = None
                 continue
             checked += 1
-    logging.info(f"Checked logarithms for {checked} rational primes")
+    logger.info(f"Checked logarithms for {checked} rational primes")
 
     dlogs = [(k, v) for k, v in dlog.items()]
     with open(workdir / "dlog", "w") as w:

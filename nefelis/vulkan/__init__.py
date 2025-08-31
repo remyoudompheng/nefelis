@@ -4,6 +4,8 @@ import os
 import subprocess
 import logging
 
+logger = logging.getLogger("vulkan")
+
 
 def shader(name, defines=None, entry="main"):
     if defines is None:
@@ -18,7 +20,7 @@ def shader(name, defines=None, entry="main"):
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
         )
-        logging.debug(f"Exec {' '.join(p.args)}")
+        logger.debug(f"Exec {' '.join(p.args)}")
         out, err = p.communicate(timeout=1)
     if p.returncode:
         raise EnvironmentError(f"shader compilation failed: code {p.returncode}")
@@ -35,7 +37,7 @@ class GPUInfo:
         self.loaded = True
         try:
             self.vulkaninfo()
-            logging.info("Loaded information from vulkaninfo")
+            logger.info("Loaded information from vulkaninfo")
         except Exception:
             pass
 
