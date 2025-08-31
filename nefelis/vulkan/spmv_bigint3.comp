@@ -33,27 +33,33 @@
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
 layout(binding = 0) readonly buffer Dense { int8_t dense[]; };
-layout(binding = 1) readonly buffer SparsePlus { uint16_t plus[]; };
-layout(binding = 2) readonly buffer SparseMinus { uint16_t minus[]; };
-layout(binding = 3) readonly buffer IdxPlus { uint idxPlus[]; };
-layout(binding = 4) readonly buffer IdxMinus { uint idxMinus[]; };
+// Array of Schirokauer maps: they are stored in Montgomery convention
+// dbig[i] = SM[i] * W^BLEN % p where W = 2^32
+layout(binding = 1) readonly buffer DenseBig { uint[BLEN] dbig[]; };
+layout(binding = 2) readonly buffer SparsePlus { uint16_t plus[]; };
+layout(binding = 3) readonly buffer SparseMinus { uint16_t minus[]; };
+layout(binding = 4) readonly buffer IdxPlus { uint idxPlus[]; };
+layout(binding = 5) readonly buffer IdxMinus { uint idxMinus[]; };
+layout(binding = 6) readonly buffer P {
+  uint[BLEN] p;
+  uint[BLEN] pinv;
+};
 // Vector of size 2N:
 // even iterations do V[N:2N] = M * V[0:N]
 // odd iterations do V[0:N] = M * V[N:2N]
-layout(binding = 5) buffer V { uint[BLEN] v[]; };
+layout(binding = 7) buffer V { uint[BLEN] v[]; };
 // Vector of identical values (1 per workgroup) indicating iteration count
-layout(binding = 6) buffer Iter { uint iter[]; };
-layout(binding = 7) readonly buffer P { uint[BLEN] p; };
+layout(binding = 8) buffer Iter { uint iter[]; };
 #ifdef POLYEVAL
 // Polynomial sum(ak X^k)
-layout(binding = 8) readonly buffer Poly { uint[BLEN] ak[]; };
+layout(binding = 9) readonly buffer Poly { uint[BLEN] ak[]; };
 // Output sum(ak M^k V) where coefficients are not reduced modulo p.
 // The upper bound for values is deg(Poly)·p²
-layout(binding = 9) coherent buffer Wout { uint[ALEN] wout[]; };
+layout(binding = 10) coherent buffer Wout { uint[ALEN] wout[]; };
 #else
 // Output buffer for Wiedemann algorithm sequence: wout[iter] = sum(v[idx] where
 // wsel[idx]=1)
-layout(binding = 8) coherent buffer Wout { uint[BLOCKM][BLEN] wout[]; };
+layout(binding = 9) coherent buffer Wout { uint[BLOCKM][BLEN] wout[]; };
 #endif
 
 #include <bigint.comp>
@@ -107,11 +113,72 @@ void main() {
     sub(acc, v[off0 + base + c]);
   }
   // Output result to next row
+#if defined(SM) || defined(POLYEVAL)
+  uint[ALEN] w;
+#endif
+#ifdef SM
+  // By convention, the index of SM coordinates are DENSE, DENSE+1...
+  modp(acc);
+  for (uint i = 0; i < ALEN; i++)
+    w[i] = 0;
+  // In Montgomery convention, acc must be shifted by BLEN words.
+  for (uint i = 0; i < BLEN; i++)
+    w[BLEN + i] = acc[i];
+  // Compute w = acc + mi * v[DENSE_N]
+  for (uint i = 0; i < BLEN; i++) {
+    uint mi = dbig[row][i];
+    uint carry = 0;
+    for (uint j = 0; j < BLEN; j++) {
+      if (i + j >= ALEN)
+        break;
+      uint64_t wij =
+          uint64_t(mi) * uint64_t(v[off0 + DENSE_N][j]) + w[i + j] + carry;
+      w[i + j] = uint(wij);
+      carry = uint(wij >> 32);
+    }
+    // w[i+BLEN:] += carry
+    for (uint j = i + BLEN; j < ALEN; j++) {
+      w[j] = uaddCarry(w[j], carry, carry);
+    }
+  }
+  // Montgomery reduction:
+  // acc = mul_low(w, pinv)
+  for (uint i = 0; i < BLEN; i++)
+    acc[i] = 0;
+  for (uint i = 0; i < BLEN; i++) {
+    uint carry = 0;
+    for (uint j = 0; j < BLEN; j++) {
+      if (i + j >= BLEN)
+        break;
+      uint64_t wij = uint64_t(w[i]) * uint64_t(pinv[j]) + acc[i + j] + carry;
+      acc[i + j] = uint(wij);
+      carry = uint(wij >> 32);
+    }
+  }
+  // w += acc * p
+  for (uint i = 0; i < BLEN; i++) {
+    uint carry = 0;
+    for (uint j = 0; j < BLEN; j++) {
+      if (i + j >= ALEN)
+        break;
+      uint64_t wij = uint64_t(acc[i]) * uint64_t(p[j]) + w[i + j] + carry;
+      w[i + j] = uint(wij);
+      carry = uint(wij >> 32);
+    }
+    // w[i+BLEN:] += carry
+    for (uint j = i + BLEN; j < ALEN; j++) {
+      w[j] = uaddCarry(w[j], carry, carry);
+    }
+  }
+  // Shift left
+  for (uint i = 0; i < BLEN; i++)
+    acc[i] = w[BLEN + i];
+#endif
   modp(acc);
   v[off1 + row] = acc;
 #ifdef POLYEVAL
   // wout[row] += ak[idx+1] * acc
-  uint[ALEN] w = wout[row];
+  w = wout[row];
   for (uint i = 0; i < BLEN; i++) {
     uint aki = ak[idx + 1][i];
     // w += aki * W^i * acc

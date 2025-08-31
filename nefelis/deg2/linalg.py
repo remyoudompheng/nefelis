@@ -167,7 +167,7 @@ def main_impl(args):
     rels3 = rels3[:dim]
 
     ell = n // 2  # FIXME
-    M = SpMV(rels3)
+    M = SpMV(rels3, ell)
     basis = M.basis
     dim = M.dim
     poly = M.wiedemann_big(ell, blockm=args.blockw or 1)

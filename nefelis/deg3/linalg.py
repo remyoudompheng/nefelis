@@ -127,10 +127,10 @@ def main_impl(args):
     dim = len(set(key for r in rels3 for key in r))
     rels3 = rels3[:dim]
 
-    M = SpMV(rels3)
+    ell = n // 2  # FIXME
+    M = SpMV(rels3, ell)
     basis = M.basis
     dim = M.dim
-    ell = n // 2
     poly = M.wiedemann_big(ell, blockm=args.blockw or 1)
     print("Computed characteristic poly", poly[:10], "...", poly[-10:])
 
@@ -149,6 +149,7 @@ def main_impl(args):
     prime_idx = {l: idx for idx, l in enumerate(basis)}
     for r in rels3:
         assert sum(e * ker[prime_idx[l]] for l, e in r.items()) % ell == 0
+    logging.info("Checked element of matrix right kernel")
 
     assert len(basis) == len(ker)
 

@@ -29,7 +29,7 @@ class SpMV:
     to explain that following indices belong to another block of size 0xffff
     """
 
-    def __init__(self, rels: list[dict], gpu_idx=0):
+    def __init__(self, rels: list[dict], ell: int, gpu_idx=0):
         """
         Build internal representation of a sparse matrix where
         input rows are given as dictionaries.
@@ -37,19 +37,40 @@ class SpMV:
         Dictionary keys are opaque labels corresponding to matrix columns.
         """
         weight = sum(len(r) for r in rels)
-        basis, dense, plus, minus, _norm = to_sparse_matrix(rels)
+        basis, dense, densebig, plus, minus = to_sparse_matrix(rels)
         dim, dense_n = dense.shape
         assert (dim * dense_n) % 4 == 0
         self.defines = {"N": dim, "DENSE_N": dense_n}
 
         self.basis = basis
         self.dim = dim
+        self.densebig = densebig
+
+        BLEN = (ell.bit_length() + 8 + 31) // 32
+        maxout = ell * ell * (dim + 1)
+        ALEN = max(2 * BLEN, (maxout.bit_length() + 4 + 31) // 32)
+        self.defines |= {"ALEN": ALEN, "BLEN": BLEN}
 
         # Prepare tensors
         mgr = kp.Manager(gpu_idx)
         if dense.size == 0:
             dense = np.zeros(1, dtype=np.uint32)
         xd = mgr.tensor_t(dense.flatten().view(np.uint32))
+        if densebig:
+            # SM vectors are stored in Montgomery form.
+            R = (1 << (32 * BLEN)) % ell
+            dbig = np.zeros((dim, BLEN), dtype=np.uint32)
+            for i in range(dim):
+                dbig[i, :] = to_array(densebig[i] * R % ell, BLEN)
+            xdbig = mgr.tensor_t(dbig.flatten())
+            self.defines["SM"] = 1
+        else:
+            xdbig = mgr.tensor_t(np.zeros(1, dtype=np.uint32))  # dummy
+
+        pwords = to_uvec(ell, BLEN)
+        assert pwords[-2] > 2**16
+        pinvwords = to_uvec(pow(-ell, -1, 2 ** (32 * BLEN)), BLEN)
+        xell = mgr.tensor_t(np.array(pwords + pinvwords, dtype=np.uint32))
 
         # Encode rows
         def encode_row(row):
@@ -93,9 +114,10 @@ class SpMV:
         xidxm = mgr.tensor_t(aidx_minus)
 
         self.mgr = mgr
-        self.tensors = [xd, xplus, xminus, xidxp, xidxm]
+        self.tensors = [xd, xdbig, xplus, xminus, xidxp, xidxm, xell]
         bitsize = 32 * sum(t.size() for t in self.tensors)
         logging.debug(f"Matrix format using {bitsize / weight:.1f} bits/coefficient")
+        logging.debug(f"Using bigint arithmetic with {BLEN=} {ALEN=}")
         self.flops = 2 * dim * dense_n + size_plus + size_minus
         self.weight = weight
         logging.debug(
@@ -107,7 +129,7 @@ class SpMV:
             # FIXME: polyeval does not like spmv_bigint2
             return [
                 (name, shader(name, defines))
-                for name in ("spmv_bigint", "spmv_bigint3")
+                for name in ("spmv_bigint", "spmv_bigint2", "spmv_bigint3")
             ]
         return [
             (name, shader(name, defines))
@@ -186,19 +208,15 @@ class SpMV:
         dim = self.dim
         N_WG = (dim + WGSIZE - 1) // WGSIZE
 
-        if dim < 1000:
-            BATCHSIZE = 32
-        else:
-            BATCHSIZE = 64
-        ITERS = dim + dim // blockm + 32
+        BATCHSIZE = 32
+
+        ITERS = dim + dim // blockm + 320
         ITERS = (ITERS // BATCHSIZE + 2) * BATCHSIZE
 
         # FIXME: use actual norm
-        BLEN = (l.bit_length() + 8 + 31) // 32
-        pwords = to_uvec(l, BLEN)
-        assert pwords[-2] > 2**16
+        BLEN = self.defines["BLEN"]
 
-        defines = self.defines | {"BLEN": BLEN, "BLOCKM": blockm}
+        defines = self.defines | {"BLOCKM": blockm}
 
         # Tensor holding M^k V and M^(k+1) V
         v = np.zeros((2, dim, BLEN), dtype=np.uint32)
@@ -208,14 +226,15 @@ class SpMV:
         xiter = mgr.tensor_t(np.zeros(N_WG, dtype=np.uint32))
         # Output sequence out[k] = S M^k V
         xout = mgr.tensor_t(np.zeros(ITERS * blockm * BLEN, dtype=np.uint32))
-        xmod = mgr.tensor_t(np.array(pwords, dtype=np.uint32))
 
-        tensors = self.tensors + [xv, xiter, xmod, xout]
-        t0 = time.monotonic()
-
-        gpu_ticks = self._run(tensors, defines, ITERS, BATCHSIZE, N_WG)
+        tensors = self.tensors + [xv, xiter, xout]
 
         logging.info(f"Computing a Krylov sequence of length {ITERS}")
+
+        t0 = time.monotonic()
+        self.ell = l
+        gpu_ticks = self._run(tensors, defines, ITERS, BATCHSIZE, N_WG)
+
         mgr.sequence().record(kp.OpTensorSyncLocal([xout])).eval()
         vout = xout.data().reshape((ITERS, blockm, BLEN))
         sequences = []
@@ -254,13 +273,9 @@ class SpMV:
         BATCHSIZE = 16
 
         # FIXME: use actual norm
-        BLEN = (l.bit_length() + 8 + 31) // 32
-        maxout = l * l * len(poly)
-        ALEN = (maxout.bit_length() + 4 + 31) // 32
-        pwords = to_uvec(l, BLEN)
-        assert pwords[-2] > 2**16
+        ALEN, BLEN = self.defines["ALEN"], self.defines["BLEN"]
 
-        defines = self.defines | {"ALEN": ALEN, "BLEN": BLEN, "POLYEVAL": 1}
+        defines = self.defines | {"POLYEVAL": 1}
 
         # Tensor holding M^k V and M^(k+1) V
         av = np.zeros((2, dim, BLEN), dtype=np.uint32)
@@ -268,7 +283,6 @@ class SpMV:
             av[0, i, :] = to_uvec(v[i], BLEN)
         xv = mgr.tensor_t(av.flatten())
         xiter = mgr.tensor_t(np.zeros(N_WG, dtype=np.uint32))
-        xmod = mgr.tensor_t(np.array(pwords, dtype=np.uint32))
         vpoly = np.zeros((len(poly), BLEN), dtype=np.uint32)
         for k, ak in enumerate(poly):
             vpoly[k, :] = to_uvec(ak, BLEN)
@@ -279,7 +293,7 @@ class SpMV:
             vout[i, :] = to_uvec(poly[0] * vi, ALEN)
         xout = mgr.tensor_t(vout.flatten())
 
-        tensors = self.tensors + [xv, xiter, xmod, xpoly, xout]
+        tensors = self.tensors + [xv, xiter, xpoly, xout]
 
         t0 = time.monotonic()
         gpu_ticks = self._run(tensors, defines, len(poly) - 1, BATCHSIZE, N_WG)
@@ -313,7 +327,11 @@ def to_sparse_matrix(rels):
                 stats[p] = stats.get(p, 0) + abs(r[p])
     # Find densest columns above 33% fill ratio
     dense_counts = []
+    dense_big = []
     for p, count in stats.items():
+        if p == "SM":
+            dense_big.append(p)
+            continue
         if count > len(rels) // 3:
             dense_counts.append((count, p))
     dense_counts.sort()
@@ -322,23 +340,22 @@ def to_sparse_matrix(rels):
 
     dense_weight = sum(stats[p] for p in dense_p) / float(len(rels))
     logging.debug(f"Dense columns for {len(dense_p)} primes {dense_p}")
+    logging.debug(f"Dense big columns for {dense_big}")
     logging.info(
         f"Dense block has {len(dense_p)} columns, average weight {dense_weight:.1f} per row"
     )
+    dense_set = frozenset(dense_p + dense_big)
     sparse_weight = sum(
-        sum(abs(e) for p, e in r.items() if p not in dense_p) for r in rels
+        sum(abs(e) for p, e in r.items() if p not in dense_set) for r in rels
     ) / float(len(rels))
     logging.info(f"Sparse block has avg weight {sparse_weight:.1f} per row")
-    norm_plus = max(sum(abs(e) for p, e in r.items() if e > 0) for r in rels)
-    norm_minus = max(sum(abs(e) for p, e in r.items() if e < 0) for r in rels)
 
     # To reduce divergence, we sort rows by the number of ±signs in the sparse part.
-    dense_set = frozenset(dense_p)
     sign_rels = []
     for r in rels:
         nplus, nminus = 0, 0
         for _p, _e in r.items():
-            if _p not in dense_p:
+            if _p not in dense_set:
                 if _e > 0:
                     nplus += 1
                 else:
@@ -361,7 +378,12 @@ def to_sparse_matrix(rels):
     dense_norm = max(np.sum(np.abs(dense[i, :])) for i in range(len(rels)))
     logging.info(f"Dense block has max row norm {dense_norm}")
 
-    primes = dense_p + sorted(p for p in stats if p not in dense_set)
+    matbig = []
+    for k in dense_big:
+        rowbig = [r.get(k, 0) for r in rels]
+        matbig = rowbig  # FIXME for multiple SM
+
+    primes = dense_p + dense_big + sorted(p for p in stats if p not in dense_set)
 
     prime_idx = {p: idx for idx, p in enumerate(primes)}
     plus = []
@@ -380,7 +402,7 @@ def to_sparse_matrix(rels):
         row_m.sort()
         plus.append(row_p)
         minus.append(row_m)
-    return primes, dense, plus, minus, max(norm_plus, norm_minus)
+    return primes, dense, matbig, plus, minus
 
 
 def to_uvec(x: int, length: int):
@@ -390,3 +412,11 @@ def to_uvec(x: int, length: int):
 
 def from_uvec(words: list) -> int:
     return sum(int(x) << (32 * i) for i, x in enumerate(words))
+
+
+def from_array(array) -> int:
+    return int.from_bytes(array.tobytes(), "little")
+
+
+def to_array(x: int, length: int):
+    return np.frombuffer(x.to_bytes(4 * length, "little"), dtype=np.uint32)
