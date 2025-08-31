@@ -9,6 +9,8 @@ import numpy as np
 from nefelis import lingen
 from nefelis.vulkan import shader, stamp_period
 
+DEBUG_NO_SORT_ROWS = False
+
 
 def berlekamp_massey(seq: list[int], l: int):
     ctx = flint.fmpz_mod_poly_ctx(l)
@@ -37,7 +39,6 @@ class SpMV:
         weight = sum(len(r) for r in rels)
         basis, dense, plus, minus, _norm = to_sparse_matrix(rels)
         dim, dense_n = dense.shape
-        assert dim < 65536 * dense_n
         assert (dim * dense_n) % 4 == 0
         self.defines = {"N": dim, "DENSE_N": dense_n}
 
@@ -46,6 +47,8 @@ class SpMV:
 
         # Prepare tensors
         mgr = kp.Manager(gpu_idx)
+        if dense.size == 0:
+            dense = np.zeros(1, dtype=np.uint32)
         xd = mgr.tensor_t(dense.flatten().view(np.uint32))
 
         # Encode rows
@@ -341,7 +344,8 @@ def to_sparse_matrix(rels):
                 else:
                     nminus += 1
         sign_rels.append((nplus, nminus, r))
-    sign_rels.sort(key=lambda t: t[:2])
+    if not DEBUG_NO_SORT_ROWS:
+        sign_rels.sort(key=lambda t: t[:2])
     # print([(x, y) for x, y, z in sign_rels])
     rels = [_r for _, _, _r in sign_rels]
 

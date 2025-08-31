@@ -58,7 +58,7 @@ layout(binding = 8) coherent buffer Wout { uint[BLOCKM][BLEN] wout[]; };
 
 #include <bigint.comp>
 
-shared int8_t denserow[DENSE_N][gl_WorkGroupSize.x];
+shared int8_t denserow[max(1, DENSE_N)][gl_WorkGroupSize.x];
 
 void main() {
   uint idx = iter[gl_WorkGroupID.x];
