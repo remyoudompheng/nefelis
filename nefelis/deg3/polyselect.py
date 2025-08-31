@@ -166,7 +166,7 @@ def nroots3(poly, l):
     return l - numpy.count_nonzero(vals % l)
 
 
-smalls = [
+smallvectors = [
     (1, 0, 0),
     (0, 1, 0),
     (0, 0, 1),
@@ -224,7 +224,7 @@ class Polyselect:
         af = alpha3(D, a, b, c, d)
         m = flint.fmpz_mat([[N, 0, 0], [int(r), -1, 0], [0, int(r), -1]]).lll()
         g = None
-        for s in smalls:
+        for s in smallvectors:
             w, v, u = (flint.fmpz_mat([s]) * m).entries()
             w, v, u = int(w), int(v), int(u)
             if u.bit_length() + v.bit_length() + w.bit_length() < N.bit_length() // 2:
@@ -241,12 +241,23 @@ class Polyselect:
             # is ~30% less sensitive to the lognorm of f than to the lognorm of g.
             score = gbits + ag + 0.7 * (fbits + af)
             if score < self.best and score < global_best:
-                self.best = score
-                logging.debug(
+                logger.debug(
                     f"GOOD! {D=} {f} "
                     f"fsize={math.log2(fsize) / 2:.1f} a(f)={af:.2f} normf={fbits:.2f} "
                     f"a(g)={ag:.2f} normg={gbits:.2f} score {score:.2f}"
                 )
+                # FIXME: handle bad primes to avoid this
+                if any(D % (l * l) == 0 for l in SMALLPRIMES):
+                    logger.warning(
+                        "Skipping interesting polynomial f with non-squarefree discriminant"
+                    )
+                    continue
+                if any(Dg % (l * l) == 0 for l in SMALLPRIMES):
+                    logger.warning(
+                        "Skipping interesting polynomial g with non-squarefree discriminant"
+                    )
+                    continue
+                self.best = score
                 g = [u, v, w]
                 # Check number of real roots
                 roots_f = flint.fmpz_poly(f).complex_roots()
@@ -340,6 +351,43 @@ def polyselect(N: int, bound: int | None = None):
     dt = time.monotonic() - t0
     logging.info(f"Scanned {counter} polynomials of degree 3 in {dt:.3f}s")
     return best_fg
+
+
+def polyselect_g(N: int, f: list[int], r: int) -> list[int]:
+    """
+    Select a quadratic polynomial for a fixed polynomial f.
+    """
+    m = flint.fmpz_mat([[N, 0, 0], [int(r), -1, 0], [0, int(r), -1]]).lll()
+    g = None
+    best = 1e9
+    for s in smallvectors:
+        w, v, u = (flint.fmpz_mat([s]) * m).entries()
+        w, v, u = int(w), int(v), int(u)
+        if u.bit_length() + v.bit_length() + w.bit_length() < N.bit_length() // 2:
+            # the polynomial was not irreducible over Q
+            return None
+        # We want to avoid real quadratic fields (positive discriminants)
+        Dg = v * v - 4 * u * w
+        if Dg >= 0:
+            continue
+        ag = alpha(Dg, u, v, w)
+        gsize = float(3 * (u * u + w * w) + 2 * u * w + v * v) / 6.0
+        gbits = math.log2(gsize) / 2
+        score = gbits + ag
+        if score < best:
+            logger.debug(f"a(g)={ag:.2f} normg={gbits:.2f} score {score:.2f}")
+            # FIXME: handle bad primes to avoid this
+            if any(Dg % (l * l) == 0 for l in SMALLPRIMES):
+                logger.warning(
+                    "Skipping interesting polynomial with non-squarefree discriminant"
+                )
+                continue
+            best = score
+            g = [int(w), int(v), int(u)]
+            assert (u * r * r + v * r + w) % N == 0
+    if g is None:
+        raise ValueError("failed to find a g polynomial")
+    return g
 
 
 def main():

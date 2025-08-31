@@ -27,7 +27,7 @@ except ImportError:
     pymqs = None
 
 from nefelis import sieve_vk
-from nefelis.deg3.polyselect import polyselect
+from nefelis.deg3.polyselect import polyselect, polyselect_g
 
 logger = logging.getLogger("sieve")
 
@@ -218,16 +218,8 @@ def main_impl(args):
     if args.nosm:
         r = pow(2, (2 * N - 1) // 3, N)
         assert (r**3 - 2) % N == 0
-        m = flint.fmpz_mat([[N, 0, 0], [int(r), -1, 0], [int(r * r), 0, -1]]).lll()
-        # print(m)
-        g = None
-        for row in m.table():
-            if row[1] ** 2 < 4 * row[0] * row[2]:
-                g = [int(_) for _ in row]
-                break
-        if g is None:
-            raise ValueError("could not generate suitable polynomial")
         f = [-2, 0, 0, 1]
+        g = polyselect_g(N, f, r)
     else:
         f, g = polyselect(N)
         C, B, A = g
