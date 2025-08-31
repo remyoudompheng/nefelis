@@ -19,6 +19,9 @@ dependencies = [
   "networkx>=3.2"
 ]
 
+[project.optional-dependencies]
+test = ["pytest"]
+
 [project.scripts]
 nefelis = "nefelis:main"
 

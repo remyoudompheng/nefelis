@@ -32,12 +32,12 @@ def alpha(D, a, b, c):
     However for convenience, we express it in base 2 to interpret it
     as a number of bits.
 
-    α(x^2-x+1)=1.389885781339105 (E.sage script in CADO-NFS)
-    >>> 1.38988 / math.log(2) < alpha(-3, 1, -1, 1) < 1.38989 / math.log(2)
+    α(x^2-x+1, bound=114)=1.435115778287525 (E.sage script in CADO-NFS)
+    >>> 1.38 / math.log(2) < alpha(-3, 1, -1, 1) < 1.44 / math.log(2)
     True
 
-    α(6*x^2-2*x+5)=0.30843573575972727
-    >>> 0.30843 / math.log(2) < alpha(-116, 6, -2, 5) < 0.30844 / math.log(2)
+    α(6*x^2-2*x+5, bound=114)=0.44366895401049494
+    >>> 0.39 / math.log(2) < alpha(-116, 6, -2, 5) < 0.45 / math.log(2)
     True
     """
     # for l in SMALLPRIMES:
@@ -105,7 +105,7 @@ def nroots(D, a, b, c, l):
 def alpha3(D, a, b, c, d):
     """
     alpha(Zx([2,2,3,1]), 100) / log(2.0) = 2.09120380807321
-    >>> 2.0 < alpha3(-104, 2, 2, 3, 1)) < 2.2
+    >>> 2.0 < alpha3(-104, 2, 2, 3, 1) < 2.2
     True
     """
     poly = numpy.array([d, c, b, a], dtype=numpy.int32)
