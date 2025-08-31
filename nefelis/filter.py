@@ -180,8 +180,12 @@ def filter(rels, datadir: pathlib.Path | None):
     for d in Ds:
         remaining = [_r for _r in rels if _r is not None]
         avgw = sum(len(r) for r in remaining) / len(remaining)
-        avgw1 = sum(abs(e) for r in remaining for _, e in r.items()) / len(remaining)
-        maxe = max(abs(e) for r in remaining for _, e in r.items())
+        avgw1 = sum(
+            abs(e) for r in remaining for _, e in r.items() if e.bit_length() < 64
+        ) / len(remaining)
+        maxe = max(
+            abs(e) for r in remaining for _, e in r.items() if e.bit_length() < 64
+        )
         nc, nr = len(stats), len(remaining)
         assert nr > nc
         logger.info(
@@ -312,8 +316,8 @@ def filter(rels, datadir: pathlib.Path | None):
     rels = [_r for _r in rels if _r is not None]
     nr, nc = len(rels), len(stats)
     avgw = sum(len(r) for r in rels) / len(rels)
-    avgw1 = sum(abs(e) for r in remaining for _, e in r.items()) / len(remaining)
-    maxe = max(abs(e) for r in rels for e in r.values())
+    avgw1 = sum(abs(e) for r in rels for e in r.values() if abs(e) < 2**64) / len(rels)
+    maxe = max(abs(e) for r in rels for e in r.values() if abs(e) < 2**64)
     dt = time.time() - t0
     logger.info(
         f"Final: {nc} columns {nr} rows excess={nr - nc} weight={avgw:.3f} weight1={avgw1:.3f} maxcoef={maxe} elapsed={dt:.1f}s"

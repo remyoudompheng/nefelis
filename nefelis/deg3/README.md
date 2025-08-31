@@ -1,6 +1,8 @@
-# Special case of Joux-Lercier polynomial x^3 + 2
+# Discrete logarithm using a degree 3 polynomial
 
-This directory implements the special case of polynomial x³+2
+## Implementation without Schirokauer maps
+
+This implementation considers the special case of polynomial x³+2
 using the Joux-Lercier method for discrete logarithm.
 If the degree 2 polynomial is correctly chosen, there will
 be no Schirokauer map if the polynomial has negative discriminant,
@@ -13,3 +15,81 @@ and logarithms of explicit elements.
 
 Moreover, if `p=2q+1` is a strong prime, the polynomial `x³+2` will
 always have a single root.
+
+Although linear algebra is simpler, the presence of very small
+non-split primes makes the descent phase very inefficient.
+
+## Implementation with Schirokauer maps
+
+Here, traditional polynomial selection is performed, with the following
+restrictions:
+
+* Polynomial f (of degree 3) is restricted to have 1 real root (negative
+  discriminant), meaning that its group of units has rank 1
+
+* Polynomial f has a non-square discriminant modulo q and modulo p=2q+1
+  so make various computations easier (q-adic Schirokauer map
+  and polynomial selection)
+
+* Polynomial g (of degree 2) is restricted to have no real root
+  (also negative discriminant), meaning that its group of units is finite
+
+Each restriction divides the space of suitable polynomials by 2.
+
+In the matrix memory layout, the ordinary part of the matrix
+usually consumes about 100-300 bytes per row, so the Schirokauer
+map represent a significant fraction of the entire matrix
+(a single 384-bit integer is 48 bytes).
+
+### Mathematical description
+
+Consider the exact sequence where $U$ is the group of units of the number
+field $K$ defined by $f$, and $\mathcal P$ is the group of (fractional)
+principal ideals. The subscript $p$ is used to denote the subgroup
+of elements with valuation zero at $p$.
+
+$$ 0 \to U \to K^\times_p \to \mathcal P_p \to 0 $$
+
+There is a well-defined group morphism $K^\times_p \to \mathbb Z / p\mathbb Z^\times$
+and we are interested in the projection on a cyclic group $\mathbb Z / \ell \mathbb Z$,
+but to be computable we need to describe a coordinate system (basis)  for $K^\times_p$.
+
+The main issue is that when $U$ is infinite, the logarithm of units
+is non-trivial, and there is no canonical morphism
+$\mathcal P_p \to \mathbb Z / \ell \mathbb Z$. Moreover, having an explicit description
+of $U$ itself can be difficult. The group of ideals has a natural basis (prime ideals)
+which is more convenient.
+
+The Schirokauer map defines a partial morphism $K^\times_\ell \to \mathbb Z / \ell \mathbb Z$
+using the subgroup of order $\ell$ in $\mathbb Z / \ell^2 \mathbb Z ^\times$.
+More precisely, let $\mathfrak l$ be an ideal of degree 1 over $(\ell)$.
+Then the map is the localization morphism:
+
+$$ K^\times_\ell \to \mathcal O_\mathfrak l^\times \to \mathbb Z / \ell^2 \mathbb Z ^\times \to \mathbb Z / \ell \mathbb Z$$
+
+It can be explicitly computed by using a root $\omega_\ell$ of the defining polynomial modulo $\ell^2$.
+Then the image of an algebraic number $S(\omega)$ is $(S(\omega_\ell)^{\ell-1} - 1) / \ell$.
+
+When the unit group has higher rank, more ideals lying above $(\ell)$
+can be considered (the rank of the unit group is always smaller than the degree of K).
+
+The Schirokauer maps define a morphism whose kernel is the subgroup
+of units with zero logarithm at $\ell$-adic places. The algorithm
+assumes that this kernel is the same as the kernel of the actual logarithm.
+
+$$ \text{(ideal, SM)}: K^\times_p \to \mathcal P_p \times (\mathbb Z / \ell \mathbb Z)^r $$
+
+The natural inclusion of principal ideals $\mathcal P$ into all ideals
+$\mathcal I$ allows to extend this morphism to a larger group, when $\ell$ is
+coprime to the class number of K which is the index of the subgroup
+$\mathcal P_p \subset \mathcal I_p$.
+
+$$ \text{(ideal, SM)}: K^\times_p \to \mathcal I_p \times (\mathbb Z / \ell \mathbb Z)^r $$
+
+In the latter morphism, the right hand side is a free abelian group with a natural basis
+(prime ideals of $K$ and the list of Schirokauer maps), which is used to construct the
+actual relation matrix.
+
+After computation, we obtain the virtual logarithm map:
+
+$$ \log: K^\times_p \to \mathcal I_p \times (\mathbb Z / \ell \mathbb Z)^r \to \mathbb Z / \ell \mathbb Z $$

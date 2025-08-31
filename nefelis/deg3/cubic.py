@@ -20,7 +20,10 @@ import math
 
 
 class CubicField:
-    def __init__(self, c):
+    def __init__(self, f):
+        # Polynomial must be x^3 - c
+        assert list(f[1:]) == [0, 0, 1]
+        c = -f[0]
         assert c in (2, 3, 5, 6)
         self.c = c
         # Fundamental unit (chosen to be positive)

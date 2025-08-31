@@ -107,7 +107,6 @@ def worker_task(args):
     reports = SIEVER.sieve(q, qr)
     return q, qr, time.monotonic() - t, reports
 
-
 PARAMS = [
     # bitsize, B1g, B2g, B2f, cofactor bits, I=logwidth, qmin
     (120, 10_000, 16, 14, 16, 12, 20),
@@ -128,6 +127,7 @@ PARAMS = [
     # (420, 7_000_000, 25, 23, 45, 14, 4000_000)
     # 2 large primes
     (420, 5_000_000, 25, 23, 65, 14, 4000_000),
+    (440, 6_000_000, 25, 24, 65, 14, 10_000_000),
 ]
 
 # Parameters for GPU factor
@@ -146,8 +146,12 @@ PARAMS2 = [
     # (420, 1_000_000, 32),
     # Fast variants (2 large primes on f side)
     (420, 600_000, 30),
+    (440, 1000_000, 32),
 ]
 
+
+# In no-SM mode polynomial is less optimal and linear algebra is faster
+# so we can enlarge the factor base.
 PARAMS_NOSM = [
     # bitsize, B1g, B2g, B2f, cofactor bits, I=logwidth, qmin
     (120, 10000, 16, 14, 16, 12, 20),

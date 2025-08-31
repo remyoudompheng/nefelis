@@ -64,3 +64,4 @@ def test_linalg_big():
 if __name__ == "__main__":
     logging.getLogger().setLevel(logging.DEBUG)
     test_linalg_small()
+    test_linalg_big()
