@@ -53,7 +53,7 @@ class CubicField:
         """
         Compute the norm of x+yj+zj² which is also the resultant of x+yt+zt² with t³+c
 
-        >>> K = CubicField(2)
+        >>> K = CubicField([-2, 0, 0, 1])
         >>> K.norm(123, 456, 789)
         1890654183
         """
@@ -96,7 +96,7 @@ class CubicField:
         The result is a list of tuples (l, r) and exponents:
         by convention the tuple (1,0) is a fundamental unit.
 
-        >>> K = CubicField(2)
+        >>> K = CubicField([-2, 0, 0, 1])
         >>> K.factor(12345, 4567)
         [((281, 119), 1), ((49627, 26218), 1), ((148573, 24201), 1)]
         >>> K.factor(9876, 4321)
