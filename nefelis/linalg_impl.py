@@ -1,3 +1,4 @@
+from typing import Iterable
 import logging
 import random
 import time
@@ -412,7 +413,7 @@ def to_uvec(x: int, length: int):
     return [(x >> (32 * i)) & 0xFFFFFFFF for i in range(length)]
 
 
-def from_uvec(words: list) -> int:
+def from_uvec(words: Iterable[int]) -> int:
     return sum(int(x) << (32 * i) for i, x in enumerate(words))
 
 

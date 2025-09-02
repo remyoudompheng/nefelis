@@ -260,7 +260,7 @@ def main_impl(args):
     seenf = set()
     seeng = set()
 
-    with (sievepool, factorpool):
+    with sievepool, factorpool:
         for q, dt, reports in sievepool.imap(worker_task, list(zip(qs, qrs))):
             nrels = 0
             print(f"# q={q}", file=relf)

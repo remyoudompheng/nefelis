@@ -203,6 +203,9 @@ def polyselect(
             best = score
             best_fg = f, g
 
+    if best_fg is None:
+        raise ValueError("Internal error: unable to select any polynomial")
+
     return best_fg
 
 

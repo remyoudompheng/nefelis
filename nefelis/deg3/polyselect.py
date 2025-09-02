@@ -353,7 +353,7 @@ def polyselect(N: int, bound: int | None = None):
     return best_fg
 
 
-def polyselect_g(N: int, f: list[int], r: int) -> list[int]:
+def polyselect_g(N: int, f: list[int], r: int) -> list[int] | None:
     """
     Select a quadratic polynomial for a fixed polynomial f.
     """

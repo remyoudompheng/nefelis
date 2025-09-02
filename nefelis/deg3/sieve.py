@@ -107,6 +107,7 @@ def worker_task(args):
     reports = SIEVER.sieve(q, qr)
     return q, qr, time.monotonic() - t, reports
 
+
 PARAMS = [
     # bitsize, B1g, B2g, B2f, cofactor bits, I=logwidth, qmin
     (120, 10_000, 16, 14, 16, 12, 20),
@@ -299,7 +300,7 @@ def main_impl(args):
     seenf = set()
     seeng = set()
 
-    with (sievepool, factorpool):
+    with sievepool, factorpool:
         for q, qr, dt, reports in sievepool.imap(worker_task, qs):
             nrels = 0
             print(f"# q={q} r={qr}", file=relf)
