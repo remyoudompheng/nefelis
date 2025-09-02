@@ -14,7 +14,6 @@ from nefelis.vulkan import shader, stamp_period
 
 DEBUG_ROOTS = False
 DEBUG_TIMINGS = False
-OUTLEN = 256 * 1024
 
 
 class Siever:
@@ -30,13 +29,14 @@ class Siever:
         roots2=None,
         threshold2=None,
         /,
+        outsize=256 * 1024,
     ):
         mgr = kp.Manager()
         tprimes = mgr.tensor_t(np.array(primes, dtype=np.uint32))
         troots = mgr.tensor_t(np.array(roots, dtype=np.uint32))
         tqroots = mgr.tensor_t(np.array(roots, dtype=np.uint32))
         tq = mgr.tensor_t(np.zeros(4, dtype=np.int32))
-        tout = mgr.tensor_t(np.zeros(2 * OUTLEN, dtype=np.int32))
+        tout = mgr.tensor_t(np.zeros(2 * outsize, dtype=np.int32))
 
         WIDTH = 1 << I
         WGROWS = 32
@@ -57,7 +57,7 @@ class Siever:
             tprimes2 = mgr.tensor_t(np.array(primes2, dtype=np.uint32))
             troots2 = mgr.tensor_t(np.array(roots2, dtype=np.uint32))
             tqroots2 = mgr.tensor_t(np.zeros(len(roots2), dtype=np.uint32))
-            touttemp = mgr.tensor_t(np.zeros(4 * OUTLEN, dtype=np.int32))
+            touttemp = mgr.tensor_t(np.zeros(4 * outsize, dtype=np.int32))
             defines["DEGREE2"] = len(poly2) - 1
             defines["THRESHOLD2"] = threshold2
 
@@ -107,7 +107,7 @@ class Siever:
             algo3 = mgr.algorithm(
                 [tprimes2, tqroots2, tq, touttemp, tout],
                 shader3,
-                (OUTLEN // 256, 1, 1),
+                (outsize // 256, 1, 1),
             )
             mgr.sequence().record(kp.OpTensorSyncDevice([tprimes2, troots2])).eval()
 
@@ -187,8 +187,8 @@ class Siever:
                         assert (r * yy - xx) % p == 0, (p, r, qrx, qry)
 
         bout = self.tout.data()
-        # print(bout.reshape((OUTLEN, 2)))
-        outlen = min(bout[0], OUTLEN - 1)
+        outsize = bout.size // 2
+        outlen = min(bout[0], outsize - 1)
         return [(int(bout[2 * i]), int(bout[2 * i + 1])) for i in range(1, outlen + 1)]
 
     def sievelarge(self, q, qr):
@@ -217,8 +217,9 @@ class Siever:
         seq.eval()
 
         bout = self.tout.data()
-        bout = bout.reshape((OUTLEN, 2))
-        outlen = min(bout[0, 0], OUTLEN - 1)
+        outsize = bout.size // 2
+        bout = bout.reshape((outsize, 2))
+        outlen = min(bout[0, 0], outsize - 1)
         results = []
         for i in range(1, outlen + 1):
             x, y = int(bout[i, 0]), int(bout[i, 1])
@@ -243,9 +244,9 @@ if __name__ == "__main__":
     ls = smallprimes(300_000)
     rs = [(-v * pow(u, -1, l)) % l if u % l else l for l in ls]
 
-    sv = Siever(u, v, ls, rs, 90)
+    sv = Siever([v, u], ls, rs, 90)
     t0 = time.monotonic()
-    reports = sv.sieve(1000003)
+    reports = sv.sieve(1000003, (-v * pow(u, -1, 1000003)) % 1000003)
     t = time.monotonic() - t0
     WIDTH = 16384
     AREA = 2 * WIDTH**2
