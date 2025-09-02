@@ -115,7 +115,8 @@ class Descent:
         # FIXME: make bound 32bits configurable
         for i in range(1_000_000):
             if i > 0:
-                e = random.randrange(n)
+                # 64 bits of randomness should be enough
+                e = random.getrandbits(64)
                 x = x0 * pow(self.logbase, -e, n) % n
                 facs = [(self.logbase, e)]
             else:
@@ -170,7 +171,7 @@ class Descent:
         log = sum(e * self.zlogs[f] for f, e in facs)
         for _l, _e in cofacs:
             logging.info(f"Recurse into small prime {_l}")
-            llog = self.smalllog(_l)
+            llog = self.smalllog(int(_l))
             log += _e * llog
 
         return log % self.ell
@@ -182,7 +183,7 @@ class Descent:
         vg = u * x + v * y
         return vf, vg
 
-    def smalllog(self, q):
+    def smalllog(self, q: int):
         """
         Compute logarithm of a "small" prime using sieving.
         """
@@ -216,12 +217,12 @@ class Descent:
                     break
                 else:
                     facs.append((key, 1))
-            facg = pymqs.factor(abs(vg))
             # z = g(z)/u = f(z)
             if good:
+                assert vg % q == 0
+                facg = pymqs.factor(abs(vg) // q)
                 for _l in facg:
-                    if _l != q:
-                        facs.append((f"Z_{_l}", -1))
+                    facs.append((f"Z_{_l}", -1))
                 # The CONSTANT accounts for leading coefficients of f and g
                 facs.append(("CONSTANT", 1))
 
