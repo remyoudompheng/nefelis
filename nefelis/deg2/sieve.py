@@ -259,46 +259,48 @@ def main_impl(args):
     total_q = 0
     seenf = set()
     seeng = set()
-    for q, dt, reports in sievepool.imap(worker_task, list(zip(qs, qrs))):
-        nrels = 0
-        print(f"# q={q}", file=relf)
 
-        batchsize = 64
-        chunks = ((q, chunk) for chunk in itertools.batched(reports, batchsize))
-        for reschunk in factorpool.imap_unordered(factorer_task, chunks):
-            for x, y, facf, facg, idealf, idealg in reschunk:
-                # Normalize sign
-                if y < 0:
-                    x, y = -x, -y
-                xy = x + (y << 32)
-                if xy in seen:
-                    duplicates += 1
-                    continue
-                # facg will omit q
-                str_facf = ",".join(f"{_l:x}" for _l in facf)
-                str_facg = ",".join(f"{_l:x}" for _l in facg)
-                seenf.update(facf)
-                seeng.update(facg)
-                seen.add(xy)
-                relf.write(f"{x},{y}:{str_facg}:{str_facf}\n")
-                nrels += 1
-        print(f"# Found {nrels} relations for {q=} (time {dt:.3f}s)", file=relf)
-        total_q += 1
-        total += nrels
-        total_area += AREA
-        elapsed = time.monotonic() - t0
-        Qcount = len(seenf | seeng)
-        Kcount = len(seenf)
-        if elapsed < 2 or elapsed > last_log + 1:
-            # Don't log too often.
-            last_log = elapsed
-            logger.info(
-                f"Sieved q={q:<8} area {total_area / 1e9:.0f}G in {dt:.3f}s (speed {total_area / elapsed / 1e9:.3f}G/s): "
-                f"{nrels}/{len(reports)} relations, {Qcount}/{Kcount} Q/K primes, total {total}"
-            )
-        if total > 1.1 * Qcount + Kcount:
-            logger.info("Enough relations")
-            break
+    with (sievepool, factorpool):
+        for q, dt, reports in sievepool.imap(worker_task, list(zip(qs, qrs))):
+            nrels = 0
+            print(f"# q={q}", file=relf)
+
+            batchsize = 64
+            chunks = ((q, chunk) for chunk in itertools.batched(reports, batchsize))
+            for reschunk in factorpool.imap_unordered(factorer_task, chunks):
+                for x, y, facf, facg, idealf, idealg in reschunk:
+                    # Normalize sign
+                    if y < 0:
+                        x, y = -x, -y
+                    xy = x + (y << 32)
+                    if xy in seen:
+                        duplicates += 1
+                        continue
+                    # facg will omit q
+                    str_facf = ",".join(f"{_l:x}" for _l in facf)
+                    str_facg = ",".join(f"{_l:x}" for _l in facg)
+                    seenf.update(facf)
+                    seeng.update(facg)
+                    seen.add(xy)
+                    relf.write(f"{x},{y}:{str_facg}:{str_facf}\n")
+                    nrels += 1
+            print(f"# Found {nrels} relations for {q=} (time {dt:.3f}s)", file=relf)
+            total_q += 1
+            total += nrels
+            total_area += AREA
+            elapsed = time.monotonic() - t0
+            Qcount = len(seenf | seeng)
+            Kcount = len(seenf)
+            if elapsed < 2 or elapsed > last_log + 1:
+                # Don't log too often.
+                last_log = elapsed
+                logger.info(
+                    f"Sieved q={q:<8} area {total_area / 1e9:.0f}G in {dt:.3f}s (speed {total_area / elapsed / 1e9:.3f}G/s): "
+                    f"{nrels}/{len(reports)} relations, {Qcount}/{Kcount} Q/K primes, total {total}"
+                )
+            if total > 1.1 * Qcount + Kcount:
+                logger.info("Enough relations")
+                break
 
     # CADO-NFS requires that the relation file ends with \n
     # Print statistics in CADO-compatible format
