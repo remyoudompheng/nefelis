@@ -197,24 +197,22 @@ class Siever:
         """
         qred = flint.fmpz_mat([[q, 0], [qr, 1]]).lll()
         a, c, b, d = qred.entries()
-        tqroots = self.algo1.get_tensors()[-1]
-        qroots = tqroots.data()
-        for pidx, (l, rorig) in enumerate(zip(self.primes, self.roots)):
-            rx, ry = (1, 0) if rorig == l else (rorig, 1)
-            rnum = d * rx - b * ry
-            rden = a * ry - c * rx
-            if rden % l == 0:
-                r = l
-            else:
-                r = rnum * pow(rden, -1, l) % l
-            qroots[pidx] = r
 
-        self.tout.data()[:2].fill(0)
+        # Since a,b,c,d are still small, shader 1 will succeed
+        # without overflow
+        self.tq.data()[:] = [a, b, c, d]
+        seq = self.mgr.sequence()
+        seq.record(kp.OpTensorSyncDevice([self.tq]))
+        seq.record(kp.OpAlgoDispatch(self.algo1))
+        seq.eval()
+
+        # Hack: Inhibit change of coordinates for output
         self.tq.data()[:] = [1, 0, 0, 1]
-        seq = self.mgr.sequence(total_timestamps=16)
-        seq.record(kp.OpTensorSyncDevice([self.tq, self.tout, tqroots]))
-        # don't run shader 1
+        seq = self.mgr.sequence()
+        seq.record(kp.OpTensorSyncDevice([self.tq]))
         seq.record(kp.OpAlgoDispatch(self.algo2))
+        if self.algo3 is not None:
+            seq.record(kp.OpAlgoDispatch(self.algo3))
         seq.record(kp.OpTensorSyncLocal([self.tout]))
         seq.eval()
 
