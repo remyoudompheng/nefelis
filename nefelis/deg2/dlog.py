@@ -13,8 +13,8 @@ import sys
 import time
 
 import flint
-import pymqs
 
+from nefelis import integers
 from nefelis import sieve_vk
 
 
@@ -101,7 +101,7 @@ class Descent:
         facs = []
         while d > 1:
             v //= d
-            facs += flint.fmpz(d).factor()
+            facs += integers.factor(d)
             d = math.gcd(d0, v)
         return facs, v
 
@@ -151,8 +151,8 @@ class Descent:
                 cofacs.sort()
                 if not cofacs or (cofacs[-1][0] < best[1][-1][0]):
                     if any(not flint.fmpz(_l).is_prime() for _l, _ in cofacs):
-                        cofacs = flint.fmpz(xu).factor()
-                        cofacs += [(_l, -_e) for _l, _e in flint.fmpz(xv).factor()]
+                        cofacs = integers.factor(xu)
+                        cofacs += [(_l, -_e) for _l, _e in integers.factor(xv)]
                         cofacs.sort()
                     facs_str = "*".join(f"{_l}^{_e}" for _l, _e in facs)
                     cofacs_str = "*".join(f"{_l}^{_e}" for _l, _e in cofacs)
@@ -207,30 +207,30 @@ class Descent:
             if math.gcd(x, y) != 1:
                 continue
             vf, vg = self.fg(x, y)
-            facf = pymqs.factor(abs(vf))
+            facf = integers.factor(abs(vf))
             good = True
             facs = []
-            for _l in facf:
+            for _l, _e in facf:
                 _r = x * pow(y, -1, _l) % _l if y % _l else _l
                 if (key := f"f_{_l}_{_r}") not in self.dlogs:
                     good = False
                     break
                 else:
-                    facs.append((key, 1))
+                    facs.append((key, _e))
             # z = g(z)/u = f(z)
             if good:
                 assert vg % q == 0
-                facg = pymqs.factor(abs(vg) // q)
-                for _l in facg:
-                    facs.append((f"Z_{_l}", -1))
+                facg = integers.factor(abs(vg) // q)
+                for _l, _e in facg:
+                    facs.append((f"Z_{_l}", -_e))
                 # The CONSTANT accounts for leading coefficients of f and g
                 facs.append(("CONSTANT", 1))
 
-                missing = [_l for _l in facg if _l not in self.zlogs and _l != q]
+                missing = [_l for _l, _ in facg if _l not in self.zlogs and _l != q]
                 keep = (
                     best is None
                     or not missing
-                    or (any(_m > q for _m in best[1]) and all(_m < q for _m in missing))
+                    or (any(_m > q for _m, _ in best[1]) and all(_m < q for _m in missing))
                     or (len(missing) <= len(best[1]) and max(missing) < max(best[1]))
                 )
                 if keep:

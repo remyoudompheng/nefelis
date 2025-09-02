@@ -29,12 +29,8 @@ import time
 
 import flint
 
-try:
-    import pymqs
-except ImportError:
-    pymqs = None
-
 from nefelis import sieve_vk
+from nefelis.integers import factor, smallprimes
 from nefelis.deg2.polyselect import polyselect
 
 logger = logging.getLogger("sieve")
@@ -63,20 +59,14 @@ class Factorer:
             vg = abs((u * x + v * y) // q)
 
             facf = []
-            if pymqs is not None:
-                facf += pymqs.factor(int(vf))
-            else:
-                for _l, _e in flint.fmpz(vf).factor():
-                    facf += _e * [int(_l)]
+            for _l, _e in factor(vf):
+                facf += _e * [int(_l)]
             if any(_f.bit_length() > self.B2f for _f in facf):
                 continue
 
             facg = [q]
-            if pymqs is not None:
-                facg += pymqs.factor(int(vg))
-            else:
-                for _l, _e in flint.fmpz(vg).factor():
-                    facg += _e * [int(_l)]
+            for _l, _e in factor(vg):
+                facg += _e * [int(_l)]
             if any(_l.bit_length() > self.B2g for _l in facg):
                 continue
 
@@ -203,9 +193,9 @@ def main_impl(args):
     logger.info(f"{u = } size {u.bit_length()}")
     logger.info(f"{v = } size {v.bit_length()}")
 
-    ls = sieve_vk.smallprimes(B1g)
+    ls = smallprimes(B1g)
     rs = [(-v * pow(u, -1, l)) % l if u % l else l for l in ls]
-    qs = [_q for _q in sieve_vk.smallprimes(10 * qmin) if _q >= qmin and u % _q != 0]
+    qs = [_q for _q in smallprimes(10 * qmin) if _q >= qmin and u % _q != 0]
     qrs = [-v * pow(u, -1, q) % q for q in qs]
 
     f = [C, B, A]
@@ -213,7 +203,7 @@ def main_impl(args):
     ls2, rs2 = None, None
     if B1f:
         ls2, rs2 = [], []
-        for _l in sieve_vk.smallprimes(B1f):
+        for _l in smallprimes(B1f):
             _rs = flint.nmod_poly(f, _l).roots()
             for _r, _ in _rs:
                 ls2.append(_l)

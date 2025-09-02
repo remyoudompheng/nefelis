@@ -1,2 +1,2 @@
-from . import sieve
-from . import linalg
+from . import sieve as sieve
+from . import linalg as linalg

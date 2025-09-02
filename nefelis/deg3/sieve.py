@@ -27,6 +27,7 @@ except ImportError:
     pymqs = None
 
 from nefelis import sieve_vk
+from nefelis.integers import smallprimes
 from nefelis.deg3.polyselect import polyselect, polyselect_g
 
 logger = logging.getLogger("sieve")
@@ -241,13 +242,13 @@ def main_impl(args):
     logger.info(f"Root r = {r}")
 
     ls, rs = [], []
-    for _l in sieve_vk.smallprimes(B1g):
+    for _l in smallprimes(B1g):
         _rs = flint.nmod_poly(g, _l).roots()
         for _r, _ in _rs:
             ls.append(_l)
             rs.append(_r)
     qs = []
-    for _q in sieve_vk.smallprimes(10 * qmin):
+    for _q in smallprimes(10 * qmin):
         if _q >= qmin and A % _q != 0:
             for _r, _ in flint.nmod_poly(g, _q).roots():
                 qs.append((int(_q), int(_r)))
@@ -260,7 +261,7 @@ def main_impl(args):
     ls2, rs2 = None, None
     if B1f > 0:
         ls2, rs2 = [], []
-        for _l in sieve_vk.smallprimes(B1f):
+        for _l in smallprimes(B1f):
             _rs = flint.nmod_poly(f, _l).roots()
             for _r, _ in _rs:
                 ls2.append(_l)

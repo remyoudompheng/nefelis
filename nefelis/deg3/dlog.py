@@ -15,8 +15,8 @@ import sys
 import time
 
 import flint
-import pymqs
 
+from nefelis import integers
 from nefelis import sieve_vk
 from nefelis.deg3 import linalg
 
@@ -69,14 +69,6 @@ def main():
 smallvectors = [
     (_x, _y) for _x in range(10) for _y in range(-10, 10) if math.gcd(_x, _y) == 1
 ]
-
-
-def factor(n):
-    ls = pymqs.factor(n)
-    facs = {}
-    for l in ls:
-        facs[l] = facs.get(l, 0) + 1
-    return sorted(facs.items())
 
 
 def parse_key(k):
@@ -194,7 +186,7 @@ class Descent:
 
     def _factor(self, v):
         d = int(self.zprod.gcd(v))
-        facs = flint.fmpz(d).factor()
+        facs = integers.factor(d)
         if v < 0:
             # Sign -1 is ignored in this dlog
             v = -v
@@ -234,8 +226,8 @@ class Descent:
                         continue
                     facs_u, xu = self._factor(int(su))
                     facs_v, xv = self._factor(int(sv))
-                    cofacs = factor(xu)
-                    cofacs += [(_l, -_e) for _l, _e in factor(xv)]
+                    cofacs = integers.factor(xu)
+                    cofacs += [(_l, -_e) for _l, _e in integers.factor(xv)]
                     cofacs.sort()
                     if any(
                         flint.fmpz(_l).is_prime() and not self.splits(_l)
@@ -268,8 +260,8 @@ class Descent:
             else:
                 if not cofacs or (cofacs[-1][0] < best[1][-1][0]):
                     if any(not flint.fmpz(_l).is_prime() for _l, _ in cofacs):
-                        cofacs = flint.fmpz(xu).factor()
-                        cofacs += [(_l, -_e) for _l, _e in flint.fmpz(xv).factor()]
+                        cofacs = integers.factor(xu)
+                        cofacs += [(_l, -_e) for _l, _e in integers.factor(xv)]
                         cofacs.sort()
 
                     facs_str = "*".join(f"{_l}^{_e}" for _l, _e in facs)
@@ -336,7 +328,7 @@ class Descent:
             if math.gcd(x, y) != 1:
                 continue
             vf, vg = self.fg(x, y)
-            facf = pymqs.factor(abs(vf))
+            facf = integers.factor(abs(vf))
 
             good = True
             facs = [
@@ -344,13 +336,13 @@ class Descent:
                 # The CONSTANT accounts for leading coefficients of f and g
                 ("CONSTANT", 1),
             ]
-            for _l in facf:
+            for _l, _e in facf:
                 _r = x * pow(y, -1, _l) % _l if y % _l else _l
                 if (key := f"f_{_l}_{_r}") not in self.dlogs:
                     good = False
                     break
                 else:
-                    facs.append((key, 1))
+                    facs.append((key, _e))
 
             if vg % q != 0:
                 raise ArithmeticError(
@@ -362,11 +354,11 @@ class Descent:
 
             # z = g(z)/u = f(z)
             if good:
-                facg = pymqs.factor(abs(vg) // q)
-                for _l in facg:
+                facg = integers.factor(abs(vg) // q)
+                for _l, _e in facg:
                     _r = x * pow(y, -1, _l) % _l if y % _l else _l
                     key = f"g_{_l}_{_r}"
-                    facs.append((key, -1))
+                    facs.append((key, -_e))
 
                 missing = []
                 worst = 0

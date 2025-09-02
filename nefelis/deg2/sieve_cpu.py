@@ -117,17 +117,9 @@ def sieve(u, v, primes, roots, q, xmax, ymax, threshold):
     return reports
 
 
-def smallprimes(B):
-    l = np.ones(B, dtype=np.uint8)
-    l[0:2] = 0
-    for i in range(math.isqrt(B) + 1):
-        if l[i] == 0:
-            continue
-        l[i * i :: i] = 0
-    return [int(_i) for _i in l.nonzero()[0]]
-
-
 if __name__ == "__main__":
+    from nefelis.integers import smallprimes
+
     p = 1000000000000000000000000000000000000000000000000000000000000000000000270907
     u = -2423783356717505418397281193017644615
     v = 33044377492552689242111796852708437154
