@@ -76,6 +76,19 @@ def parse_key(k):
     return int(words[1]), int(words[2])
 
 
+PARAMS = [
+    # nbits: modulus size (in bits)
+    # initial threshold during rational reconstruction sieve (as a fraction of n)
+    # MAX_QBITS: max prime size in initial decomposition (must be under 64 bits)
+    # COFACTOR_BITS: cofactor size during descent
+    (200, 0.25, 30, 20),
+    (250, 0.25, 40, 20),
+    (300, 0.2, 45, 20),
+    (350, 0.2, 50, 25),
+    (400, 0.2, 60, 30),
+]
+
+
 class Descent:
     def __init__(self, dlogs, zlogs, logbase, n, f, g, ell):
         self.dlogs = dlogs
@@ -99,15 +112,10 @@ class Descent:
         self.sm_place = linalg.schirokauer_place(f, ell)
 
         nbits = n.bit_length()
-        if nbits < 220:
-            self.MAX_QBITS = 45
-            COFACTOR_BITS = 20
-        elif nbits < 250:
-            self.MAX_QBITS = 48
-            COFACTOR_BITS = 25
-        elif nbits < 300:
-            self.MAX_QBITS = 56
-            COFACTOR_BITS = 30
+        _, ratio, self.MAX_QBITS, COFACTOR_BITS = min(
+            PARAMS, key=lambda p: abs(p[0] - nbits)
+        )
+        self.zthreshold = int(ratio * nbits)
 
         fls, frs = [], []
         gls, grs = [], []
@@ -145,7 +153,7 @@ class Descent:
             self.g,
             gls,
             grs,
-            gthreshold - 40,
+            gthreshold - 20,
             LOGWIDTH + 1,
             # We want f(x,y) to factor completely
             self.f,
@@ -160,7 +168,7 @@ class Descent:
             self.g,
             gls,
             grs,
-            gthreshold - 40,
+            gthreshold - 30,
             LOGWIDTH + 1,
             # We want f(x,y) to factor completely
             self.f,
@@ -203,6 +211,14 @@ class Descent:
         Iterates over fractions x0 = cofacs(xu/xv) * facs where xu and xv are small
         """
         n = self.n
+        zs = list(self.zlogs)
+        # also any split prime is interesting for initial sieving
+        for l in integers.smallprimes(max(zs)):
+            if l not in self.zlogs and self.splits(l):
+                zs.append(l)
+        zs.sort()
+        logger.info(f"Using {len(zs) - len(self.zlogs)} additional small split primes")
+
         for i in range(1_000_000):
             if i > 0:
                 # No need to take huge exponents, a 64-bit integer is enough.
@@ -221,23 +237,51 @@ class Descent:
             else:
                 # Try rational reconstruction
                 m = flint.fmpz_mat([[self.n, 0], [int(x), 1]]).lll()
-                for su, sv in (flint.fmpz_mat(smallvectors) * m).table():
-                    if self.badprod.gcd(su * sv) != 1:
-                        continue
-                    facs_u, xu = self._factor(int(su))
-                    facs_v, xv = self._factor(int(sv))
-                    cofacs = integers.factor(xu)
-                    cofacs += [(_l, -_e) for _l, _e in integers.factor(xv)]
-                    cofacs.sort()
-                    if any(
-                        flint.fmpz(_l).is_prime() and not self.splits(_l)
-                        for _l, _ in cofacs
-                    ):
-                        continue
+                u1, v1, u2, v2 = m.entries()
+                # x = u1/v1 = u2/v2
+                # Use sieve to find (u1 x + u2 y, v1 x + v2 y) smooth
+                LOGWIDTH = 14
+                uroots = [-u2 * pow(u1, -1, z) % z if u1 % z else z for z in zs]
+                vroots = [-v2 * pow(v1, -1, z) % z if v1 % z else z for z in zs]
+                sieve = sieve_vk.Siever(
+                    [u2, u1],
+                    zs,
+                    uroots,
+                    self.zthreshold,
+                    LOGWIDTH,
+                    # We want f(x,y) to factor completely
+                    [v2, v1],
+                    zs,
+                    vroots,
+                    self.zthreshold,
+                )
 
-                    facs = facs0 + facs_u
-                    facs += [(_l, -_e) for _l, _e in facs_v]
-                    yield facs, cofacs, xu, xv
+                n_fractions = 0
+                for q, qr in zip(zs[10:40], uroots[10:40]):
+                    reports = sieve.sieve(q, qr)
+                    for sx, sy in reports:
+                        if math.gcd(sx, sy) != 1:
+                            continue
+                        n_fractions += 1
+                        su, sv = sx * u1 + sy * u2, sx * v1 + sy * v2
+                        assert (su - x * sv) % n == 0
+                        if self.badprod.gcd(su * sv) != 1:
+                            continue
+                        facs_u, xu = self._factor(int(su))
+                        facs_v, xv = self._factor(int(sv))
+                        cofacs = integers.factor(xu)
+                        cofacs += [(_l, -_e) for _l, _e in integers.factor(xv)]
+                        cofacs.sort()
+                        if any(
+                            flint.fmpz(_l).is_prime() and not self.splits(_l)
+                            for _l, _ in cofacs
+                        ):
+                            continue
+
+                        facs = facs0 + facs_u
+                        facs += [(_l, -_e) for _l, _e in facs_v]
+                        yield facs, cofacs, xu, xv
+                logger.debug(f"{n_fractions} smooth rational reconstructions tried")
 
     def log(self, x0):
         """
@@ -246,16 +290,17 @@ class Descent:
         best = None
         # FIXME: make iteration count configurable
         # FIXME: make bound 32bits configurable
-        i = 0
+        logging.info(
+            f"Trying to decompose {x0} into small primes ({self.MAX_QBITS} bits)"
+        )
         for facs, cofacs, xu, xv in self.smooth_candidates(x0):
-            i += 1
             # Now x = product(facs) * xu / xv
             if best is None:
                 if all(
                     flint.fmpz(_l).is_prime() and self.splits(_l) for _l, _ in cofacs
                 ):
                     # factorization may be incomplete
-                    logging.info(f"Decomposed {x0} as {facs} and cofactor {xu}/{xv}")
+                    logging.info(f"Found relation as {facs} and cofactor {xu}/{xv}")
                     best = facs, cofacs
             else:
                 if not cofacs or (cofacs[-1][0] < best[1][-1][0]):
@@ -267,14 +312,14 @@ class Descent:
                     facs_str = "*".join(f"{_l}^{_e}" for _l, _e in facs)
                     cofacs_str = "*".join(f"{_l}^{_e}" for _l, _e in cofacs)
                     logging.info(
-                        f"[i={i}] Decomposed {x0} as {facs_str} and cofactor {xu}/{xv}={cofacs_str}"
+                        f"Found relation as {facs_str} and cofactor {xu}/{xv}={cofacs_str}"
                     )
                     best = facs, cofacs
 
-            if not cofacs:
-                break
-            if i > 100 and cofacs[-1][0].bit_length() < self.MAX_QBITS:
-                break
+            if best is not None:
+                max_cofac = best[1][-1][0]
+                if max_cofac.bit_length() < self.MAX_QBITS:
+                    break
 
         facs, cofacs = best
         # x0 = product(facs) * x
@@ -284,7 +329,7 @@ class Descent:
             assert self.splits(_l) and _l not in self.zlogs
             # We have to sieve both prime ideals above l in K(g)
             lroots = flint.nmod_poly(self.g, _l).roots()
-            assert len(lroots) == 2
+            assert len(lroots) == 2, _l
             z = 0
             for lr, _ in lroots:
                 logging.info(f"Recurse into small prime {_l},{lr}")
@@ -309,6 +354,10 @@ class Descent:
         Compute logarithm of a "small" prime using sieving.
         """
         assert flint.fmpz(q).is_prime()
+        key = f"g_{q}_{qr}"
+        if key in self.dlogs:
+            logger.info(f"Using known log({key}) = {self.dlogs[key]}")
+            return self.dlogs[key]
 
         t = time.monotonic()
         if q.bit_length() <= 29:
@@ -414,4 +463,5 @@ class Descent:
 
 if __name__ == "__main__":
     logging.getLogger().setLevel(level=logging.DEBUG)
+    logging.getLogger("vulkan").setLevel(level=logging.INFO)
     main()

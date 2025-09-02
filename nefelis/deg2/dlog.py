@@ -230,7 +230,10 @@ class Descent:
                 keep = (
                     best is None
                     or not missing
-                    or (any(_m > q for _m, _ in best[1]) and all(_m < q for _m in missing))
+                    or (
+                        any(_m > q for _m, _ in best[1])
+                        and all(_m < q for _m in missing)
+                    )
                     or (len(missing) <= len(best[1]) and max(missing) < max(best[1]))
                 )
                 if keep:

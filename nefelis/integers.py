@@ -12,6 +12,7 @@ try:
 except ImportError:
     pymqs = None
 
+
 def smallprimes(B: int) -> list[int]:
     l = np.ones(B, dtype=np.uint8)
     l[0:2] = 0
@@ -31,4 +32,3 @@ def factor(n: int | flint.fmpz) -> list[tuple[int, int]]:
         return sorted(facd.items())
     else:
         return [(int(l), int(e)) for l, e in flint.fmpz(n).factor()]
-
