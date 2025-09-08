@@ -21,13 +21,8 @@ import time
 
 import flint
 
-try:
-    import pymqs
-except ImportError:
-    pymqs = None
-
 from nefelis import sieve_vk
-from nefelis.integers import smallprimes
+from nefelis.integers import factor, smallprimes
 from nefelis.deg3.polyselect import polyselect, polyselect_g
 
 logger = logging.getLogger("sieve")
@@ -56,20 +51,14 @@ class Factorer:
             vg = abs(A * x * x + B * x * y + C * y * y) // q
 
             facf = []
-            if pymqs is not None:
-                facf += pymqs.factor(int(vf))
-            else:
-                for _l, _e in flint.fmpz(vf).factor():
-                    facf += _e * [int(_l)]
+            for _l, _e in factor(vf):
+                facf += _e * [int(_l)]
             if any(_f.bit_length() > self.B2f for _f in facf):
                 continue
 
             facg = [q]
-            if pymqs is not None:
-                facg += pymqs.factor(int(vg))
-            else:
-                for _l, _e in flint.fmpz(vg).factor():
-                    facg += _e * [int(_l)]
+            for _l, _e in factor(vg):
+                facg += _e * [int(_l)]
 
             if any(_l.bit_length() > self.B2g for _l in facg):
                 continue
