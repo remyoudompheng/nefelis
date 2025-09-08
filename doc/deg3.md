@@ -1,5 +1,7 @@
 # Discrete logarithm using a degree 3 polynomial
 
+The implementation mostly follows the ideas of [[JL]](./bibliography.md#JL2003).
+
 ## Implementation without Schirokauer maps
 
 This implementation considers the special case of polynomial x³+2

@@ -1,16 +1,12 @@
 # Discrete logarithms in GF(p²) using the conjugation method
 
-This method is described in the following paper.
-
-Razvan Barbulescu, Pierrick Gaudry, Aurore Guillevic, François Morain.
-Improving NFS for the Discrete Logarithm Problem in Non-prime Finite Fields.
-EUROCRYPT 2015, Proceedings, Part I, Apr 2015, Sofia, Bulgaria. pp.129-155,
-https://inria.hal.science/hal-01112879v2/file/BGGM-Eurocrypt15.pdf
-
 It selects polynomials f of degree 4 and g of degree 2, such that
 g is irreducible over GF(p) and f, g have a common root in GF(p²).
 
-The procedure is identical to the general NFS.
+This method is described in [[BGGM]](./bibliography.md#BGGM).
+
+The procedure remains similar to other general NFS variants.
+For Galois-equivariant properties, see also [[JLSV]](./bibliography.md#JLSV).
 
 ## Mathematical description
 
