@@ -219,6 +219,15 @@ def process(workdir, args, ell: int, blockw: int = 1):
     g = args["g"]
     D = args["D"]
     gj = args["gj"]
+    conway = args["conway"]
+
+    ZnX = flint.fmpz_mod_poly_ctx(n)
+    Fp2 = flint.fq_default_ctx(n, 2, var="i", modulus=ZnX(conway))
+    Fp2X = flint.fq_default_poly_ctx(Fp2)
+    z = Fp2(args["z"])
+    assert Fp2X(f)(z) == 0
+    assert Fp2X(g)(z) == 0
+
     IS_FP = n % ell == 1
 
     rels = []
@@ -476,14 +485,6 @@ def process(workdir, args, ell: int, blockw: int = 1):
             keys = g_primes[l]
             if len(keys) == 2:
                 assert (dlog[keys[0]] + dlog[keys[1]]) % ell == 0, keys
-
-        # Use original relations to find smooth elements of Kg
-        Fp2 = flint.fq_default_ctx(n, 2, var="z", modulus=flint.fmpz_mod_poly_ctx(n)(g))
-        Fp2X = flint.fq_default_poly_ctx(Fp2)
-        z = Fp2.gen()
-        assert sum(gi * z**i for i, gi in enumerate(g)) == 0
-        logger.info("Representing GF(p²) by the common root z of f and g")
-        assert Fp2X(f)(z) == 0
 
         coell = (n + 1) // ell
         gen = None

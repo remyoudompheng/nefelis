@@ -103,6 +103,7 @@ def worker_task(args):
     reports = SIEVER.sieve(q, qr)
     return q, qr, time.monotonic() - t, reports
 
+
 # The parameters are similar to deg3 for 2x larger N
 PARAMS = [
     # bitsize, B1g, B2g, B2f, cofactor bits, I=logwidth, qmin
@@ -127,8 +128,47 @@ PARAMS2 = [
 def get_params(N):
     return min(PARAMS, key=lambda p: abs(p[0] - N.bit_length()))[1:]
 
+
 def get_params2(N):
     return min(PARAMS2, key=lambda p: abs(p[0] - N.bit_length()))[1:]
+
+
+def conway_poly(p):
+    """
+    Compute a Conway polynomial for field GF(p^2)
+
+    >>> conway_poly(2)
+    [1, -1, 1]
+    >>> conway_poly(63361)
+    [37, -17, 1]
+    >>> conway_poly(65537)
+    [3, -1, 1]
+    >>> conway_poly(94009)
+    [13, -13, 1]
+    """
+    # The root of the Conway polynomial must map to the root of the
+    # Conway polynomial of degree 1 under the norm map.
+    l0 = integers.factor(p - 1)
+    for c in range(1, p):
+        if any(pow(c, (p - 1) // l, p) == 1 for l, _ in l0):
+            continue
+        logging.debug(f"Conway: {c} is primitive modulo p")
+        break
+    # The leading coefficient is always 1
+    l1 = integers.factor(p + 1)
+    Fp2 = flint.fq_default_ctx(p, 2)
+    Fp2X = flint.fq_default_poly_ctx(Fp2)
+    for b in range(p):
+        r = Fp2X([c, -b, 1]).roots()[0][0]
+        if r ** (p - 1) == 1:
+            continue
+        if any(r ** ((p * p - 1) // l) == 1 for l, _ in l1):
+            continue
+        logging.debug(f"Conway: x²-{b}*x+{c} is the Conway polynomial")
+        break
+
+    return [c, -b, 1]
+
 
 def main():
     argp = argparse.ArgumentParser()
@@ -150,11 +190,7 @@ def main_impl(args):
     datadir = pathlib.Path(args.WORKDIR)
     datadir.mkdir(exist_ok=True)
 
-    ell = N // 2  # FIXME: support user ell
-
-    assert N % 3 != 1
     assert flint.fmpz(N).is_prime()
-    assert flint.fmpz(ell).is_prime()
 
     B1g, B2g, B2f, COFACTOR_BITS, I, qmin = get_params(N)
     B1f, thr2 = 0, 0
@@ -175,8 +211,18 @@ def main_impl(args):
     C, B, A = g
     assert B * B - 4 * A * C < 0
 
+    conway = conway_poly(N)
+    Fp2 = flint.fq_default_ctx(N, 2, var="i", modulus=ZnX(conway))
+    Fp2X = flint.fq_default_poly_ctx(Fp2)
+
     logger.info(f"f = {f[4]}*x^4+{f[3]}*x^3+{f[2]}*x^2+{f[1]}*x+{f[0]}")
     logger.info(f"g = {A}*x^2 + {B}*x + {C}")
+    roots_g = Fp2X(g).roots()
+    z = roots_g[0][0]
+    if roots_g[1][0].to_list()[1] < z.to_list()[1]:
+        z = roots_g[1][0]
+    logger.info(f"GF(p^2) is represented by GF(p)[x] / {flint.fmpz_poly(conway)}")
+    logger.info(f"Root of f,g is z = {z}")
 
     ls, rs = [], []
     for _l in integers.smallprimes(B1g):
@@ -228,6 +274,8 @@ def main_impl(args):
                 "g": g,
                 "D": D,
                 "gj": gj,
+                "conway": conway,
+                "z": [int(_zi) for _zi in z.to_list()],
             },
             w,
         )
