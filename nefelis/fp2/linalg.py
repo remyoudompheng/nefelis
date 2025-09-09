@@ -512,7 +512,7 @@ def process(workdir, args, ell: int, blockw: int = 1):
                 gen = xy1 ** int(pow(logxy, -1, ell))
                 assert xy1 == gen**logxy
             else:
-                assert xy1 == gen**logxy:
+                assert xy1 == gen**logxy
             checked += 1
         logger.info(f"Checked logarithms for {checked} norm 1 elements")
         logger.info(f"Logarithm base is {gen}")
