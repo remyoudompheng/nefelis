@@ -41,3 +41,6 @@ pythonpath = ["."]
 [tool.ruff.lint]
 # It's okay to name variables 'l'
 ignore = ["E741"]
+
+[tool.mypy]
+plugins = "numpy.typing.mypy_plugin"

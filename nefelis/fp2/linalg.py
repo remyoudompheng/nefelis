@@ -21,6 +21,8 @@ and a root modulo l, and the root modulo l is used to define
 the Schirokauer map.
 """
 
+from typing import Iterator
+
 import argparse
 import json
 import logging
@@ -39,7 +41,9 @@ DEBUG_RELS = False
 logger = logging.getLogger("linalg")
 
 
-def read_relations(filepath: str | pathlib.Path):
+def read_relations(
+    filepath: str | pathlib.Path,
+) -> Iterator[tuple[int, int, list[int], list[int]]]:
     with open(filepath) as f:
         for line in f:
             if line.startswith("#"):
@@ -122,12 +126,8 @@ class Field:
     It stores a list of prime ideals with string identifiers.
     """
 
-    # List of roots per prime
-    roots: dict[int, list[int]]
-    # Ideal identifiers for a given prime and root
-    names: dict[tuple[int, int], str]
-
-    conjugate: dict[tuple[int, int], tuple[int, int]]
+    # Conjugation automorphism: (l, r1) -> (l, r2)
+    conjugates: dict[tuple[int, int], tuple[int, int]]
 
     def __init__(self, poly, D, gj, prefix: str):
         # To represent the conjugation automorphism, we need to know
@@ -357,8 +357,7 @@ def process(workdir, args, ell: int, blockw: int = 1):
     assert len(basis) == len(ker), (len(basis), dim, len(ker))
 
     # Build dlog database
-    dlog = {l: v for l, v in zip(basis, ker)}
-    # print(dlog)
+    dlog: dict[str, int] = {l: v for l, v in zip(basis, ker)}
 
     added, nremoved = 0, 0
     with open(subdir / "relations.removed") as fd:
@@ -410,8 +409,8 @@ def process(workdir, args, ell: int, blockw: int = 1):
         for _, k, v in sorted(dlogs):
             w.write(f"{k} {v}\n")
 
-    f_primes = {}
-    g_primes = {}
+    f_primes: dict[int, list[str]] = {}
+    g_primes: dict[int, list[str]] = {}
     for key in dlog:
         if key in ("CONSTANT", "SM"):
             continue

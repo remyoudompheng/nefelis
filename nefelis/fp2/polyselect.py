@@ -10,6 +10,7 @@ from nefelis.deg2.polyselect import alpha
 
 logger = logging.getLogger("poly")
 
+
 def polyselect(N, bound=None) -> tuple[list, list, int, list[list]]:
     """
     Select polynomials according to the conjugate method and return:

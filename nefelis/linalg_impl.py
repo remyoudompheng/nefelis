@@ -6,6 +6,7 @@ import time
 import flint
 import kp
 import numpy as np
+import numpy.typing as npt
 
 from nefelis import lingen
 from nefelis.vulkan import shader, stamp_period
@@ -15,7 +16,7 @@ DEBUG_NO_SORT_ROWS = False
 logger = logging.getLogger("linalg")
 
 
-def berlekamp_massey(seq: list[int], l: int):
+def berlekamp_massey(seq: list[int], l: int) -> list[int]:
     ctx = flint.fmpz_mod_poly_ctx(l)
     poly = ctx.minpoly(seq)
     return [int(coef) for coef in poly]
@@ -315,13 +316,21 @@ class SpMV:
         return [from_uvec(vout[i, :]) % l for i in range(dim)]
 
 
-def to_sparse_matrix(rels):
+def to_sparse_matrix(
+    rels,
+) -> tuple[list, npt.NDArray[np.int8], list[int], list, list]:
     """
     Converts a list of relations into a representation suitable
     for sparse matrix kernels.
 
     The matrix rows may correspond to an unspecified permutation
     of input relations.
+
+    Returns:
+    - primes: the list of column labels
+    - dense: a dense tensor for the first n columns
+    - densebig: a tensor of big integers for large columns
+    - plus, minus: a CSR representation of other columns separated by sign
     """
     stats = {}
     for r in rels:
