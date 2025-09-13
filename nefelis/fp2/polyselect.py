@@ -27,7 +27,7 @@ def polyselect(N, bound=None) -> tuple[list, list, int, list[list]]:
 
     # First, select a real quadratic field where N splits.
     # We also want ell to split (for large factors ell of (N-1))
-    ells = [_l for _l, _ in integers.factor(N-1) if _l.bit_length() > 64]
+    ells = [_l for _l, _ in integers.factor(N - 1) if _l.bit_length() > 64]
     logger.info(f"Looking for a real quadratic field with split {ells}")
     for D in integers.smallprimes(10000):
         if flint.fmpz(D).jacobi(N) != 1:
@@ -42,18 +42,19 @@ def polyselect(N, bound=None) -> tuple[list, list, int, list[list]]:
     logger.info(f"Selecting quadratic field K=Q(sqrt(-{D}))")
 
     j = int(flint.fmpz_mod(D, flint.fmpz_mod_ctx(N)).sqrt())
+
     def small_gj(j: int, bound: int):
         """
         Let j = sqrt(-c)
         We choose g = x^2 + (a + bj) x + (c + dj)
         """
-        for x0 in range(-bound, bound+1):
-            for x1 in range(-bound, bound+1):
-                #for x2 in range(-bound, bound+1):
+        for x0 in range(-bound, bound + 1):
+            for x1 in range(-bound, bound + 1):
+                # for x2 in range(-bound, bound+1):
                 for x2 in [1]:
-                    for y0 in range(-bound, bound+1):
-                        for y1 in range(-bound, bound+1):
-                            #for y2 in range(-bound, bound+1):
+                    for y0 in range(-bound, bound + 1):
+                        for y1 in range(-bound, bound + 1):
+                            # for y2 in range(-bound, bound+1):
                             for y2 in [0]:
                                 A = x2 + y2 * j
                                 B = x1 + y1 * j
@@ -86,7 +87,7 @@ def polyselect(N, bound=None) -> tuple[list, list, int, list[list]]:
             g0, g1, g2 = (flint.fmpz_mat([v]) * mat).entries()
             g0, g1, g2 = int(g0), int(g1), int(g2)
             # We prefer negative discriminants
-            Dg = g1**2 - 4 * g0*g2
+            Dg = g1**2 - 4 * g0 * g2
             if Dg >= 0:
                 continue
             ag = alpha(Dg, g2, g1, g0)
@@ -101,15 +102,12 @@ def polyselect(N, bound=None) -> tuple[list, list, int, list[list]]:
                 f2 = flint.fmpz_poly(list(ys))
                 ff = f1**2 - D * f2**2
                 if ff[4] < 0:
-                    ff = -ff # normalize sign
+                    ff = -ff  # normalize sign
                 roots_f = flint.fmpz_poly(ff).complex_roots()
                 if any(_r.imag == 0 for _r, _ in roots_f):
                     logger.warning(f"Ignoring good polynomial {ff} with a real root")
                     continue
-                logger.info(
-                    f"GOOD! {f} "
-                    f"g {gbits:.2f} score {score:.2f}"
-                )
+                logger.info(f"GOOD! {f} g {gbits:.2f} score {score:.2f}")
                 best = score
                 f = ff
                 if g2 < 0:
@@ -131,6 +129,7 @@ def polyselect(N, bound=None) -> tuple[list, list, int, list[list]]:
 
     return f, g, D, gj
 
+
 def main():
     argp = argparse.ArgumentParser()
     argp.add_argument("N", type=int)
@@ -140,6 +139,7 @@ def main():
     f, g = polyselect(args.N, args.bound)
     print("f", f)
     print("g", g)
+
 
 if __name__ == "__main__":
     logging.getLogger().setLevel(logging.INFO)

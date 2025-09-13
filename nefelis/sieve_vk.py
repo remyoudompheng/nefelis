@@ -163,7 +163,10 @@ class Siever:
                 else:
                     xx = a * qr + b
                     yy = c * qr + d
-                assert (xx - r * yy) % p == 0, (p, r)
+                if r == p:
+                    assert yy % p == 0
+                else:
+                    assert (xx - r * yy) % p == 0, (p, r)
             del p, r, qr
             if self.algo3:
                 tprimes2 = self.algo1.get_tensors()[6]

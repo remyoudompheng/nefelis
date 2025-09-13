@@ -183,7 +183,10 @@ def main():
     logging.getLogger().setLevel(level=logging.DEBUG)
     main_impl(args)
 
-DEBUG_IGNORE_CONJUGATES = False
+
+# FIXME: manage to remove this flag
+DEBUG_IGNORE_CONJUGATES = True
+
 
 def main_impl(args):
     N = args.N
@@ -339,11 +342,11 @@ def main_impl(args):
                 )
             # Correct fcount because there are 4/3 primes per norm on average
             if DEBUG_IGNORE_CONJUGATES:
-                if total > 1.1 * (2.66 * fcount + 2 * gcount):
+                if total > 1.2 * (2.66 * fcount + 2 * gcount):
                     logging.info("Enough relations")
                     break
             else:
-                if total > 2.5 * (1.33 * fcount + gcount):
+                if total > 1.7 * (1.33 * fcount + gcount):
                     logging.info("Enough relations")
                     break
 

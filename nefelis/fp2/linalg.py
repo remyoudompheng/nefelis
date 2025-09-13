@@ -26,7 +26,6 @@ from typing import Iterator
 import argparse
 import json
 import logging
-import math
 import pathlib
 import random
 import time
@@ -37,6 +36,10 @@ from nefelis import filter
 from nefelis.linalg_impl import SpMV
 
 DEBUG_RELS = False
+
+# If enabled, ignore relations between conjugate ideals.
+# This can be used to validate the optimization.
+DEBUG_IGNORE_CONJUGATES = True
 
 logger = logging.getLogger("linalg")
 
@@ -110,14 +113,8 @@ def main_impl(args):
 
     ell0 = int(flint.fmpz(n - 1).factor()[-1][0])
     ell1 = int(flint.fmpz(n + 1).factor()[-1][0])
-    process(workdir, doc, ell1, args.blockw)
-    return
     process(workdir, doc, ell0, args.blockw)
-
-
-# If enabled, ignore relations between conjugate ideals.
-# This can be used to validate the optimization.
-DEBUG_IGNORE_CONJUGATES = True
+    process(workdir, doc, ell1, args.blockw)
 
 
 class Field:
@@ -252,10 +249,6 @@ def process(workdir, args, ell: int, blockw: int = 1):
         logger.info(f"Schirokauer map will use root {sm_root} mod l^2")
         # image of gj in polynomials modulo l^2
         gell = [_x + sm_root * _y for _x, _y in gj]
-        gellbar = [_x - sm_root * _y for _x, _y in gj]
-        RRR = flint.fmpz_mod_poly_ctx(ell**2)
-        print(-RRR(list(map(int, gell))) * RRR(list(map(int,gellbar))))
-        print(f)
     else:
         logger.info(f"Logarithms modulo {ell=} (in norm 1 subgroup of GF(p²))")
         logger.info("Schirokauer map is ignored")
@@ -276,39 +269,34 @@ def process(workdir, args, ell: int, blockw: int = 1):
             rel = {"CONSTANT": -1}
         for _l in facf:
             _r = x * pow(y, -1, _l) % _l if y % _l else _l
-            key, e = f"f_{_l}_{_r}", 1
-            _, _r2 = Kf.conjugate(_l, int(_r))
-            if not IS_FP and _r == _r2:
-                # Self conjugates have zero logarithm
-                continue
+            key0 = f"f_{_l}_{_r}"
             if not DEBUG_IGNORE_CONJUGATES:
                 # logarithms are conjugation-invariant
                 key, e = Kf.canonical_conj(_l, int(_r))
+            else:
+                _, _r2 = Kf.conjugate(_l, int(_r))
+                key, e = key0, 1
             if IS_FP:
                 # logarithms are conjugation-invariant
                 e = 1
+            # print("relation key",key)
             rel[key] = rel.get(key, 0) + e
         for _l in facg:
             _r = x * pow(y, -1, _l) % _l if y % _l else _l
-            key, e = f"g_{_l}_{_r}", 1
-            _, _r2 = Kg.conjugate(_l, int(_r))
-            if not IS_FP and _r == _r2:
-                # Self conjugates have zero logarithm
-                continue
+            key0 = f"g_{_l}_{_r}"
             if not DEBUG_IGNORE_CONJUGATES:
                 key, e = Kg.canonical_conj(_l, int(_r))
+            else:
+                _, _r2 = Kg.conjugate(_l, int(_r))
+                key, e = key0, 1
             if IS_FP:
                 # logarithms are conjugation-invariant
                 e = 1
             rel[key] = rel.get(key, 0) - e
         # Corresponding algebraic integer is x-yω
         if IS_FP:
-            vff = sum(fi * x**i * y**(4-i) for i, fi in enumerate(f))
-            #print(vff)
             # Compute the norm of x-yω in the quadratic subfield
             vf = gell[0] * y**2 + gell[1] * x * y + gell[2] * x**2
-            vfbar = gellbar[0] * y**2 + gellbar[1] * x * y + gellbar[2] * x**2
-            #print(vf, vfbar, int(-vf*vfbar) % ell)
             # Then apply Schirokauer map
             sm1 = int(vf ** (ell - 1))
             assert int(sm1) % ell == 1
@@ -328,42 +316,43 @@ def process(workdir, args, ell: int, blockw: int = 1):
     subdir.mkdir(exist_ok=True)
     rels2, _ = filter.prune(rels, subdir)
     rels3 = filter.filter(rels2, subdir)
-    # Truncate to obtain a square matrix
-    # NOTE: after truncation, we may have lost some ideals
-    while True:
-        keys = set(key for r in rels3 for key in r)
-        if len(keys) >= len(rels3):
-            break
-        rels3 = rels3[ :len(keys)]
 
     M = SpMV(rels3, ell)
     basis = M.basis
     dim = M.dim
-    assert dim == len(basis)
+    assert dim >= len(basis)
+
     poly = M.wiedemann_big(ell, blockm=blockw)
     logger.info(f"Computed characteristic poly {poly[:3]}...{poly[-3:]}")
 
     poly = [ai * pow(poly[-1], -1, ell) % ell for ai in poly]
     assert any(ai != 0 for ai in poly)
     assert len(poly) <= dim + 1 and poly[0] == 0, (dim, len(poly), poly[0])
-    print("degree", len(poly)-1)
 
     i0 = next(i for i, ai in enumerate(poly) if ai)
-    logger.info(f"Polynomial is divisible by X^{i0}")
-    dimker = dim + 1 - len(poly) + i0
-    logger.info(f"Expected kernel dimension <= {dimker}")
+    logger.info(f"Polynomial (degree {len(poly) - 1}) is divisible by X^{i0}")
+
+    poly_k = poly[1:]
     wi = [random.randrange(ell) for _ in range(dim)]
-    poly_k = poly[i0:]
     ker = M.polyeval(wi, ell, poly_k)
     assert any(k for k in ker)
 
+    if any(k for k in ker[len(basis) :]):
+        kdim = len(set(ker[len(basis) :]))
+        logger.info(f"Kernel is inaccurate (extra dimensions {kdim})")
+        # FIXME: this will usually fail
+
     # Validate result
     prime_idx = {l: idx for idx, l in enumerate(basis)}
-    for r in rels3:
-        assert sum(e * ker[prime_idx[l]] for l, e in r.items()) % ell == 0
+    for i, ridx in enumerate(M.rowidx):
+        r = rels3[ridx]
+        assert sum(e * ker[prime_idx[l]] for l, e in r.items()) % ell == 0, (
+            f"row {i} (rel {ridx})"
+        )
+
     logger.info("Checked element of matrix right kernel")
 
-    assert len(basis) == len(ker), (len(basis), dim, len(ker))
+    assert len(basis) <= len(ker), (len(basis), dim, len(ker))
 
     # Build dlog database
     dlog: dict[str, int] = {l: v for l, v in zip(basis, ker)}
@@ -372,14 +361,14 @@ def process(workdir, args, ell: int, blockw: int = 1):
     with open(subdir / "relations.removed") as fd:
         for line in fd:
             nremoved += 1
-            l, _, facs = line.partition("=")
-            l = l.strip()
+            key, _, facs = line.partition("=")
+            key = key.strip()
             rel = {p: int(e) for p, _, e in (_f.partition("^") for _f in facs.split())}
             # Relations from Gaussian elimination are naturally ordered
             # in a triangular shape.
             if all(_l in dlog for _l in rel):
                 v = sum(_e * dlog[_l] for _l, _e in rel.items())
-                dlog[l] = v % ell
+                dlog[key] = v % ell
                 added += 1
             else:
                 pass
@@ -418,6 +407,12 @@ def process(workdir, args, ell: int, blockw: int = 1):
         for _, k, v in sorted(dlogs):
             w.write(f"{k} {v}\n")
 
+    # Check relations again
+    for rel in rels:
+        if all(k in dlog for k in rel):
+            v = sum(_e * dlog[_p] for _p, _e in rel.items())
+            assert v % ell == 0, (v, rel)
+
     f_primes: dict[int, list[str]] = {}
     g_primes: dict[int, list[str]] = {}
     for key in dlog:
@@ -429,24 +424,51 @@ def process(workdir, args, ell: int, blockw: int = 1):
         elif key.startswith("g"):
             g_primes.setdefault(_l, []).append(key)
 
-    if DEBUG_IGNORE_CONJUGATES:
-        # Check the logs of conjugates
+    # Check the logs of conjugates
+    sign = 1 if IS_FP else -1
+    n_conj = 0
+    for (l, r1), (_, r2) in Kf.conjugates.items():
+        k1 = f"f_{l}_{r1}"
+        k2 = f"f_{l}_{r2}"
+        if k1 in dlog and k2 in dlog:
+            assert dlog[k1] % ell == (sign * dlog[k2]) % ell, (
+                k1,
+                k2,
+                dlog[k1],
+                dlog[k2],
+            )
+            n_conj += 1
+    for (l, r1), (_, r2) in Kg.conjugates.items():
+        k1 = f"g_{l}_{r1}"
+        k2 = f"g_{l}_{r2}"
+        if k1 in dlog and k2 in dlog:
+            assert dlog[k1] % ell == (sign * dlog[k2]) % ell, (k1, k2)
+            n_conj += 1
+    logger.info(f"Checked {n_conj} conjugate ideal pairs")
+
+    if True:
+        # Fill logs of conjugates
         sign = 1 if IS_FP else -1
         n_conj = 0
-        if IS_FP:
-            for (l, r1), (_, r2) in Kf.conjugates.items():
-                k1 = f"f_{l}_{r1}"
-                k2 = f"f_{l}_{r2}"
-                if k1 in dlog and k2 in dlog:
-                    assert dlog[k1] % ell == (sign * dlog[k2]) % ell, (k1, k2)
-                    n_conj += 1
-        for (l, r1), (_, r2) in Kg.conjugates.items():
-            k1 = f"g_{l}_{r1}"
-            k2 = f"g_{l}_{r2}"
-            if k1 in dlog and k2 in dlog:
-                assert dlog[k1] % ell == (sign * dlog[k2]) % ell, (k1, k2)
+        for l, r1 in sorted(Kf.conjugates):
+            k1 = f"f_{l}_{r1}"
+            if k1 in dlog:
+                continue
+            _, r2 = Kf.conjugate(l, r1)
+            k2 = f"f_{l}_{r2}"
+            if k2 in dlog:
+                dlog[k1] = (sign * dlog[k2]) % ell
                 n_conj += 1
-        logger.info(f"Checked {n_conj} conjugate ideal pairs")
+        for l, r1 in sorted(Kg.conjugates):
+            k1 = f"g_{l}_{r1}"
+            if k1 in dlog:
+                continue
+            _, r2 = Kg.conjugate(l, r1)
+            k2 = f"g_{l}_{r2}"
+            if k2 in dlog:
+                dlog[k1] = (sign * dlog[k2]) % ell
+                n_conj += 1
+        logger.info(f"Added {n_conj} conjugate ideals")
 
     if IS_FP:
         gen = None
@@ -489,6 +511,9 @@ def process(workdir, args, ell: int, blockw: int = 1):
         coell = (n + 1) // ell
         gen = None
         checked = 0
+        # An exponent realizing the projection on the order ell subgroup
+        projexp = (n - 1) * coell * pow((n - 1) * coell, -1, ell)
+        assert projexp % ell == 1
         for x, y, facg, _ in read_relations(workdir / "relations.sieve"):
             logxy = dlog["CONSTANT"]
             facs = []
@@ -506,16 +531,24 @@ def process(workdir, args, ell: int, blockw: int = 1):
                 == g[2] * x**2 + g[1] * x * y + g[0] * y**2
             )
             # continue
-            xy1 = (x - y * z) ** ((n - 1) * coell)
+            xy1 = (x - y * z) ** projexp
             assert xy1**ell == 1
-            if gen is None:
+            if xy1 == 1:
+                assert logxy % ell == 0
+            elif gen is None:
+                # print(xy1, logxy)
                 gen = xy1 ** int(pow(logxy, -1, ell))
                 assert xy1 == gen**logxy
+                assert gen**projexp == gen
             else:
                 assert xy1 == gen**logxy
             checked += 1
         logger.info(f"Checked logarithms for {checked} norm 1 elements")
         logger.info(f"Logarithm base is {gen}")
+        # Write generator to file
+        with open(subdir / "gen", "w") as w:
+            genx, geny = gen.to_list()
+            w.write(f"{genx},{geny}\n")
 
     dlogs = [(key_l(k), k, v) for k, v in dlog.items()]
     with open(subdir / "dlog", "w") as w:
