@@ -23,6 +23,13 @@ def smallprimes(B: int) -> list[int]:
     return [int(_i) for _i in l.nonzero()[0]]
 
 
+def product(zs: list[int]) -> int:
+    if len(zs) == 1:
+        return zs[0]
+    else:
+        return product(zs[: len(zs) // 2]) * product(zs[len(zs) // 2 :])
+
+
 def factor(n: int | flint.fmpz) -> list[tuple[int, int]]:
     if pymqs is not None:
         facs = pymqs.factor(abs(int(n)))
