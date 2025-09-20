@@ -96,7 +96,10 @@ class Siever:
             tensors1 += [touttemp, tprimes2, troots2, tqroots2]
         else:
             tensors1 += [tout]
-        algo1 = mgr.algorithm(tensors1, shader1, (len(primes) // 256 + 1, 1, 1))
+        wg1 = len(primes) // 256 + 1
+        if primes2:
+            wg1 = max(wg1, len(primes2) // 256 + 1)
+        algo1 = mgr.algorithm(tensors1, shader1, (wg1, 1, 1))
         algo2 = mgr.algorithm(
             [tprimes, tqroots, tq, touttemp if GPU_FACTOR else tout, thuge, tdebug],
             shader2,
