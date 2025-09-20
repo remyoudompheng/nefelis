@@ -216,7 +216,7 @@ def main_impl(args):
     prime_idx = {l: idx for idx, l in enumerate(basis)}
     for r in rels3:
         if any(prime_idx[l] in bad_indexes for l in r):
-            logger.error("Skip check for bad relation {r}")
+            logger.error(f"Skip check for bad relation {r}")
             continue
         assert sum(e * ker[prime_idx[l]] for l, e in r.items()) % ell == 0
 
