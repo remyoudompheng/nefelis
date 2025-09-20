@@ -132,7 +132,10 @@ class Siever:
         self.defines = defines
 
     def sieve(self, q, qr):
-        qred = flint.fmpz_mat([[q, 0], [qr, 1]]).lll()
+        if q == qr:
+            qred = flint.fmpz_mat([[0, q], [1, 0]]).lll()
+        else:
+            qred = flint.fmpz_mat([[q, 0], [qr, 1]]).lll()
         a, c, b, d = qred.entries()
 
         self.tq.data()[:] = [a, b, c, d]
