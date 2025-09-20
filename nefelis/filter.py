@@ -194,12 +194,10 @@ def filter(rels, datadir: pathlib.Path | None):
     for d in Ds:
         remaining = [_r for _r in rels if _r is not None]
         avgw = sum(len(r) for r in remaining) / len(remaining)
-        avgw1 = sum(
-            abs(e) for r in remaining for _, e in r.items() if e.bit_length() < 64
-        ) / len(remaining)
-        maxe = max(
-            abs(e) for r in remaining for _, e in r.items() if e.bit_length() < 64
+        avgw1 = sum(abs(e) for r in remaining for k, e in r.items() if k != "SM") / len(
+            remaining
         )
+        maxe = max(abs(e) for r in remaining for k, e in r.items() if k != "SM")
         nc, nr = len(stats), len(remaining)
         assert nr > nc
         logger.info(
