@@ -53,6 +53,9 @@ def polyselect(N, bound=None) -> tuple[list, list, int, list[list]]:
                 # for x2 in range(-bound, bound+1):
                 for x2 in [1]:
                     for y0 in range(-bound, bound + 1):
+                        if x0**2 - D * y0**2 < 0:
+                            # polynomial will have a real root
+                            continue
                         for y1 in range(-bound, bound + 1):
                             # for y2 in range(-bound, bound+1):
                             for y2 in [0]:

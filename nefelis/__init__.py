@@ -4,6 +4,7 @@ import tempfile
 
 from nefelis import deg2
 from nefelis import deg3
+from nefelis import fp2
 
 
 def main():
@@ -26,10 +27,10 @@ def main():
 
     linalg_args = argp.add_argument_group("Linear algebra options")
     linalg_args.add_argument(
-        "--blockw", type=int, help="Use Block Wiedemann with size m=ARG n=1"
+        "--blockw", default=1, type=int, help="Use Block Wiedemann with size m=ARG n=1"
     )
 
-    argp.add_argument("METHOD", choices=("deg2", "deg3"))
+    argp.add_argument("METHOD", choices=("deg2", "deg3", "fp2"))
     argp.add_argument("N", type=int)
     argp.add_argument(
         "ARGS", nargs="*", type=str, help="Arguments for discrete logarithm"
@@ -61,16 +62,24 @@ def main():
 
 
 def main_impl(args):
-    if args.METHOD == "deg2":
-        deg2.sieve.main_impl(args)
-        deg2.linalg.main_impl(args)
-        if args.ARGS:
-            deg2.dlog.main_impl(args)
-    else:
-        deg3.sieve.main_impl(args)
-        deg3.linalg.main_impl(args)
-        if args.ARGS:
-            deg3.dlog.main_impl(args)
+    match args.METHOD:
+        case "deg2":
+            deg2.sieve.main_impl(args)
+            deg2.linalg.main_impl(args)
+            if args.ARGS:
+                deg2.dlog.main_impl(args)
+        case "deg3":
+            deg3.sieve.main_impl(args)
+            deg3.linalg.main_impl(args)
+            if args.ARGS:
+                deg3.dlog.main_impl(args)
+        case "fp2":
+            fp2.sieve.main_impl(args)
+            fp2.linalg.main_impl(args)
+            if args.ARGS:
+                fp2.dlog.main_impl(args)
+        case _:
+            raise NotImplementedError
 
 
 if __name__ == "__main__":
