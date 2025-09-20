@@ -21,7 +21,7 @@ It is work in progress, not in a usable state.
 Planned variants are described in the following table.
 
 | Identifier | Purpose | Description | Status | Comments |
-| ---------- | ------- | ----------- | ------ | -------- |
+| ---------- | ------- | ----------- | ------ | -------- |
 | `deg2` | Discrete logarithm in GF(p) | Gaussian integer method | ✅ | Polynomial selection inspired by Joux-Lercier |
 | `deg3` | Discrete logarithm in GF(p) | Joux-Lercier method with degree 3/2 polynomials | ✅ | Enforces a single Schirokauer map |
 | `fp2`  | Discrete logarithm in GF(p²)| Conjugation method with degree 4/2 polynomials  | ⚠️ | Basic (broken) implementation |
