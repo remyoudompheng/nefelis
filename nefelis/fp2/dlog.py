@@ -536,7 +536,7 @@ class Descent:
             if (qq, qqr) != (1, 0):
                 qcomp = q * qq
                 qrcomp = (qqr * q * pow(q, -1, qq) + qr * qq * pow(qq, -1, q)) % qcomp
-                assert qrcomp % q == qr and qrcomp % qq == qqr,  (qrcomp, q, qr, qq, qqr)
+                assert qrcomp % q == qr and qrcomp % qq == qqr, (qrcomp, q, qr, qq, qqr)
             else:
                 qcomp, qrcomp = q, qr
 
@@ -560,8 +560,7 @@ class Descent:
                     continue
                 vf, vg = self.fg(x, y)
                 facf = integers.factor_smooth(
-                    abs(vf) // q if side == "f" else abs(vf),
-                    self.MAX_FBITS - 5
+                    abs(vf) // q if side == "f" else abs(vf), self.MAX_FBITS - 5
                 )
 
                 good = True

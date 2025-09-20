@@ -33,6 +33,7 @@ def discriminant(f: list[int]) -> int:
     else:
         raise NotImplementedError
 
+
 def bad_ideals(f: list[int]) -> list[tuple[int, int]]:
     """
     Check f (irreducible polynomial) for bad ideals.

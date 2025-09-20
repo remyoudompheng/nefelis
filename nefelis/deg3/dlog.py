@@ -24,8 +24,26 @@ logger = logging.getLogger("dlog")
 
 
 def main():
-    workdir = pathlib.Path(sys.argv[1])
-    arg = int(sys.argv[2])
+    argp = argparse.ArgumentParser()
+    argp.add_argument(
+        "-v",
+        action="store_true",
+        help="Verbose logging",
+    )
+    argp.add_argument("WORKDIR")
+    argp.add_argument("ARGS", nargs="+", help="list of pairs x,y (for elements x+iy)")
+    args = argp.parse_args()
+
+    if args.v:
+        logging.getLogger().setLevel(level=logging.DEBUG)
+    else:
+        logging.getLogger().setLevel(level=logging.INFO)
+
+    main_impl(args)
+
+
+def main_impl(args):
+    workdir = pathlib.Path(args.WORKDIR)
 
     with open(workdir / "args.json") as fd:
         doc = json.load(fd)
@@ -51,19 +69,22 @@ def main():
                     logbase = int(key[2:])
 
     zmax = max(z for z in zlogs if z.bit_length() < 32)
-    logging.info(
+    logger.info(
         f"Read {len(zlogs)} logarithms of small rational primes ({min(zlogs)}..{zmax})"
     )
-    logging.info(f"Read {len(dlogs) - len(zlogs)} logarithms of small algebraic primes")
-    logging.info(f"Logarithm base is {logbase}")
+    logger.info(f"Read {len(dlogs) - len(zlogs)} logarithms of small algebraic primes")
+    logger.info(f"Logarithm base is {logbase}")
 
     D = Descent(dlogs, zlogs, logbase, n, f, g, ell)
-    y = D.log(arg)
 
-    coell = (n - 1) // ell
-    assert pow(logbase, coell * y, n) == pow(arg, coell, n)
-    logging.info(f"Found log({arg}) mod {ell} = {y}")
-    print(y)
+    for arg in args.ARGS:
+        arg = int(arg)
+        y = D.log(arg)
+
+        coell = (n - 1) // ell
+        assert pow(logbase, coell * y, n) == pow(arg, coell, n)
+        logger.info(f"Found log({arg}) mod {ell} = {y}")
+        print(y)
 
 
 smallvectors = [
@@ -81,6 +102,7 @@ PARAMS = [
     # initial threshold during rational reconstruction sieve (as a fraction of n)
     # MAX_QBITS: max prime size in initial decomposition (must be under 64 bits)
     # COFACTOR_BITS: cofactor size during descent
+    (150, 0.25, 25, 10),
     (200, 0.25, 30, 20),
     (250, 0.25, 40, 20),
     (300, 0.2, 45, 20),
@@ -290,7 +312,7 @@ class Descent:
         best = None
         # FIXME: make iteration count configurable
         # FIXME: make bound 32bits configurable
-        logging.info(
+        logger.info(
             f"Trying to decompose {x0} into small primes ({self.MAX_QBITS} bits)"
         )
         for facs, cofacs, xu, xv in self.smooth_candidates(x0):
@@ -300,7 +322,7 @@ class Descent:
                     flint.fmpz(_l).is_prime() and self.splits(_l) for _l, _ in cofacs
                 ):
                     # factorization may be incomplete
-                    logging.info(f"Found relation as {facs} and cofactor {xu}/{xv}")
+                    logger.info(f"Found relation as {facs} and cofactor {xu}/{xv}")
                     best = facs, cofacs
             else:
                 if not cofacs or (cofacs[-1][0] < best[1][-1][0]):
@@ -311,7 +333,7 @@ class Descent:
 
                     facs_str = "*".join(f"{_l}^{_e}" for _l, _e in facs)
                     cofacs_str = "*".join(f"{_l}^{_e}" for _l, _e in cofacs)
-                    logging.info(
+                    logger.info(
                         f"Found relation as {facs_str} and cofactor {xu}/{xv}={cofacs_str}"
                     )
                     best = facs, cofacs
@@ -332,12 +354,12 @@ class Descent:
             assert len(lroots) == 2, _l
             z = 0
             for lr, _ in lroots:
-                logging.info(f"Recurse into small prime {_l},{lr}")
+                logger.info(f"Recurse into small prime {_l},{lr}")
                 llog = self.smalllog(_l, int(lr))
                 z += llog
                 log += _e * llog
             # z should be log(l)
-            logging.info(f"recursive log({_l}) = {z}")
+            logger.info(f"recursive log({_l}) = {z}")
             assert pow(_l, coell, self.n) == pow(self.logbase, z * coell, self.n)
 
         return log % self.ell
@@ -367,7 +389,7 @@ class Descent:
         else:
             reports = self.sieverhuge.sievelarge(q, qr)
         dt = time.monotonic() - t
-        logging.info(f"Found {len(reports)} sieve results in {dt:.3}s")
+        logger.info(f"Found {len(reports)} sieve results in {dt:.3}s")
 
         # Store: a list of factors, list of missing primes, the largest missing prime
         best: tuple[list, list, int] | None = None
@@ -427,10 +449,10 @@ class Descent:
                 if keep:
                     facs_str = "*".join(f"{_l}^{_e}" for _l, _e in facs)
                     if not missing:
-                        logging.info(f"Good report {x},{y}")
-                        logging.info(f"g_{q}_{qr} = {facs_str}")
+                        logger.info(f"Good report {x},{y}")
+                        logger.info(f"g_{q}_{qr} = {facs_str}")
                         log = sum(e * self.dlogs[k] for k, e in facs) % self.ell
-                        logging.info(f"log(g_{q}_{qr}) = {log}")
+                        logger.info(f"log(g_{q}_{qr}) = {log}")
                         self.dlogs[f"g_{q}_{qr}"] = log
                         return log
                     else:
@@ -440,28 +462,26 @@ class Descent:
             raise ValueError(f"failed to find any relation for ideal {q},{qr}")
 
         facs, missing, _ = best
-        logging.info(f"Best relation {q} = {facs_str}")
-        logging.info(f"Best relation is missing primes {missing}")
+        logger.info(f"Best relation {q} = {facs_str}")
+        logger.info(f"Best relation is missing primes {missing}")
         log = 0
         for k, e in facs:
             if k not in self.dlogs:
                 assert k.startswith("g_")
                 _l, _lr = parse_key(k)
                 if _l > q:
-                    logging.info(f"Recurse into LARGER prime {_l},{_lr}")
+                    logger.info(f"Recurse into LARGER prime {_l},{_lr}")
                 else:
-                    logging.info(f"Recurse into small prime {_l},{_lr}")
+                    logger.info(f"Recurse into small prime {_l},{_lr}")
                 log += e * self.smalllog(_l, _lr)
             else:
                 log += e * self.dlogs[k]
 
         log %= self.ell
-        logging.info(f"Recursive log(g_{q}_{qr}) = {log}")
+        logger.info(f"Recursive log(g_{q}_{qr}) = {log}")
         self.dlogs[f"g_{q}_{qr}"] = log
         return log
 
 
 if __name__ == "__main__":
-    logging.getLogger().setLevel(level=logging.DEBUG)
-    logging.getLogger("vulkan").setLevel(level=logging.INFO)
     main()

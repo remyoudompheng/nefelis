@@ -9,6 +9,7 @@ from nefelis import deg3
 def main():
     argp = argparse.ArgumentParser()
     argp.add_argument("-v", "--verbose", action="store_true")
+    argp.add_argument("--workdir", dest="WORKDIR", help="Path to working directory")
 
     polyselect_args = argp.add_argument_group("Polynomial selection options")
     polyselect_args.add_argument(
@@ -30,7 +31,9 @@ def main():
 
     argp.add_argument("METHOD", choices=("deg2", "deg3"))
     argp.add_argument("N", type=int)
-    argp.add_argument("WORKDIR", nargs="?")
+    argp.add_argument(
+        "ARGS", nargs="*", type=str, help="Arguments for discrete logarithm"
+    )
     args = argp.parse_args()
 
     # Logger names should have length <= 6 (poly, sieve, linalg, dlog)
@@ -61,9 +64,13 @@ def main_impl(args):
     if args.METHOD == "deg2":
         deg2.sieve.main_impl(args)
         deg2.linalg.main_impl(args)
+        if args.ARGS:
+            deg2.dlog.main_impl(args)
     else:
         deg3.sieve.main_impl(args)
         deg3.linalg.main_impl(args)
+        if args.ARGS:
+            deg3.dlog.main_impl(args)
 
 
 if __name__ == "__main__":

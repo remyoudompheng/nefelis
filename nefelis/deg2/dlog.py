@@ -7,9 +7,9 @@ Since g is a linear polynomial, any prime can be used as "special q".
 import json
 import logging
 import math
+import argparse
 import pathlib
 import random
-import sys
 import time
 
 import flint
@@ -17,10 +17,30 @@ import flint
 from nefelis import integers
 from nefelis import sieve_vk
 
+logger = logging.getLogger("dlog")
+
 
 def main():
-    workdir = pathlib.Path(sys.argv[1])
-    arg = int(sys.argv[2])
+    argp = argparse.ArgumentParser()
+    argp.add_argument(
+        "-v",
+        action="store_true",
+        help="Verbose logging",
+    )
+    argp.add_argument("WORKDIR")
+    argp.add_argument("ARGS", nargs="+", help="list of pairs x,y (for elements x+iy)")
+    args = argp.parse_args()
+
+    if args.v:
+        logging.getLogger().setLevel(level=logging.DEBUG)
+    else:
+        logging.getLogger().setLevel(level=logging.INFO)
+
+    main_impl(args)
+
+
+def main_impl(args):
+    workdir = pathlib.Path(args.WORKDIR)
 
     with open(workdir / "args.json") as fd:
         doc = json.load(fd)
@@ -46,19 +66,22 @@ def main():
                     logbase = int(key[2:])
 
     zmax = max(z for z in zlogs if z.bit_length() < 32)
-    logging.info(
+    logger.info(
         f"Read {len(zlogs)} logarithms of small rational primes ({min(zlogs)}..{zmax})"
     )
-    logging.info(f"Read {len(dlogs) - len(zlogs)} logarithms of small algebraic primes")
-    logging.info(f"Logarithm base is {logbase}")
+    logger.info(f"Read {len(dlogs) - len(zlogs)} logarithms of small algebraic primes")
+    logger.info(f"Logarithm base is {logbase}")
 
     D = Descent(dlogs, zlogs, logbase, n, f, g, ell)
-    y = D.log(arg)
 
-    coell = (n - 1) // ell
-    assert pow(logbase, coell * y, n) == pow(arg, coell, n)
-    logging.info(f"Found log({arg}) mod {ell} = {y}")
-    print(y)
+    for arg in args.ARGS:
+        arg = int(arg)
+        y = D.log(arg)
+
+        coell = (n - 1) // ell
+        assert pow(logbase, coell * y, n) == pow(arg, coell, n)
+        logger.info(f"Found log({arg}) mod {ell} = {y}")
+        print(y)
 
 
 class Descent:
@@ -139,7 +162,7 @@ class Descent:
 
             # Now x = product(facs) * xu / xv
             if best is None:
-                logging.info(f"Decomposed {x0} as {facs} and cofactor {xu}/{xv}")
+                logger.info(f"Decomposed {x0} as {facs} and cofactor {xu}/{xv}")
                 cofacs = flint.fmpz(xu).factor_smooth(32)
                 cofacs += [(_l, -_e) for _l, _e in flint.fmpz(xv).factor_smooth(32)]
                 if all(flint.fmpz(_l).is_prime() for _l, _ in cofacs):
@@ -156,7 +179,7 @@ class Descent:
                         cofacs.sort()
                     facs_str = "*".join(f"{_l}^{_e}" for _l, _e in facs)
                     cofacs_str = "*".join(f"{_l}^{_e}" for _l, _e in cofacs)
-                    logging.info(
+                    logger.info(
                         f"[i={i}] Decomposed {x0} as {facs_str} and cofactor {xu}/{xv}={cofacs_str}"
                     )
                     best = facs, cofacs
@@ -170,7 +193,7 @@ class Descent:
         # x0 = product(facs) * x
         log = sum(e * self.zlogs[f] for f, e in facs)
         for _l, _e in cofacs:
-            logging.info(f"Recurse into small prime {_l}")
+            logger.info(f"Recurse into small prime {_l}")
             llog = self.smalllog(int(_l))
             log += _e * llog
 
@@ -197,7 +220,7 @@ class Descent:
         else:
             reports = self.siever.sievelarge(q, qr)
         dt = time.monotonic() - t
-        logging.info(f"Found {len(reports)} sieve results in {dt:.3}s")
+        logger.info(f"Found {len(reports)} sieve results in {dt:.3}s")
 
         # Store: a list of factors, list of missing primes
         best = None
@@ -230,19 +253,16 @@ class Descent:
                 keep = (
                     best is None
                     or not missing
-                    or (
-                        any(_m > q for _m, _ in best[1])
-                        and all(_m < q for _m in missing)
-                    )
+                    or (any(_m > q for _m in best[1]) and all(_m < q for _m in missing))
                     or (len(missing) <= len(best[1]) and max(missing) < max(best[1]))
                 )
                 if keep:
                     facs_str = "*".join(f"{_l}^{_e}" for _l, _e in facs)
                     if not missing:
-                        logging.info(f"Good report {x},{y}")
-                        logging.info(f"{q} = {facs_str}")
+                        logger.info(f"Good report {x},{y}")
+                        logger.info(f"{q} = {facs_str}")
                         log = sum(e * self.dlogs[k] for k, e in facs)
-                        logging.info(f"log({q}) = {log}")
+                        logger.info(f"log({q}) = {log}")
                         assert pow(q, coell, self.n) == pow(
                             self.logbase, log * coell, self.n
                         )
@@ -251,23 +271,23 @@ class Descent:
                         best = facs, missing
 
         facs, missing = best
-        logging.info(f"Best relation {q} = {facs_str}")
-        logging.info(f"Best relation is missing primes {missing}")
+        logger.info(f"Best relation {q} = {facs_str}")
+        logger.info(f"Best relation is missing primes {missing}")
         log = 0
         for k, e in facs:
             if k not in self.dlogs:
                 assert k.startswith("Z_")
                 _l = int(k[2:])
                 if _l > q:
-                    logging.info(f"Recurse into LARGER prime {_l}")
+                    logger.info(f"Recurse into LARGER prime {_l}")
                 else:
-                    logging.info(f"Recurse into small prime {_l}")
+                    logger.info(f"Recurse into small prime {_l}")
                 log += e * self.smalllog(_l)
             else:
                 log += e * self.dlogs[k]
 
         log %= self.ell
-        logging.info(f"recursive log({q}) = {log}")
+        logger.info(f"recursive log({q}) = {log}")
         assert pow(q, coell, self.n) == pow(self.logbase, log * coell, self.n)
         self.zlogs[q] = log
         self.dlogs[f"Z_{q}"] = log
@@ -275,5 +295,4 @@ class Descent:
 
 
 if __name__ == "__main__":
-    logging.getLogger().setLevel(level=logging.DEBUG)
     main()
