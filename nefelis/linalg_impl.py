@@ -11,6 +11,7 @@ import numpy.typing as npt
 from nefelis import lingen
 from nefelis.vulkan import shader, stamp_period
 
+# Avoid row reordering when constructing SpMV matrices.
 DEBUG_NO_SORT_ROWS = False
 
 logger = logging.getLogger("linalg")
@@ -41,12 +42,13 @@ class SpMV:
         Dictionary keys are opaque labels corresponding to matrix columns.
         """
         weight = sum(len(r) for r in rels)
-        basis, dense, densebig, plus, minus = to_sparse_matrix(rels)
+        basis, rowidx, dense, densebig, plus, minus = to_sparse_matrix(rels)
         dim, dense_n = dense.shape
         assert (dim * dense_n) % 4 == 0
         self.defines = {"N": dim, "DENSE_N": dense_n}
 
         self.basis = basis
+        self.rowidx = rowidx
         self.dim = dim
         self.densebig = densebig
 
@@ -318,7 +320,7 @@ class SpMV:
 
 def to_sparse_matrix(
     rels,
-) -> tuple[list, npt.NDArray[np.int8], list[int], list, list]:
+) -> tuple[list, list, npt.NDArray[np.int8], list[int], list, list]:
     """
     Converts a list of relations into a representation suitable
     for sparse matrix kernels.
@@ -328,6 +330,7 @@ def to_sparse_matrix(
 
     Returns:
     - primes: the list of column labels
+    - rowidx: the list of relations indices used for each row
     - dense: a dense tensor for the first n columns
     - densebig: a tensor of big integers for large columns
     - plus, minus: a CSR representation of other columns separated by sign
@@ -364,7 +367,7 @@ def to_sparse_matrix(
 
     # To reduce divergence, we sort rows by the number of ±signs in the sparse part.
     sign_rels = []
-    for r in rels:
+    for ridx, r in enumerate(rels):
         nplus, nminus = 0, 0
         for _p, _e in r.items():
             if _p not in dense_set:
@@ -372,11 +375,12 @@ def to_sparse_matrix(
                     nplus += 1
                 else:
                     nminus += 1
-        sign_rels.append((nplus, nminus, r))
+        sign_rels.append((nplus, nminus, ridx, r))
     if not DEBUG_NO_SORT_ROWS:
         sign_rels.sort(key=lambda t: t[:2])
     # print([(x, y) for x, y, z in sign_rels])
-    rels = [_r for _, _, _r in sign_rels]
+    rowidx = [ridx for _, _, ridx, _ in sign_rels]
+    rels = [_r for _, _, _, _r in sign_rels]
 
     # Dense coefficients must fit in int8 type
     for r in rels:
@@ -414,7 +418,7 @@ def to_sparse_matrix(
         row_m.sort()
         plus.append(row_p)
         minus.append(row_m)
-    return primes, dense, matbig, plus, minus
+    return primes, rowidx, dense, matbig, plus, minus
 
 
 def to_uvec(x: int, length: int):
