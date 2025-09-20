@@ -4,6 +4,7 @@ import math
 from multiprocessing import Pool
 
 import flint
+from nefelis import polys
 
 logger = logging.getLogger("poly")
 
@@ -92,11 +93,13 @@ class Polyselect:
         self.best = 1e9
         self.N = N
 
-    def process(self, D: int, a: int, b: int, c: int, rD: int):
+    def process(self, D: int, a: int, b: int, c: int, rD: int, global_best: float):
         """
         Tries pairs of polynomials with f=ax²+bx+c.
         `rD` is a precomputed square root of D modulo N.
         """
+        self.best = min(self.best, global_best)
+
         N = self.N
         alph = alpha(D, a, b, c)
         ainv = pow(2 * a, -1, N)
@@ -128,6 +131,11 @@ class Polyselect:
                         f"fsize={math.log2(fsize) / 2:.1f} a(f)={alph:.2f} normf={fbits:.2f} "
                         f"g {gsize:.2f} score {score:.2f}"
                     )
+                    if bads := polys.bad_ideals(f):
+                        logger.warning(
+                            f"Skipping interesting polynomial f {f} with bad primes {bads}"
+                        )
+                        continue
                     assert (a * v**2 - b * u * v + c * u**2) % N == 0
                     g = int(v), int(u)
 
@@ -159,11 +167,10 @@ def polyselect(
         # Empirical formula to have a small cost compared to sieve/linalg
         bound = int(3 * 1.6 ** (N.bit_length() / 40))
 
+    best = 1e9
+
     def irreducibles():
-        squarefree = set(range(-4 * bound * bound, 0))
-        for q in range(2, 2 * bound):
-            for qq in range(q * q, 4 * bound * bound, q * q):
-                squarefree.discard(-qq)
+        squares = frozenset(i * i for i in range(1, 4 * bound))
 
         sqrtD = {}
         # Assume that a > 0, b >= 0, |c| <= a
@@ -171,7 +178,7 @@ def polyselect(
             for b in range(0, bound):
                 for c in range(-a, a + 1):
                     D = b * b - 4 * a * c
-                    if D not in squarefree:
+                    if D in squares:
                         continue
                     if c == 0:
                         continue
@@ -188,11 +195,10 @@ def polyselect(
                     if rD is None:
                         continue  # no root mod N
 
-                    yield D, a, b, c, rD
+                    yield D, a, b, c, rD, best
 
     logger.info(f"Starting polynomial selection with degree 2 and bound {bound}")
     pool = Pool(initializer=worker_init, initargs=(N,))
-    best = 1e9
     best_fg = None
     for item in pool.imap_unordered(worker_do, irreducibles(), chunksize=32):
         if item is None:
