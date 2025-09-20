@@ -13,14 +13,27 @@ def prune(rawrels: list[dict], datadir: pathlib.Path | None = None):
     """
     # Only work with positive exponents during prune process.
     rels = []
+    dedup = set()
+    duplicates = 0
     for rel in rawrels:
+        sign = -1 if min(rel.items())[1] < 0 else 1
+        line = " ".join(f"{l}^{sign * e}" for l, e in sorted(rel.items()))
+        if line in dedup:
+            duplicates += 1
+            rels.append(None)
+            continue
+        dedup.add(line)
         rabs = {_l: abs(_e) for _l, _e in rel.items()}
         rels.append(rabs)
+    if duplicates:
+        logger.warn(f"Found {duplicates} duplicate relations before pruning")
 
     # Prune relations in place: a removed relation is replaced by None.
     # We are only interested in coefficients ±1, exponent sign is ignored
     stats = {}
     for ridx, r in enumerate(rels):
+        if r is None:
+            continue
         for p, v in r.items():
             if v > 1:
                 stats[p] = None
@@ -116,17 +129,18 @@ def prune(rawrels: list[dict], datadir: pathlib.Path | None = None):
     pruned = [r for r, _r in zip(rawrels, rels) if _r is not None]
 
     cols = set()
-    rels = [r for r in rels if r is not None]
+    rels = [r for r in pruned if r is not None]
     for r in rels:
         cols.update(r)
     logger.info(f"[prune] After pruning: {len(rels)} relations with {len(cols)} primes")
 
     if datadir is not None:
         with open(datadir / "relations.pruned", "w") as wp:
-            for row in pruned:
-                print(" ".join(str(_x) for _x in row), file=wp)
+            for row in rels:
+                line = " ".join(f"{l}^{e}" for l, e in sorted(row.items()))
+                print(line, file=wp)
 
-    return pruned, len(rels) - len(cols)
+    return rels, len(rels) - len(cols)
 
 
 def filter(rels, datadir: pathlib.Path | None):
@@ -288,7 +302,8 @@ def filter(rels, datadir: pathlib.Path | None):
     for ridx, r in enumerate(rels):
         if r is None:
             continue
-        line = " ".join(f"{l}^{e}" for l, e in sorted(r.items()))
+        sign = -1 if min(r.items())[1] < 0 else 1
+        line = " ".join(f"{l}^{sign * e}" for l, e in sorted(r.items()))
         if line in dedup:
             duplicates += 1
             rels[ridx] = None
