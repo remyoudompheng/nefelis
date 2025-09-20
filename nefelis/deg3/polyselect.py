@@ -7,6 +7,8 @@ from multiprocessing import Pool
 
 import flint
 
+from nefelis import polys
+
 logger = logging.getLogger("polyselect")
 
 # fmt:off
@@ -247,14 +249,14 @@ class Polyselect:
                     f"a(g)={ag:.2f} normg={gbits:.2f} score {score:.2f}"
                 )
                 # FIXME: handle bad primes to avoid this
-                if any(D % (l * l) == 0 for l in SMALLPRIMES):
+                if bads := polys.bad_ideals([d, c, b, a]):
                     logger.warning(
-                        "Skipping interesting polynomial f with non-squarefree discriminant"
+                        f"Skipping interesting polynomial f {f} with bad primes {bads}"
                     )
                     continue
-                if any(Dg % (l * l) == 0 for l in SMALLPRIMES):
+                if badg := polys.bad_ideals([w, v, u]):
                     logger.warning(
-                        "Skipping interesting polynomial g with non-squarefree discriminant"
+                        f"Skipping interesting polynomial g {[w, v, u]} with bad primes {badg}"
                     )
                     continue
                 self.best = score
@@ -328,6 +330,9 @@ def polyselect(N: int, bound: int | None = None):
                         # We want a root modulo N, they are easier to compute
                         # if D is not a square
                         if flint.fmpz(D).jacobi(N) != -1:
+                            continue
+                        # Polynomial must have content=1
+                        if math.gcd(math.gcd(a, b), math.gcd(c, d)) != 1:
                             continue
 
                         counter += 1
