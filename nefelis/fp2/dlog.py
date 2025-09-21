@@ -11,7 +11,6 @@ import logging
 import math
 import pathlib
 import random
-import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 

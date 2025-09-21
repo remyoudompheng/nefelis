@@ -195,7 +195,7 @@ class Field:
                 if gx + j * gy != 0:
                     j = -j
                     assert gx + j * gy == 0
-                zA, zB, zC = xA + j * yA, xB + j * yB, xC + j * yC
+                zA, zB, _zC = xA + j * yA, xB + j * yB, xC + j * yC
                 tr = -zB / zA
                 rbar = tr - r
                 self.conjugates[(l, int(rbar))] = (l, int(r))

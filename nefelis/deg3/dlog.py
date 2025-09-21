@@ -6,12 +6,12 @@ Here g is a quadratic polynomial, and the smoothing step
 has to return prime factors that split over g.
 """
 
+import argparse
 import json
 import logging
 import math
 import pathlib
 import random
-import sys
 import time
 
 import flint
