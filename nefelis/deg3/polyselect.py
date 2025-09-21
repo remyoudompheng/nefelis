@@ -1,7 +1,6 @@
 import argparse
 import logging
 import math
-import numpy
 import time
 from multiprocessing import Pool
 
@@ -10,162 +9,6 @@ import flint
 from nefelis import polys
 
 logger = logging.getLogger("polyselect")
-
-# fmt:off
-# Choose 30 primes: if we test 2^30 polynomials one of them
-# might be split modulo all these primes simultaneously.
-SMALLPRIMES = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47,
-               53, 59, 61, 67, 71, 73, 79, 83, 89, 97, 101, 103, 109, 113]
-# fmt:on
-
-SQUARES = set((l, i * i % l) for l in SMALLPRIMES for i in range(l))
-
-FIELDS = {
-    l: numpy.array(
-        [[1, x, x * x % l, x * x * x % l] for x in range(l)], dtype=numpy.int32
-    )
-    for l in SMALLPRIMES
-}
-
-
-def alpha(D, a, b, c):
-    """
-    Returns the α of polynomial ax²+bx+c (following Cado-NFS notations).
-    However for convenience, we express it in base 2 to interpret it
-    as a number of bits.
-
-    α(x^2-x+1, bound=114)=1.435115778287525 (E.sage script in CADO-NFS)
-    >>> 1.38 / math.log(2) < alpha(-3, 1, -1, 1) < 1.44 / math.log(2)
-    True
-
-    α(6*x^2-2*x+5, bound=114)=0.44366895401049494
-    >>> 0.39 / math.log(2) < alpha(-116, 6, -2, 5) < 0.45 / math.log(2)
-    True
-    """
-    # for l in SMALLPRIMES:
-    #    print(l, math.log(l) * (1 / (l - 1) - avgval(D, a, b, c, l) * l / (l + 1)))
-    return sum(
-        math.log2(l) * (1 / (l - 1) - avgval(D, a, b, c, l) * l / (l + 1))
-        for l in SMALLPRIMES
-    )
-
-
-def avgval(D, a, b, c, l):
-    """
-    Average (projective) valuation of homogeneous polynomial ax²+bxy+cy²
-    """
-    if D % l != 0:
-        return nroots(D, a, b, c, l) / (l - 1)
-    # Discriminant is zero
-    if l <= 5:
-        if a % l == 0:
-            a, c = c, a
-        val = 1 / l
-        roots = [x for x in range(l) if (a * x * x + b * x + c) % l == 0]
-        for k in range(1, 5):
-            li = l**k
-            roots_lift = [
-                x
-                for r in roots
-                for x in range(r, r + l * li, li)
-                if (a * x * x + b * x + c) % (l * li) == 0
-            ]
-            count = len(roots_lift)
-            if count == 0:
-                break
-            val += count / (l * li)
-            roots = roots_lift
-        return val
-    else:
-        if a % l == 0:
-            a, c = c, a
-        val = 1 / l
-        root = next(x for x in range(l) if (a * x * x + b * x + c) % l == 0)
-        count2 = sum(
-            1
-            for x in range(root, root + l * l, l)
-            if (a * x * x + b * x + c) % (l * l) == 0
-        )
-        # FIXME
-        return val + count2 / (l * (l - 1))
-
-
-def nroots(D, a, b, c, l):
-    if D % l == 0:
-        return 1
-    if l == 2:
-        return 0 if a & b & c & 1 == 1 else 2
-    if (l, D % l) in SQUARES:
-        return 2
-    else:
-        return 0
-
-
-# Cubic polynomials
-
-
-def alpha3(D, a, b, c, d):
-    """
-    alpha(Zx([2,2,3,1]), 100) / log(2.0) = 2.09120380807321
-    >>> 2.0 < alpha3(-104, 2, 2, 3, 1) < 2.2
-    True
-    """
-    poly = numpy.array([d, c, b, a], dtype=numpy.int32)
-    return sum(
-        math.log2(l) * (1 / (l - 1) - avgval3(D, a, b, c, d, l, poly) * l / (l + 1))
-        for l in SMALLPRIMES
-    )
-
-
-def avgval3(D, a, b, c, d, l, poly):
-    if D % l != 0 and l > 3:
-        return nroots3(poly, l) / (l - 1)
-
-    # Discriminant is zero: polynomial is necessarily split.
-    if l <= 5:
-        if a % l == 0:
-            a, b, c, d = d, c, b, a
-            poly = poly[::-1]
-        fp = FIELDS[l]
-        vals = fp @ poly
-        roots = [int(x) for x in (vals % l == 0).nonzero()[0]]
-        val = len(roots) / l
-        for k in range(1, 5):
-            li = l**k
-            roots_lift = [
-                x
-                for r in roots
-                for x in range(r, r + l * li, li)
-                if (a * x * x * x + b * x * x + c * x + d) % (l * li) == 0
-            ]
-            count = len(roots_lift)
-            if count == 0:
-                break
-            val += count / (l * li)
-            roots = roots_lift
-        return val
-    else:
-        if a % l == 0:
-            a, b, c, d = d, c, b, a
-            poly = poly[::-1]
-        fp = FIELDS[l]
-        vals = fp @ poly
-        roots = [int(x) for x in (vals % l == 0).nonzero()[0]]
-        val = len(roots) / l
-        count2 = sum(
-            1
-            for root in roots
-            for x in range(root, root + l * l, l)
-            if ((a * x * x + b * x + c) * x + d) % (l * l) == 0
-        )
-        # FIXME
-        return val + count2 / (l * (l - 1))
-
-
-def nroots3(poly, l):
-    fp = FIELDS[l]
-    vals = fp @ poly
-    return l - numpy.count_nonzero(vals % l)
 
 
 smallvectors = [
@@ -223,7 +66,7 @@ class Polyselect:
         # Norm for degree 3 polynomials
         fsize = float(5 * (a * a + d * d) + 2 * (a * c + b * d) + b * b + c * c) / 8.0
         fbits = math.log2(fsize) / 2
-        af = alpha3(D, a, b, c, d)
+        af = polys.alpha3(D, a, b, c, d)
         m = flint.fmpz_mat([[N, 0, 0], [int(r), -1, 0], [0, int(r), -1]]).lll()
         g = None
         for s in smallvectors:
@@ -236,7 +79,7 @@ class Polyselect:
             Dg = v * v - 4 * u * w
             if Dg >= 0:
                 continue
-            ag = alpha(Dg, u, v, w)
+            ag = polys.alpha2(Dg, u, v, w)
             gsize = float(3 * (u * u + w * w) + 2 * u * w + v * v) / 6.0
             gbits = math.log2(gsize) / 2
             # Using typical parameters, the smoothness probability
@@ -375,16 +218,16 @@ def polyselect_g(N: int, f: list[int], r: int) -> list[int] | None:
         Dg = v * v - 4 * u * w
         if Dg >= 0:
             continue
-        ag = alpha(Dg, u, v, w)
+        ag = polys.alpha2(Dg, u, v, w)
         gsize = float(3 * (u * u + w * w) + 2 * u * w + v * v) / 6.0
         gbits = math.log2(gsize) / 2
         score = gbits + ag
         if score < best:
             logger.debug(f"a(g)={ag:.2f} normg={gbits:.2f} score {score:.2f}")
             # FIXME: handle bad primes to avoid this
-            if any(Dg % (l * l) == 0 for l in SMALLPRIMES):
+            if badg := polys.bad_ideals([w, v, u]):
                 logger.warning(
-                    "Skipping interesting polynomial with non-squarefree discriminant"
+                    f"Skipping interesting polynomial g {[w, v, u]} with bad primes {badg}"
                 )
                 continue
             best = score

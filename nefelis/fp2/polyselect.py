@@ -6,7 +6,7 @@ import time
 import flint
 
 from nefelis import integers
-from nefelis.deg2.polyselect import alpha
+from nefelis import polys
 
 logger = logging.getLogger("poly")
 
@@ -93,7 +93,7 @@ def polyselect(N, bound=None) -> tuple[list, list, int, list[list]]:
             Dg = g1**2 - 4 * g0 * g2
             if Dg >= 0:
                 continue
-            ag = alpha(Dg, g2, g1, g0)
+            ag = polys.alpha2(Dg, g2, g1, g0)
             gsize = (3 * (g0 * g0 + g2 * g2) + 2 * g0 * g2 + g1 * g1) / 6
             gbits = math.log2(gsize) / 2
             if gbits < N.bit_length() / 3:

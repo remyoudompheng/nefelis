@@ -8,85 +8,6 @@ from nefelis import polys
 
 logger = logging.getLogger("poly")
 
-# fmt:off
-SMALLPRIMES = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97]
-# fmt:on
-
-SQUARES = set((l, i * i % l) for l in SMALLPRIMES for i in range(l))
-
-
-def alpha(D, a, b, c):
-    """
-    Returns the α of polynomial ax²+bx+c (following Cado-NFS notations).
-    However for convenience, we express it in base 2 to interpret it
-    as a number of bits.
-
-    α(x^2-x+1)=1.389885781339105 (E.sage script in CADO-NFS)
-    >>> 1.38988 / math.log(2) < alpha(-3, 1, -1, 1) < 1.38989 / math.log(2)
-    True
-
-    α(6*x^2-2*x+5)=0.30843573575972727
-    >>> 0.30843 / math.log(2) < alpha(-116, 6, -2, 5) < 0.30844 / math.log(2)
-    True
-    """
-    # for l in SMALLPRIMES:
-    #    print(l, math.log(l) * (1 / (l - 1) - avgval(D, a, b, c, l) * l / (l + 1)))
-    return sum(
-        math.log2(l) * (1 / (l - 1) - avgval(D, a, b, c, l) * l / (l + 1))
-        for l in SMALLPRIMES
-    )
-
-
-def avgval(D, a, b, c, l):
-    """
-    Average (projective) valuation of homogeneous polynomial ax²+bxy+cy²
-    """
-    if D % l != 0:
-        return nroots(D, a, b, c, l) / (l - 1)
-    # Discriminant is zero
-    if l <= 5:
-        if a % l == 0:
-            a, c = c, a
-        val = 1 / l
-        roots = [x for x in range(l) if (a * x * x + b * x + c) % l == 0]
-        for k in range(1, 5):
-            li = l**k
-            roots_lift = [
-                x
-                for r in roots
-                for x in range(r, r + l * li, li)
-                if (a * x * x + b * x + c) % (l * li) == 0
-            ]
-            count = len(roots_lift)
-            if count == 0:
-                break
-            val += count / (l * li)
-            roots = roots_lift
-        return val
-    else:
-        if a % l == 0:
-            a, c = c, a
-        val = 1 / l
-        root = next(x for x in range(l) if (a * x * x + b * x + c) % l == 0)
-        count2 = sum(
-            1
-            for x in range(root, root + l * l, l)
-            if (a * x * x + b * x + c) % (l * l) == 0
-        )
-        # FIXME
-        return val + count2 / (l * (l - 1))
-
-
-def nroots(D, a, b, c, l):
-    if D % l == 0:
-        return 1
-    if l == 2:
-        return 0 if a & b & c & 1 == 1 else 2
-    if (l, D % l) in SQUARES:
-        return 2
-    else:
-        return 0
-
 
 class Polyselect:
     def __init__(self, N):
@@ -101,7 +22,7 @@ class Polyselect:
         self.best = min(self.best, global_best)
 
         N = self.N
-        alph = alpha(D, a, b, c)
+        alph = polys.alpha2(D, a, b, c)
         ainv = pow(2 * a, -1, N)
         rs = [(-b - rD) * ainv % N, (-b + rD) * ainv % N]
         f = [a, b, c]
