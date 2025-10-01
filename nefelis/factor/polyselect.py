@@ -20,7 +20,7 @@ import random
 
 import flint
 
-
+from nefelis.polys import bad_ideals
 # from nefelis.integers import smallprimes
 
 logger = logging.getLogger("poly")
@@ -70,6 +70,8 @@ def polyselect(N: int, deg: int) -> tuple[list[int], list[int]]:
     for iter in range(1000):
         u = random.randint(int(target * 2), int(target * 3))
         v = random.randint(int(target * 2), int(target * 3))
+        if (d := math.gcd(u, v)) != 1:
+            u, v = u // d, v // d
         # print(u)
         # print(v)
         x = u * pow(v, -1, N)
@@ -91,8 +93,25 @@ def polyselect(N: int, deg: int) -> tuple[list[int], list[int]]:
             f = (flint.fmpz_mat([s]) * ML).entries()
             if any(x == 0 for x in f):
                 continue
+            resfg = sum(fi * v ** (deg - i) * u ** i for i, fi in enumerate(f))
+            assert resfg % N == 0
+            if resfg == 0:
+                continue
             norm = max(math.log2(abs(float(fi))) for fi in f)
             if norm < bestnorm:
+                fpoly = flint.fmpz_poly(f)
+                fcont, ffacs = fpoly.factor()
+                if abs(fcont) != 1:
+                    continue
+                if len(ffacs) != 1:
+                    logger.warning(f"Skipping reducible polynomial f {f}")
+                    continue
+
+                if bads := bad_ideals([int(fi) for fi in f]):
+                    logger.warning(
+                        f"Skipping interesting polynomial f {f} with bad primes {bads}"
+                    )
+                    continue
                 best, bestnorm = (f, g), norm
                 logger.info(f"[iter {iter}] norm={norm:.1f} {f}")
 

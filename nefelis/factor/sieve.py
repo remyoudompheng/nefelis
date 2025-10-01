@@ -169,7 +169,11 @@ def main_impl(args):
         f"Sieving with B1={B1f / 1000:.0f}k,{B1g / 1000:.0f}k log(B2)={B2f},{B2g} q={qmin}.. {COFACTOR_BITS} cofactor bits"
     )
 
-    f, g = polyselect(N, 4)
+    if N.bit_length() < 130:
+        degree = 3
+    else:
+        degree = 4
+    f, g = polyselect(N, degree)
     v, u = g
 
     r = v * pow(-u, -1, N) % N
