@@ -23,7 +23,7 @@ dependencies = [
 test = ["pytest"]
 
 [project.scripts]
-nefelis = "nefelis:main"
+nefelis = "nefelis.__main__:main"
 
 [tool.setuptools]
 ext-modules = [{name = "nefelis_flint_extras", sources = ["nefelis/nefelis_flint_extras.pyx"], libraries = ["flint"]}]
