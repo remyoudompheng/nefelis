@@ -15,7 +15,7 @@ import time
 import flint
 
 from nefelis import integers
-from nefelis import sieve_vk
+from nefelis.sieve import Siever
 
 logger = logging.getLogger("dlog")
 
@@ -114,9 +114,7 @@ class Descent:
 
         v, u = g
         rs = [(-v * pow(u, -1, l)) % l if u % l else l for l in zs]
-        self.siever = sieve_vk.Siever(
-            self.g, zs, rs, self.n.bit_length() // 2 - THRESHOLD, 14
-        )
+        self.siever = Siever(self.g, zs, rs, self.n.bit_length() // 2 - THRESHOLD, 14)
 
     def _factor(self, v):
         d0 = int(self.zprod.gcd(v))

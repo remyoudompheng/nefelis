@@ -25,7 +25,7 @@ import time
 import flint
 
 from nefelis import integers
-from nefelis import sieve_vk
+from nefelis.sieve import Siever
 from nefelis.fp2 import polyselect
 
 logger = logging.getLogger("sieve")
@@ -94,7 +94,7 @@ SIEVER = None
 
 def worker_init(g, ls, rs, threshold, I, f, ls2, rs2, threshold2):
     global SIEVER
-    SIEVER = sieve_vk.Siever(g, ls, rs, threshold, I, f, ls2, rs2, threshold2)
+    SIEVER = Siever(g, ls, rs, threshold, I, f, ls2, rs2, threshold2)
 
 
 def worker_task(args):

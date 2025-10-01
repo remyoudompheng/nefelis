@@ -33,7 +33,7 @@ import flint
 
 from nefelis import filter
 from nefelis.deg3.cubic import CubicField
-from nefelis.linalg_impl import SpMV
+from nefelis.linalg import SpMV
 
 DEBUG_RELS = False
 

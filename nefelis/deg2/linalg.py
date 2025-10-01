@@ -30,7 +30,7 @@ import random
 import flint
 
 from nefelis import filter
-from nefelis.linalg_impl import SpMV
+from nefelis.linalg import SpMV
 
 logger = logging.getLogger("linalg")
 

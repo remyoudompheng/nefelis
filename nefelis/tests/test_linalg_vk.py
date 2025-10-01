@@ -1,14 +1,14 @@
 from contextlib import contextmanager
 import logging
 
-from nefelis import linalg_impl
+from nefelis.backends.kompute import linalg
 
 
 @contextmanager
 def disable_sortrows():
-    linalg_impl.DEBUG_NO_SORT_ROWS = True
+    linalg.DEBUG_NO_SORT_ROWS = True
     yield
-    linalg_impl.DEBUG_NO_SORT_ROWS = False
+    linalg.DEBUG_NO_SORT_ROWS = False
 
 
 # A random large prime
@@ -22,7 +22,7 @@ def test_linalg_small():
     rel2 = {"a": -1}
     rel3 = {"x": -2, "a": 5}
     with disable_sortrows():
-        M = linalg_impl.SpMV([rel, rel, rel2, rel3], ELL)
+        M = linalg.SpMV([rel, rel, rel2, rel3], ELL)
         print("Basis", M.basis, "dimension", M.dim)
         v = [
             pow(X, 12, ELL),
@@ -44,7 +44,7 @@ def test_linalg_big():
     rel3 = {"SM": X + 1, "x": -2, "a": 5}
 
     with disable_sortrows():
-        M = linalg_impl.SpMV([rel, rel, rel2, rel3], ELL)
+        M = linalg.SpMV([rel, rel, rel2, rel3], ELL)
         print("Basis", M.basis, "dimension", M.dim)
         v = [
             pow(X, 12, ELL),

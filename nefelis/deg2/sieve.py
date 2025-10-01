@@ -29,7 +29,7 @@ import time
 
 import flint
 
-from nefelis import sieve_vk
+from nefelis import sieve
 from nefelis.integers import factor, smallprimes
 from nefelis.deg2.polyselect import polyselect
 
@@ -95,7 +95,7 @@ SIEVER = None
 
 def worker_init(*args):
     global SIEVER
-    SIEVER = sieve_vk.Siever(*args)
+    SIEVER = sieve.Siever(*args)
 
 
 def worker_task(args):

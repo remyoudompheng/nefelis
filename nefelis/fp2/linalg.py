@@ -33,7 +33,7 @@ import time
 import flint
 
 from nefelis import filter
-from nefelis.linalg_impl import SpMV
+from nefelis.linalg import SpMV
 
 DEBUG_RELS = False
 

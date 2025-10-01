@@ -17,7 +17,7 @@ import time
 import flint
 
 from nefelis import integers
-from nefelis import sieve_vk
+from nefelis.sieve import Siever
 from nefelis.deg3 import linalg
 
 logger = logging.getLogger("dlog")
@@ -157,7 +157,7 @@ class Descent:
         gthreshold = gsize + 2 * LOGWIDTH - COFACTOR_BITS
 
         # Siever for q less than 30 bits
-        self.siever = sieve_vk.Siever(
+        self.siever = Siever(
             self.g,
             gls,
             grs,
@@ -171,7 +171,7 @@ class Descent:
         )
         # For very large q, use a much lower threshold, expecting a relation
         # with multiple moderately large primes
-        self.sieverlarge = sieve_vk.Siever(
+        self.sieverlarge = Siever(
             self.g,
             gls,
             grs,
@@ -186,7 +186,7 @@ class Descent:
             outsize=2 << 20,
         )
         # For q > 2^35
-        self.sieverhuge = sieve_vk.Siever(
+        self.sieverhuge = Siever(
             self.g,
             gls,
             grs,
@@ -265,7 +265,7 @@ class Descent:
                 LOGWIDTH = 14
                 uroots = [-u2 * pow(u1, -1, z) % z if u1 % z else z for z in zs]
                 vroots = [-v2 * pow(v1, -1, z) % z if v1 % z else z for z in zs]
-                sieve = sieve_vk.Siever(
+                sieve = Siever(
                     [u2, u1],
                     zs,
                     uroots,

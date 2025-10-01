@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 import flint
 
 from nefelis import integers
-from nefelis import sieve_vk
+from nefelis.sieve import Siever
 
 logger = logging.getLogger("dlog")
 
@@ -193,7 +193,7 @@ class Descent:
 
         logger.info(f"Prime ideals f:{len(fls)} g:{len(gls)}")
         # Siever for q less than 30 bits
-        self.siever = sieve_vk.Siever(
+        self.siever = Siever(
             self.g,
             gls,
             grs,
@@ -207,7 +207,7 @@ class Descent:
         )
         # For very large q, use a much lower threshold, expecting a relation
         # with multiple moderately large primes
-        self.sieverlarge = sieve_vk.Siever(
+        self.sieverlarge = Siever(
             self.g,
             gls,
             grs,
@@ -222,7 +222,7 @@ class Descent:
             outsize=2 << 20,
         )
         # For q > 2^35
-        self.sieverhuge = sieve_vk.Siever(
+        self.sieverhuge = Siever(
             self.g,
             gls,
             grs,
@@ -386,7 +386,7 @@ class Descent:
                     lr2.append(r2)
 
                 LOGWIDTH = 14
-                sieve = sieve_vk.Siever(
+                sieve = Siever(
                     self.g,
                     ls,
                     lr1,
