@@ -1,0 +1,403 @@
+from typing import Iterable
+import logging
+import random
+import time
+
+import flint
+import kp
+import numpy as np
+import numpy.typing as npt
+
+from nefelis import lingen_gf2
+from nefelis.vulkan import shader, stamp_period
+
+# Avoid row reordering when constructing SpMV matrices.
+DEBUG_NO_SORT_ROWS = False
+DEBUG_CHECK_ENCODING = True
+
+logger = logging.getLogger("linalg")
+
+
+def berlekamp_massey(seq: list[int], l: int) -> list[int]:
+    ctx = flint.fmpz_mod_poly_ctx(l)
+    poly = ctx.minpoly(seq)
+    return [int(coef) for coef in poly]
+
+
+class SpMV:
+    """
+    A CSR encoded matrix with:
+    - a block of dense columns (int8 coefficients)
+    - an array of sparse positive rows (int16 columns indices with +1 coefficient)
+    - an array of sparse negative rows (int16 columns indices with -1 coefficient)
+
+    To support larger matrices, an index 0xffff can be inserted in sparse rows
+    to explain that following indices belong to another block of size 0xffff
+    """
+
+    def __init__(self, rels: list[set[str]], gpu_idx=0):
+        """
+        Build internal representation of a sparse matrix where
+        input rows are given as dictionaries.
+
+        Dictionary keys are opaque labels corresponding to matrix columns.
+        """
+        weight = sum(len(r) for r in rels)
+        basis, rowidx, dense, sparserows = to_sparse_matrix(rels)
+        dim, dense_n = dense.shape
+        assert (dim * dense_n) % 4 == 0
+        self.defines = {"N": dim, "DENSE_N": dense_n}
+
+        # For debugging
+        self.rels = rels
+        self.dense = dense
+        self.sparserows = sparserows
+
+        if DEBUG_CHECK_ENCODING:
+            assert np.all(dense >> 1 == 0)
+
+            keyidx = {k: idx for idx, k in enumerate(basis)}
+            for ridx in range(dim):
+                realidx = rowidx[ridx]
+                l1 = sorted(
+                    [keyidx[_l] for _l in self.rels[realidx] if not _l.startswith("K_")]
+                )
+                l2 = [
+                    j for j in range(self.dense.shape[1]) if self.dense[ridx, j]
+                ] + self.sparserows[ridx]
+                assert l1 == l2
+
+        self.basis = basis
+        self.rowidx = rowidx
+        self.dim = dim
+
+        # Prepare tensors
+        mgr = kp.Manager(gpu_idx)
+        if dense.size == 0:
+            dense = np.zeros(1, dtype=np.uint32)
+        xd = mgr.tensor_t(dense.flatten().view(np.uint32))
+
+        # Encode rows
+        def encode_row(row):
+            "Encode row when dimension is large"
+            nonlocal dense_n, dim
+            if dim <= 0xFFFF:
+                return row
+            enc = []
+            base = 0
+            for x in row:
+                while x >= base + 0xFFFF:
+                    enc.append(0xFFFF)
+                    base += 0xFFFF
+                assert 0 <= x - base < 0xFFFF
+                enc.append(x - base)
+            return enc
+
+        enc = [encode_row(l) for l in sparserows]
+
+        rowlen = [len(l) for l in enc]
+        aidx = np.cumsum(np.array([0] + rowlen, dtype=np.uint32), dtype=np.uint32)
+        size_plus = int(aidx[-1])
+        aplus = np.zeros(size_plus + (size_plus & 1), dtype=np.uint16)
+        for i, l in enumerate(enc):
+            aplus[aidx[i] : aidx[i + 1]] = l
+        # Kompute wants uint32, cast arrays to make it happy
+        xplus = mgr.tensor_t(aplus.view(np.uint32))
+        xidxp = mgr.tensor_t(aidx)
+
+        self.mgr = mgr
+        self.tensors = [xd, xplus, xidxp]
+        bitsize = 32 * sum(t.size() for t in self.tensors)
+        logger.debug(f"Matrix format using {bitsize / weight:.1f} bits/coefficient")
+        self.flops = dim * dense_n + size_plus
+        self.weight = weight
+        logger.debug(
+            f"{self.flops} int1 ops per matrix multiplication (original weight {weight})"
+        )
+
+    def shaders(self, defines):
+        return [(name, shader(name, defines)) for name in ("spmv_gf2",)]
+
+    def _run(self, tensors, defines, ITERS, BATCHSIZE, N_WG):
+        mgr = self.mgr
+        algos = [
+            (name, mgr.algorithm(tensors, kernel, workgroup=(N_WG, 1, 1)))
+            for name, kernel in self.shaders(defines)
+        ]
+
+        mgr.sequence().record(kp.OpTensorSyncDevice(tensors)).eval()
+
+        t0 = time.monotonic()
+        t_print = t0
+        gpu_ticks = 0.0
+        count = 0
+        for i in range(ITERS // BATCHSIZE + 1):
+            if i * BATCHSIZE >= ITERS:
+                break
+            algo_idx = 0  # FIXME
+
+            seq = mgr.sequence(total_timestamps=2 * BATCHSIZE)
+            for _ in range(min(BATCHSIZE, ITERS - i * BATCHSIZE)):
+                seq.record(kp.OpAlgoDispatch(algos[algo_idx][1]))
+                count += 1
+            seq.eval()
+
+            stamps = seq.get_timestamps()
+            gpu_ticks += stamps[-1] - stamps[0]
+            if (t1 := time.monotonic()) > t_print + 10.0:
+                # print progress every 10 seconds
+                elapsed = t1 - t0
+                gpu_dt = gpu_ticks * stamp_period() * 1e-9
+                speed = BATCHSIZE * (i + 1) / gpu_dt
+                logger.info(
+                    f"{BATCHSIZE * (i + 1)} matrix muls done in {elapsed:.1f}s ({speed:.1f} SpMV/s, GPU time {gpu_dt:.1f}s)"
+                )
+                t_print = t1
+
+        assert count == ITERS
+        return gpu_ticks
+
+    def right_kernel(self):
+        CHECK_KERNEL = True
+
+        if self.dim < 2048:
+            m = 8
+        elif self.dim < 16384:
+            m = 16
+        else:
+            m = 32
+        poly, v = self.block_wiedemann(m)
+        poly1 = [poly[len(poly) - i - 1] for i in range(len(poly))]
+        w = self.polyeval(poly1, v, m)
+        w = w[:, 0]
+        if CHECK_KERNEL:
+            poly1 = [poly1[0] * 0] + poly1
+            wx = self.polyeval(poly1, v, m)
+            wx = wx[:, 0]
+
+        for i in range(m):
+            wi = list(((w >> i) & 1).flatten())
+            print(f"w[{i}]", "".join(str(b) for b in wi))
+            keyidx = {k: idx for idx, k in enumerate(self.basis)}
+            if CHECK_KERNEL:
+                wxi = list(((wx >> i) & 1).flatten())
+                print(f"wx[{i}]", "".join(str(b) for b in wxi))
+                ok = True
+                for r in self.rels:
+                    rw = sum(wi[keyidx[_l]] for _l in r if not _l.startswith("K_")) & 1
+                    print(rw, end="")
+                    ok = ok and rw == 0
+                print("")
+                print("\nkernel ok", ok)
+        # M w = 0
+        # poly1 = [poly1[0] * 0] + poly1
+        # assert self.polyeval(poly1, v, m) == 0
+
+    def block_wiedemann(self, m=32) -> tuple[list[npt.NDArray], npt.NDArray]:
+        """
+        Compute a matrix linear generator using block Wiedemann algorithm
+        """
+        WGSIZE = 128
+        mgr = self.mgr
+        dim = self.dim
+        N_WG = (dim + WGSIZE - 1) // WGSIZE
+
+        BATCHSIZE = 32
+        K = (m + 31) // 32
+
+        ITERS = dim // m + dim // m + 32
+        ITERS = (ITERS // BATCHSIZE + 2) * BATCHSIZE
+
+        defines = self.defines | {"M": m, "K": K}
+
+        # Tensor holding M^k V and M^(k+1) V
+        v = np.zeros((2, dim, K), dtype=np.uint32)
+        for i in range(dim):
+            for j in range(K):
+                v[0, i, j] = random.getrandbits(32)
+        xv = mgr.tensor_t(v.flatten())
+        xiter = mgr.tensor_t(np.zeros(N_WG, dtype=np.uint32))
+        # Output sequence out[k] = S M^k V
+        xout = mgr.tensor_t(np.zeros(ITERS * K * m, dtype=np.uint32))
+
+        tensors = self.tensors + [xv, xiter, xout]
+
+        logger.info(f"Computing a Krylov sequence of length {ITERS}")
+
+        t0 = time.monotonic()
+        gpu_ticks = self._run(tensors, defines, ITERS, BATCHSIZE, N_WG)
+
+        mgr.sequence().record(kp.OpTensorSyncLocal([xout])).eval()
+        # vout[i, j, :] is the j-th row of M^i V
+        vout = xout.data().reshape((ITERS, m, K))
+        mats = [[] for _ in range(m)]
+        for j in range(m):
+            for k in range(m):
+                seqij = [int(b) for b in (vout[:, j, k // 32] >> (k % 32)) & 1]
+                # print(j, k, "".join(str(b) for b in seqij))
+                mats[j].append(seqij)
+
+        dt = time.monotonic() - t0
+        gpu_dt = gpu_ticks * stamp_period() * 1e-9
+        flops = self.flops * ITERS * m / gpu_dt
+        speed = ITERS * m / gpu_dt
+
+        t1 = time.monotonic()
+        poly = lingen_gf2.lingen_mat(mats, dim)
+        # print(poly)
+
+        dt = time.monotonic() - t0
+        lingen_dt = time.monotonic() - t1
+        logger.info(f"Lingen completed in {lingen_dt:.3f}s (N={dim} m=n={m})")
+        logger.info(
+            f"Wiedemann completed in {dt:.3f}s (GPU {gpu_dt:.3}s, {flops / 1e9:.2f} GOPS, {speed:.1f} SpMV/s)"
+        )
+
+        return poly, v[0, :, :]
+
+    def polyeval(self, poly: list[npt.NDArray], v0: npt.NDArray, m: int) -> npt.NDArray:
+        """
+        Compute sum(M^k v0 ak) where poly = sum(ak X^k)
+        """
+        WGSIZE = 128
+        mgr = self.mgr
+        dim = self.dim
+        N_WG = (dim + WGSIZE - 1) // WGSIZE
+
+        BATCHSIZE = 32
+        K = (m + 31) // 32
+
+        defines = self.defines | {"M": m, "K": K, "POLYEVAL": 1}
+
+        # Tensor holding M^k V and M^(k+1) V
+        v = np.zeros((2, dim, K), dtype=np.uint32)
+        v[0, :, :] = v0
+
+        xv = mgr.tensor_t(v.flatten())
+        xiter = mgr.tensor_t(np.zeros(N_WG, dtype=np.uint32))
+        vpoly = np.zeros((len(poly), m, K), dtype=np.uint32)
+        pow2 = np.array([1 << i for i in range(m)], dtype=np.uint32)
+        for k, ak in enumerate(poly):
+            assert ak.shape == (m, m)
+            vpoly[k, :, :] = (ak @ pow2).reshape(m, K)
+        xpoly = mgr.tensor_t(vpoly.flatten())
+        # Output accumulator out = sum(M^k V ak)
+        vout = np.zeros((dim, K), dtype=np.uint32)
+        xout = mgr.tensor_t(vout.flatten())
+
+        tensors = self.tensors + [xv, xiter, xpoly, xout]
+
+        t0 = time.monotonic()
+        gpu_ticks = self._run(tensors, defines, len(poly), BATCHSIZE, N_WG)
+        dt = time.monotonic() - t0
+
+        gpu_dt = gpu_ticks * stamp_period() * 1e-9
+        flops = self.flops * len(poly) / gpu_dt
+        speed = len(poly) / gpu_dt
+
+        mgr.sequence().record(kp.OpTensorSyncLocal([xout])).eval()
+        vout = xout.data().reshape((dim, K))
+        dt = time.monotonic() - t0
+        logger.info(
+            f"Polyeval completed in {dt:.3f}s (GPU {gpu_dt:.3}s, {flops / 1e9:.2f} GFLOPS, {speed:.1f} SpMV/s)"
+        )
+        return vout
+
+
+DENSE_ALIGN = 32
+
+
+def to_sparse_matrix(
+    rels: list[set],
+) -> tuple[list, list, npt.NDArray[np.int8], list[int], list, list]:
+    """
+    Converts a list of relations into a representation suitable
+    for sparse matrix kernels.
+
+    The matrix rows may correspond to an unspecified permutation
+    of input relations.
+
+    Returns:
+    - primes: the list of column labels
+    - rowidx: the list of relations indices used for each row
+    - dense: a dense tensor for the first n columns
+    - densebig: a tensor of big integers for large columns
+    - plus, minus: a CSR representation of other columns separated by sign
+    """
+    stats = {}
+    # Remove "K_" keys before working
+    rels_trim = []
+    for r in rels:
+        rel_trim = set(p for p in r if not p.startswith("K_"))
+        rels_trim.append(rel_trim)
+        for p in rel_trim:
+            stats[p] = stats.get(p, 0) + 1
+    rels = rels_trim
+    # Find densest columns above 33% fill ratio
+    dense_counts = []
+    for p, count in stats.items():
+        if count > len(rels) // 4:
+            dense_counts.append((count, p))
+    dense_counts.sort()
+    dense_p = sorted([p for _, p in dense_counts[len(dense_counts) % DENSE_ALIGN :]])
+    assert len(dense_p) % DENSE_ALIGN == 0
+
+    colstats = sorted(stats.values())
+    print(colstats[::10])
+
+    dense_weight = sum(stats[p] for p in dense_p) / float(len(rels))
+    logger.debug(f"Dense columns for {len(dense_p)} primes {dense_p}")
+    logger.info(
+        f"Dense block has {len(dense_p)} columns, average weight {dense_weight:.1f} per row"
+    )
+    dense_set = frozenset(dense_p)
+    sparse_weight = sum(sum(1 for p in r if p not in dense_set) for r in rels) / float(
+        len(rels)
+    )
+    logger.info(f"Sparse block has avg weight {sparse_weight:.1f} per row")
+
+    # To reduce divergence, we sort rows by length
+    size_rels = []
+    for ridx, r in enumerate(rels):
+        rsize = sum(1 for _p in r if _p not in dense_set)
+        size_rels.append((-rsize, ridx, r))
+    if not DEBUG_NO_SORT_ROWS:
+        size_rels.sort(key=lambda t: t[:2])
+    rowidx = [ridx for _, ridx, _ in size_rels]
+    rels = [_r for _, _, _r in size_rels]
+
+    dense = np.zeros((len(rels), len(dense_p)), dtype=np.int8)
+    for i, r in enumerate(rels):
+        dense[i, :] = [int(p in r) for p in dense_p]
+
+    primes = dense_p + sorted(p for p in stats if p not in dense_set)
+
+    prime_idx = {p: idx for idx, p in enumerate(primes)}
+    sparse = []
+    for r in rels:
+        row = []
+        for p in r:
+            if p in dense_set:
+                continue
+            idx = prime_idx[p]
+            row.append(idx)
+        row.sort()
+        sparse.append(row)
+    return primes, rowidx, dense, sparse
+
+
+def to_uvec(x: int, length: int):
+    assert x.bit_length() <= 32 * length
+    return [(x >> (32 * i)) & 0xFFFFFFFF for i in range(length)]
+
+
+def from_uvec(words: Iterable[int]) -> int:
+    return sum(int(x) << (32 * i) for i, x in enumerate(words))
+
+
+def from_array(array) -> int:
+    return int.from_bytes(array.tobytes(), "little")
+
+
+def to_array(x: int, length: int):
+    return np.frombuffer(x.to_bytes(4 * length, "little"), dtype=np.uint32)
