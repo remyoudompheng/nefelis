@@ -114,14 +114,6 @@ def lingen(sequences, N: int):
 
     fp0bits = bin(fp0)[2:]
     return [int(b) for b in fp0bits]
-    # assert len(fp0bits) <= N + 1, len(fp0bits)
-    # print("M FP", hex(clmul(M[0, 0], fp0)))
-    # Adjust result to match FLINT minpoly convention
-    # (reversed and monic)
-    poly = (N + 1) * [0]
-    for i in range(len(fp0bits)):
-        poly[N - i] = int(fp0bits[-1 - i])
-    return poly
 
 
 def lingen_mat(mats, N: int):

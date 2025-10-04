@@ -13,7 +13,11 @@ from nefelis.vulkan import shader, stamp_period
 
 # Avoid row reordering when constructing SpMV matrices.
 DEBUG_NO_SORT_ROWS = False
-DEBUG_CHECK_ENCODING = True
+# Sanity check for matrix representation
+DEBUG_CHECK_ENCODING = False
+# Extra checks for returns kernel elements
+DEBUG_CHECK_KERNEL = False
+
 
 logger = logging.getLogger("linalg")
 
@@ -115,14 +119,25 @@ class SpMV:
             f"{self.flops} int1 ops per matrix multiplication (original weight {weight})"
         )
 
-    def shaders(self, defines):
-        return [(name, shader(name, defines)) for name in ("spmv_gf2",)]
+    def shaders(self, defines, transpose: bool):
+        if transpose:
+            return [(name, shader(name, defines)) for name in ("spmv_gf2_transpose1",)]
+        else:
+            return [(name, shader(name, defines)) for name in ("spmv_gf2",)]
 
-    def _run(self, tensors, defines, ITERS, BATCHSIZE, N_WG):
+    def _run(
+        self,
+        tensors,
+        defines,
+        ITERS: int,
+        BATCHSIZE: int,
+        N_WG: int,
+        transpose: bool = False,
+    ):
         mgr = self.mgr
         algos = [
             (name, mgr.algorithm(tensors, kernel, workgroup=(N_WG, 1, 1)))
-            for name, kernel in self.shaders(defines)
+            for name, kernel in self.shaders(defines, transpose)
         ]
 
         mgr.sequence().record(kp.OpTensorSyncDevice(tensors)).eval()
@@ -158,19 +173,23 @@ class SpMV:
         return gpu_ticks
 
     def right_kernel(self):
-        CHECK_KERNEL = True
-
+        """
+        Compute a list of right-kernel elements: non-zero vectors Vi
+        such that M*Vi == 0.
+        """
         if self.dim < 2048:
             m = 8
         elif self.dim < 16384:
             m = 16
         else:
             m = 32
+        # If sum(ak X^k) is a matrix generator of the sequence W0 M^k V0
+        # then sum(M^(d-k) V0 ak) is a possible right kernel element.
         poly, v = self.block_wiedemann(m)
         poly1 = [poly[len(poly) - i - 1] for i in range(len(poly))]
         w = self.polyeval(poly1, v, m)
         w = w[:, 0]
-        if CHECK_KERNEL:
+        if DEBUG_CHECK_KERNEL:
             poly1 = [poly1[0] * 0] + poly1
             wx = self.polyeval(poly1, v, m)
             wx = wx[:, 0]
@@ -179,7 +198,7 @@ class SpMV:
             wi = list(((w >> i) & 1).flatten())
             print(f"w[{i}]", "".join(str(b) for b in wi))
             keyidx = {k: idx for idx, k in enumerate(self.basis)}
-            if CHECK_KERNEL:
+            if DEBUG_CHECK_KERNEL:
                 wxi = list(((wx >> i) & 1).flatten())
                 print(f"wx[{i}]", "".join(str(b) for b in wxi))
                 ok = True
@@ -193,9 +212,75 @@ class SpMV:
         # poly1 = [poly1[0] * 0] + poly1
         # assert self.polyeval(poly1, v, m) == 0
 
-    def block_wiedemann(self, m=32) -> tuple[list[npt.NDArray], npt.NDArray]:
+    def left_kernel(self):
+        if self.dim < 2048:
+            m = 8
+        elif self.dim < 16384:
+            m = 16
+        else:
+            m = 32
+        # If sum(ak X^k) is a matrix generator of the sequence W0 M^k V0
+        # then sum(ak W0 M^k) is a possible right kernel element.
+        # W0 is not random and is always a zero-padded identity matrix.
+        poly, v = self.block_wiedemann(m, left=True)
+        # FIXME: assumes m <= 32
+        w0 = np.zeros((self.dim, (m + 31) // 32), dtype=np.uint32)
+        for i in range(m):
+            w0[i, i // 32] = 1 << (i % 32)
+        poly1 = [poly[len(poly) - i - 1] for i in range(len(poly))]
+        # print(poly1[0])
+        # print(poly1[1])
+        w = self.polyeval(poly1, w0, m, transpose=True)
+        polyx = [np.zeros((m, m), dtype=np.uint8), np.identity(m, dtype=np.uint8)]
+        wx = self.polyeval(polyx, w, m, transpose=True)
+
+        kers = []
+        seen = set()
+        for i in range(m):
+            wi = list(((w[:, 0] >> i) & 1).flatten())
+            wxi = list(((wx[:, 0] >> i) & 1).flatten())
+            if sum(wi) > 0 and sum(wxi) == 0:
+                wstr = "".join(str(b) for b in wi)
+                if wstr in seen:
+                    logger.debug("Ignoring duplicate kernel element")
+                    continue
+                kers.append(wi)
+                seen.add(wstr)
+                # print(f"wx[{i}]", "".join(str(b) for b in wxi))
+                if DEBUG_CHECK_KERNEL:
+                    print("found left kernel")
+                    print(f"w[{i}]", wstr)
+                    mw = {}
+                    for j in range(self.dim):
+                        if wi[j]:
+                            r = self.rels[self.rowidx[j]]
+                            for _l in r:
+                                mw[_l] = mw.get(_l, 0) + 1
+                    assert all(
+                        coef & 1 == 0
+                        for _l, coef in mw.items()
+                        if not _l.startswith("K_")
+                    )
+                    # print(mw)
+        logger.debug(f"Found {len(kers)} distinct nonzero left kernel elements")
+        return kers
+
+    def block_wiedemann(
+        self, m=32, left=False
+    ) -> tuple[list[npt.NDArray], npt.NDArray]:
         """
         Compute a matrix linear generator using block Wiedemann algorithm
+
+        The sequence is W M^k V where V is a random vector and W is
+        the zero-extended identity matrix.
+
+        The result is a right linear generator: sum ak X^k such that
+           sum(W M^(d-k) V ak) = 0 for large enough d.
+
+        If argument `left` is True, a left generator is returned:
+           sum(ak W M^(d-k) V) = 0 for large enough d.
+
+        The polynomial is returns as a list of numpy matrices with 0/1 coefficients.
         """
         WGSIZE = 128
         mgr = self.mgr
@@ -228,23 +313,36 @@ class SpMV:
         gpu_ticks = self._run(tensors, defines, ITERS, BATCHSIZE, N_WG)
 
         mgr.sequence().record(kp.OpTensorSyncLocal([xout])).eval()
-        # vout[i, j, :] is the j-th row of M^i V
         vout = xout.data().reshape((ITERS, m, K))
-        mats = [[] for _ in range(m)]
-        for j in range(m):
-            for k in range(m):
-                seqij = [int(b) for b in (vout[:, j, k // 32] >> (k % 32)) & 1]
-                # print(j, k, "".join(str(b) for b in seqij))
-                mats[j].append(seqij)
 
         dt = time.monotonic() - t0
         gpu_dt = gpu_ticks * stamp_period() * 1e-9
         flops = self.flops * ITERS * m / gpu_dt
         speed = ITERS * m / gpu_dt
 
+        # vout[i, j, :] is the j-th row of M^i V
+        mats = [[] for _ in range(m)]
+        if left:
+            # mat[k, j] = vout[:, j, k]
+            for k in range(m):
+                for j in range(m):
+                    seqij = [int(b) for b in (vout[:, j, k // 32] >> (k % 32)) & 1]
+                    # print(j, k, "".join(str(b) for b in seqij))
+                    mats[k].append(seqij)
+        else:
+            # mat[j, k] = vout[:, j, k]
+            for j in range(m):
+                for k in range(m):
+                    seqij = [int(b) for b in (vout[:, j, k // 32] >> (k % 32)) & 1]
+                    # print(j, k, "".join(str(b) for b in seqij))
+                    mats[j].append(seqij)
+
         t1 = time.monotonic()
         poly = lingen_gf2.lingen_mat(mats, dim)
-        # print(poly)
+
+        if left:
+            # Transpose polynomial again
+            poly = [ak.T for ak in poly]
 
         dt = time.monotonic() - t0
         lingen_dt = time.monotonic() - t1
@@ -255,9 +353,12 @@ class SpMV:
 
         return poly, v[0, :, :]
 
-    def polyeval(self, poly: list[npt.NDArray], v0: npt.NDArray, m: int) -> npt.NDArray:
+    def polyeval(
+        self, poly: list[npt.NDArray], v0: npt.NDArray, m: int, transpose: bool = False
+    ) -> npt.NDArray:
         """
         Compute sum(M^k v0 ak) where poly = sum(ak X^k)
+        or the transposed variant sum(ak v0 M^k)
         """
         WGSIZE = 128
         mgr = self.mgr
@@ -288,12 +389,12 @@ class SpMV:
         tensors = self.tensors + [xv, xiter, xpoly, xout]
 
         t0 = time.monotonic()
-        gpu_ticks = self._run(tensors, defines, len(poly), BATCHSIZE, N_WG)
+        gpu_ticks = self._run(tensors, defines, len(poly), BATCHSIZE, N_WG, transpose)
         dt = time.monotonic() - t0
 
         gpu_dt = gpu_ticks * stamp_period() * 1e-9
-        flops = self.flops * len(poly) / gpu_dt
-        speed = len(poly) / gpu_dt
+        flops = self.flops * len(poly) * m / gpu_dt
+        speed = len(poly) * m / gpu_dt
 
         mgr.sequence().record(kp.OpTensorSyncLocal([xout])).eval()
         vout = xout.data().reshape((dim, K))
@@ -334,16 +435,11 @@ def to_sparse_matrix(
             stats[p] = stats.get(p, 0) + 1
     rels = rels_trim
     # Find densest columns above 33% fill ratio
-    dense_counts = []
-    for p, count in stats.items():
-        if count > len(rels) // 4:
-            dense_counts.append((count, p))
-    dense_counts.sort()
-    dense_p = sorted([p for _, p in dense_counts[len(dense_counts) % DENSE_ALIGN :]])
+    counts = sorted((count, p) for p, count in stats.items())
+    dense_n = sum(1 for count, _ in counts if count > len(rels) // 4)
+    dense_n = max(DENSE_ALIGN, dense_n - dense_n % DENSE_ALIGN)
+    dense_p = [p for _, p in counts[-dense_n:]]
     assert len(dense_p) % DENSE_ALIGN == 0
-
-    colstats = sorted(stats.values())
-    print(colstats[::10])
 
     dense_weight = sum(stats[p] for p in dense_p) / float(len(rels))
     logger.debug(f"Dense columns for {len(dense_p)} primes {dense_p}")
@@ -355,6 +451,7 @@ def to_sparse_matrix(
         len(rels)
     )
     logger.info(f"Sparse block has avg weight {sparse_weight:.1f} per row")
+    logger.info(f"Largest sparse column has weight {counts[-dense_n-1][0]}")
 
     # To reduce divergence, we sort rows by length
     size_rels = []
