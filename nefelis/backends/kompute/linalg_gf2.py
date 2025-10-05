@@ -214,8 +214,10 @@ class SpMV:
 
     def left_kernel(self):
         if self.dim < 2048:
-            m = 8
+            m = 4
         elif self.dim < 16384:
+            m = 8
+        elif self.dim < 65536:
             m = 16
         else:
             m = 32
@@ -451,7 +453,7 @@ def to_sparse_matrix(
         len(rels)
     )
     logger.info(f"Sparse block has avg weight {sparse_weight:.1f} per row")
-    logger.info(f"Largest sparse column has weight {counts[-dense_n-1][0]}")
+    logger.info(f"Largest sparse column has weight {counts[-dense_n - 1][0]}")
 
     # To reduce divergence, we sort rows by length
     size_rels = []

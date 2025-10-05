@@ -136,7 +136,9 @@ def prune(
     pruned: list[set[str]] = [r for r in rels if r is not None]
     for r in pruned:
         cols.update([_p for _p in r if not _p.startswith("K_")])
-    logger.info(f"[prune] After pruning: {len(pruned)} relations with {len(cols)} primes")
+    logger.info(
+        f"[prune] After pruning: {len(pruned)} relations with {len(cols)} primes"
+    )
 
     if datadir is not None:
         with open(datadir / "relations.pruned", "w") as wp:
