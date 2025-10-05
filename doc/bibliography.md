@@ -26,6 +26,10 @@ https://inria.hal.science/hal-01112879v2/file/BGGM-Eurocrypt15.pdf
 *Fast computation of linear generators for matrix sequences and application to the block Wiedemann algorithm.*
 https://inria.hal.science/inria-00517999v1/document
 
+<a id="Tho2">[Tho2]</a> Emmanuel Thomé.
+*Square Root Algorithms for the Number Field Sieve.*
+https://members.loria.fr/EThome/files/nfs-sqrt.pdf
+
 The CADO-NFS Development Team.
 CADO-NFS, An Implementation of the Number Field Sieve Algorithm, Release 2.3.0, 2017
 http://cado-nfs.inria.fr/

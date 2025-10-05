@@ -19,8 +19,10 @@ import flint
 
 from nefelis import filter_gf2 as filter
 from nefelis.linalg_gf2 import SpMV
+from nefelis.factor import sqrt_arb
 
 logger = logging.getLogger("linalg")
+logsqrt = logging.getLogger("sqrt")
 
 
 def read_relations(filepath: str | pathlib.Path):
@@ -57,6 +59,8 @@ def main_impl(args):
         assert sum(fi * z**i for i, fi in enumerate(f)) % n == 0
         assert sum(gi * z**i for i, gi in enumerate(g)) % n == 0
 
+    Zn = flint.fmpz_mod_ctx(n)
+
     # Prepare quadratic characters
     chis = []
     for l in range(2**60, 2**60 + 2000):
@@ -85,6 +89,7 @@ def main_impl(args):
     # (necessary for the sqrt part?) but the kernel part will be modulo 2.
 
     rels = []
+    zrels = {}
     seen_xy = set()
     duplicates = 0
 
@@ -107,6 +112,7 @@ def main_impl(args):
         for _l in facg:
             key = f"Z_{_l}"
             rel[key] = rel.get(key, 0) - 1
+        zrels[(x, -y)] = facg
         # FIXME: add quadratic characters here
         rels.append(rel)
 
@@ -128,6 +134,8 @@ def main_impl(args):
     dim = M.dim
     kers = M.left_kernel()
 
+    zn = Zn(z)
+    A = f[-1]
     for ki in kers:
         s = set()
         for j in range(dim):
@@ -135,13 +143,17 @@ def main_impl(args):
                 r = M.rels[M.rowidx[j]]
                 s.symmetric_difference_update([l for l in r if l.startswith("K_")])
 
+        xys = []
+        for key in s:
+            prefix, x, y = key.split("_")
+            assert prefix == "K"
+            xys.append((int(x), -int(y)))
+
         is_probably_square = True
         for _l, _r in testchis:
             residue = flint.nmod(1, _l)
-            for key in s:
-                prefix, x, y = key.split("_")
-                assert prefix == "K"
-                residue *= int(x) - _r * int(y)
+            for x, y in xys:
+                residue *= x + _r * y
             if flint.fmpz(int(residue)).jacobi(_l) == -1:
                 logger.debug(
                     f"Candidate product of {len(s)} elements is not a square at place {_l},{_r}"
@@ -153,6 +165,44 @@ def main_impl(args):
             logger.debug(
                 f"Candidate square: product of {len(s)} elements validated at {len(testchis)} places"
             )
+            rt = sqrt_arb.sqrt(f, xys)
+            bits = int(max(ai.abs_upper().log_base(2) for ai in rt).ceil().fmpz())
+            logsqrt.debug(f"Need {bits} precision bits")
+            rt = sqrt_arb.sqrt(f, xys, int(1.1 * bits + 64))
+            # Evaluate in Z/nZ
+            sqrt = 0
+            for i, r in enumerate(rt):
+                sqrt += Zn(r.real.unique_fmpz()) * (A * zn) ** i
+            sqrt /= Zn(A) ** (len(xys) // 2)
+            # print(sqrt**2)
+
+            candidate = Zn(1)
+            for x, y in xys:
+                candidate *= x + zn * y
+            # print(candidate)
+
+            # Compute square root on the rational side
+            factors = {}
+            for x, y in xys:
+                for _l in zrels[(x, y)]:
+                    factors[_l] = factors.get(_l, 0) + 1
+            sqrtz = Zn(1)
+            for p, e in factors.items():
+                assert e & 1 == 0
+                sqrtz *= Zn(p) ** (e // 2)
+            sqrtz /= Zn(g[-1]) ** (len(xys) // 2)
+            # print(sqrt, sqrtz)
+            assert candidate == sqrt**2
+            assert candidate == sqrtz**2
+
+            d1 = flint.fmpz(n).gcd(int(sqrt - sqrtz))
+            d2 = flint.fmpz(n).gcd(int(sqrt + sqrtz))
+            if d1 > 1 and d1 < n:
+                logsqrt.info(f"Found factor {d1}")
+            elif d2 > 1 and d2 < n:
+                logsqrt.info(f"Found factor {d2}")
+            else:
+                logsqrt.info("No factor from this square")
 
 
 if __name__ == "__main__":
