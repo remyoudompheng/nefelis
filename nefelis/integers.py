@@ -35,7 +35,9 @@ def factor(n: int | flint.fmpz) -> list[tuple[int, int]]:
 
 
 def product(zs: list[int]) -> int:
-    if len(zs) == 1:
+    if len(zs) == 0:
+        return 1
+    elif len(zs) == 1:
         return zs[0]
     else:
         return product(zs[: len(zs) // 2]) * product(zs[len(zs) // 2 :])

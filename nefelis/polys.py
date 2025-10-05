@@ -37,6 +37,28 @@ def discriminant(f: list[int]) -> int:
         raise NotImplementedError
 
 
+def l2norm(f: list[int]) -> float:
+    # FIXME: explain
+    if len(f) == 2:
+        u, v = f
+        return float(u * u + v * v)
+    elif len(f) == 3:
+        u, v, w = f
+        return float(3 * (u * u + w * w) + 2 * u * w + v * v) / 6.0
+    elif len(f) == 4:
+        a, b, c, d = f
+        return float(5 * (a * a + d * d) + 2 * (a * c + b * d) + b * b + c * c) / 8.0
+    elif len(f) == 5:
+        a0, a1, b, c1, c0 = f
+        return float(
+            35 * (a0**2 + c0**2)
+            + 10 * b * (a0 + c0)
+            + 5 * (a1**2 + c1**2)
+            + 6 * (a0 * c0 + a1 * c1)
+            + 3 * b**2
+        )
+
+
 def bad_ideals(f: list[int]) -> list[tuple[int, int]]:
     """
     Check f (irreducible polynomial) for bad ideals.
@@ -76,6 +98,7 @@ def bad_ideals(f: list[int]) -> list[tuple[int, int]]:
     """
     assert 3 <= len(f) <= 5
     disc = discriminant(f)
+    assert disc != 0
     # There may be large bad ideals but we only care about
     # those belonging to the factor base.
     facs = factor_smooth(disc, 20)
@@ -104,7 +127,7 @@ def bad_ideals(f: list[int]) -> list[tuple[int, int]]:
             # FIXME: check roots at infinity
             poly_r = poly(flint.fmpz_poly([int(r), 1]))
             # Since f is irreducible -r is not a root
-            assert poly_r[0] != 0
+            assert poly_r[0] != 0, (l, r)
             v0 = valuation(int(poly_r[0]), l)
             assert poly_r[e] % l != 0
             if all(valuation(int(poly_r[i]), l) > v0 - i for i in range(1, e + 1)):
@@ -136,6 +159,17 @@ def bad_ideals(f: list[int]) -> list[tuple[int, int]]:
     return bad
 
 
+def alpha(D, f):
+    if len(f) == 3:
+        return alpha2(D, f[2], f[1], f[0])
+    elif len(f) == 4:
+        return alpha3(D, f[3], f[2], f[1], f[0])
+    elif len(f) == 5:
+        return alpha4(D, f)
+    else:
+        raise NotImplementedError
+
+
 # fmt:off
 SMALLPRIMES = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97, 101, 103, 107, 109, 113]
 # fmt:on
@@ -144,7 +178,8 @@ SQUARES = set((l, i * i % l) for l in SMALLPRIMES for i in range(l))
 
 FIELDS = {
     l: numpy.array(
-        [[1, x, x * x % l, x * x * x % l] for x in range(l)], dtype=numpy.int32
+        [[1, x, x * x % l, x * x * x % l, x * x * x * x % l] for x in range(l)],
+        dtype=numpy.int32,
     )
     for l in SMALLPRIMES
 }
@@ -253,7 +288,7 @@ def avgval3(D, a, b, c, d, l, poly):
             a, b, c, d = d, c, b, a
             poly = poly[::-1]
         fp = FIELDS[l]
-        vals = fp @ poly
+        vals = fp[:, :4] @ poly
         roots = [int(x) for x in (vals % l == 0).nonzero()[0]]
         val = len(roots) / l
         for k in range(1, 5):
@@ -275,7 +310,7 @@ def avgval3(D, a, b, c, d, l, poly):
             a, b, c, d = d, c, b, a
             poly = poly[::-1]
         fp = FIELDS[l]
-        vals = fp @ poly
+        vals = fp[:, :4] @ poly
         roots = [int(x) for x in (vals % l == 0).nonzero()[0]]
         val = len(roots) / l
         count2 = sum(
@@ -290,5 +325,93 @@ def avgval3(D, a, b, c, d, l, poly):
 
 def nroots3(poly, l):
     fp = FIELDS[l]
-    vals = fp @ poly
+    vals = fp[:, :4] @ poly
     return l - numpy.count_nonzero(vals % l)
+
+
+# Quartic polynomials
+
+
+def alpha4(D, f):
+    """
+    alpha(Zx([5,1,-4,2,3]), 115) / log(2.0) = 0.862355010358203
+    >>> 0.86 < alpha4(132325, [5,1,-4,2,3]) < 0.89
+    True
+
+    alpha(f, 115) / log2 = -1.74153247231177
+    >>> f = [14210657027941395, 89584037279263219, 45122821949983494, 99446805877972590, 33124700204200920]
+    >>> -1.8 < alpha4(discriminant(f), f) < -1.4
+    True
+    """
+    # for l in SMALLPRIMES:
+    #    print(l, math.log(l) * (1 / (l - 1) - avgval4(D, l, f) * l / (l + 1)))
+    return sum(
+        math.log2(l) * (1 / (l - 1) - avgval4(D, l, f) * l / (l + 1))
+        for l in SMALLPRIMES
+    )
+
+
+def avgval4(D, l, poly):
+    poly = numpy.array(poly, dtype=object)
+    if D % l != 0 and l > 2:
+        return nroots4(poly, l) / (l - 1)
+
+    # Discriminant is zero: polynomial is necessarily split.
+    e, d, c, b, a = [int(ai) for ai in poly]
+    if l <= 5:
+        fp = FIELDS[l]
+        vals = fp[:, :5] @ poly
+        roots = [int(x) for x in (vals % l == 0).nonzero()[0]]
+        val = len(roots) / l
+        for k in range(1, 5):
+            li = l**k
+            roots_lift = []
+            for r in roots:
+                for x in range(r, r + l * li, li):
+                    fx = (a * x * x + b * x + c) * x * x + d * x + e
+                    if fx % (l * li) == 0:
+                        roots_lift.append(r)
+            count = len(roots_lift)
+            if count == 0:
+                break
+            val += count / (l * li)
+            roots = roots_lift
+        # Roots at infinity
+        if a % l == 0:
+            val += 1 / l
+            roots = [0]
+            for k in range(1, 5):
+                li = l**k
+                roots_lift = []
+                for r in roots:
+                    for x in range(r, r + l * li, li):
+                        fx = (e * x * x + d * x + c) * x * x + b * x + a
+                        if fx % (l * li) == 0:
+                            roots_lift.append(r)
+                count = len(roots_lift)
+                if count == 0:
+                    break
+                val += count / (l * li)
+                roots = roots_lift
+        return val
+    else:
+        fp = FIELDS[l]
+        vals = fp[:, :5] @ poly
+        roots = [int(x) for x in (vals % l == 0).nonzero()[0]]
+        val = len(roots) / l
+        count2 = 0
+        for r in roots:
+            for x in range(r, r + l * l, l):
+                fx = (a * x * x + b * x + c) * x * x + d * x + e
+                if fx % (l * l) == 0:
+                    count2 += 1
+        if a % l == 0:
+            val += 1 / l
+        return val + count2 / (l * (l - 1))
+
+
+def nroots4(poly, l):
+    fp = FIELDS[l]
+    vals = fp[:, :5] @ poly
+    infty = 1 if poly[-1] % l == 0 else 0
+    return l - numpy.count_nonzero(vals % l) + infty

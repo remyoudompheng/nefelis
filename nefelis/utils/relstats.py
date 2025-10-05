@@ -77,7 +77,8 @@ def process_file(f):
                 rel1.sort()
                 p1.append(rel0[-1])
                 p2.append(rel0[-2])
-                p3.append(rel0[-3])
+                if len(rel0) > 3:
+                    p3.append(rel0[-3])
                 q1.append(rel1[-1])
                 if len(rel1) > 1:
                     q2.append(rel1[-2])
