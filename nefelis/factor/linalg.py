@@ -20,9 +20,12 @@ import flint
 from nefelis import filter_gf2 as filter
 from nefelis.linalg_gf2 import SpMV
 from nefelis.factor import sqrt_arb
+from nefelis.factor import sqrt_padic
 
 logger = logging.getLogger("linalg")
 logsqrt = logging.getLogger("sqrt")
+
+DEBUG_USE_REALCOMPLEX_SQRT = False
 
 
 def read_relations(filepath: str | pathlib.Path):
@@ -136,6 +139,7 @@ def main_impl(args):
 
     zn = Zn(z)
     A = f[-1]
+    sqrt_start = time.monotonic()
     for ki in kers:
         s = set()
         for j in range(dim):
@@ -168,12 +172,20 @@ def main_impl(args):
             rt = sqrt_arb.sqrt(f, xys)
             bits = int(max(ai.abs_upper().log_base(2) for ai in rt).ceil().fmpz())
             logsqrt.debug(f"Need {bits} precision bits")
-            rt = sqrt_arb.sqrt(f, xys, int(1.1 * bits + 64))
-            # Evaluate in Z/nZ
-            sqrt = 0
-            for i, r in enumerate(rt):
-                sqrt += Zn(r.real.unique_fmpz()) * (A * zn) ** i
-            sqrt /= Zn(A) ** (len(xys) // 2)
+            if DEBUG_USE_REALCOMPLEX_SQRT:
+                rt = sqrt_arb.sqrt(f, xys, int(1.1 * bits + 64))
+                # Evaluate in Z/nZ
+                sqrt = 0
+                for i, r in enumerate(rt):
+                    sqrt += Zn(r.real.unique_fmpz()) * (A * zn) ** i
+                sqrt /= Zn(A) ** (len(xys) // 2)
+            else:
+                rt = sqrt_padic.sqrt(f, xys, int(1.1 * bits + 64))
+                sqrt = 0
+                for i, r in enumerate(rt):
+                    sqrt += Zn(r) * (A * zn) ** i
+                sqrt /= Zn(A) ** (len(xys) // 2)
+
             # print(sqrt**2)
 
             candidate = Zn(1)
@@ -199,10 +211,14 @@ def main_impl(args):
             d2 = flint.fmpz(n).gcd(int(sqrt + sqrtz))
             if d1 > 1 and d1 < n:
                 logsqrt.info(f"Found factor {d1}")
+                break
             elif d2 > 1 and d2 < n:
                 logsqrt.info(f"Found factor {d2}")
+                break
             else:
                 logsqrt.info("No factor from this square")
+    sqrt_dt = time.monotonic() - sqrt_start
+    logsqrt.info(f"Sqrt step done in {sqrt_dt:.3f}s")
 
 
 if __name__ == "__main__":

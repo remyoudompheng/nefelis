@@ -17,7 +17,7 @@ def sqrt(f: list[int], xys: list[tuple[int, int]], approx=64) -> list[flint.arb]
     """
     Compute a square root of the product (xi + z*yi) in field Kf=Q[z]/f(z)
 
-    The square root is computed as sum(ai * z^i) / A^len(xys) where ai
+    The square root is computed as sum(ai * (Az)^i) / A^len(xys) where ai
     are real numbers with specified precision.
     """
     # Note that the root of z is not an algebraic integer.

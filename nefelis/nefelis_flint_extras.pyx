@@ -16,12 +16,18 @@ cdef extern from "flint/fmpz.h":
     # FIXME: it doesn't seem to improve anything
     void _fmpz_cleanup() nogil
 
+ctypedef slong fmpz_struct
+ctypedef fmpz_struct fmpz_t[1]
+
 cdef extern from "flint/fmpz_mod_types.h":
     ctypedef struct fmpz_mod_ctx_struct:
         void * n
         # ...
 
     ctypedef fmpz_mod_ctx_struct fmpz_mod_ctx_t[1]
+
+cdef extern from "flint/fmpz_mod.h":
+    void fmpz_mod_ctx_set_modulus(fmpz_mod_ctx_t ctx, const fmpz_t n)
 
 cdef extern from "flint/fmpz_mod_poly.h":
     ctypedef struct fmpz_mod_poly_struct:
@@ -37,6 +43,9 @@ cdef extern from "flint/fmpz_mod_poly.h" nogil:
     void fmpz_mod_poly_mullow(fmpz_mod_poly_t res, const fmpz_mod_poly_t poly1, const fmpz_mod_poly_t poly2, slong n, const fmpz_mod_ctx_t ctx)
 
 # HACK: minimal definitions to reproduce memory layout of python-flint
+
+cdef class fmpz:
+    cdef fmpz_t val
 
 cdef class fmpz_mod_ctx:
     cdef fmpz_mod_ctx_t val
@@ -101,3 +110,12 @@ def nogil_fmpz_mod_poly_mullow(f, g, slong b, ctx):
         #_fmpz_cleanup()
 
     return res
+
+def fmpz_mod_ctx_composite(mod: flint.fmpz) -> flint.fmpz_mod_ctx:
+    """
+    Create a fmpz_mod_ctx without checking for primality.
+    """
+    assert isinstance(mod, flint.fmpz)
+    c = flint.fmpz_mod_ctx(1)
+    fmpz_mod_ctx_set_modulus((<fmpz_mod_ctx>c).val, (<fmpz>mod).val)
+    return c
