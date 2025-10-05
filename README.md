@@ -26,7 +26,7 @@ Planned variants are described in the following table.
 | `deg3` | Discrete logarithm in GF(p) | Joux-Lercier method with degree 3/2 polynomials | ✅ | Enforces a single Schirokauer map |
 | `fp2`  | Discrete logarithm in GF(p²)| Conjugation method with degree 4/2 polynomials  | ⚠️ | Basic (broken) implementation |
 | `fp3`  | Discrete logarithm in GF(p³)| TBD | ❌ | |
-| `factor`  | Integer factorization    | General NFS for factoring | ❌ | Requires fast linear algebra over GF(2) and sqrt step |
+| `factor`  | Integer factorization    | General NFS for factoring | 🐢 | Much slower than Cado-NFS with equivalent computing power |
 
 The project is not currently open to external contributions.
 

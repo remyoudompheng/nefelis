@@ -9,8 +9,8 @@ Suitable p are such that polynomial f is irreducible modulo p,
 so that the square root in the residue field GF(p^d) is unique
 up to sign.
 
-Standard lifting modulo p^k is then used ot obtain a square root
-in the unramified extension Qp[x]/f(x), which concides with
+Standard lifting modulo p^k is then used to obtain a square root
+in the unramified extension Qp[x]/f(x), which coincides with
 the actual square root in Q[x]/f(x) when known up to a sufficiently
 large precision.
 """
