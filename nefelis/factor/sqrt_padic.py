@@ -98,22 +98,38 @@ def sqrt(f: list[int], xys: list[tuple[int, int]], size_hint: int) -> list[int]:
     # 3. Lift p-adically to obtain T=sqrt(S)
     t1 = time.monotonic()
     k = 1
+    # Invariant:
+    # Tk is the square root of S modulo p^k
+    # Tinvk is the inverse of 2Tk
+    # It is faster to lift the inverse modulo p than recompute XGCD of polynomials each time.
     Tk: list[flint.fmpz] = Tp.to_list()
+    Tinvk: list[flint.fmpz] = (1 / (2 * Tp)).to_list()
     while k < N:
         k = min(2 * k, N)
         ZpkX = flint.fmpz_mod_poly_ctx(fmpz_mod_ctx_composite(flint.fmpz(p) ** k))
-        # Newton iteration in Zp[x]/f(x): T => T + (S-T²)/2T
+        # Newton iteration in Zp[x]/f(x):
+        # Tinv => 2 * Tinv - 2T Tinv^2
+        # T => T + (S-T²)/2T = T/2 + S/2T
         Sk = ZpkX(S)
         fk = ZpkX(fmonic)
+        T = ZpkX(Tk)
         if DEBUG_CHECK_NEWTON:
-            rem = list(Sk - ZpkX(Tk) ** 2 % fk)
+            rem = list(Sk - T**2 % fk)
             for ri in rem:
                 assert int(ri) % p ** (k // 2) == 0
-        invT = (2 * ZpkX(Tk)).inverse_mod(fk)
-        T = ZpkX(Tk) + ((Sk - ZpkX(Tk) ** 2) * invT) % fk
+        Tinv = ZpkX(Tinvk)
+        Tinv = Tinv * (2 - 2 * T * Tinv) % fk
+        Tadj = (Sk * Tinv - T / 2) % fk
+        T += Tadj
         if DEBUG_CHECK_NEWTON:
+            assert (2 * T * Tinv) % fk == 1
             assert T * T % fk == Sk
         Tk = [flint.fmpz(int(ti)) for ti in list(T)]
+        # Adjust inverse to match new T
+        # 1/(2T+2Tadj) = Tinv - 2Tadj/(2T)^2
+        Tinv = (Tinv - 2 * Tadj * Tinv * Tinv) % fk
+        # assert (2 * T * Tinv) % fk == 1
+        Tinvk = [flint.fmpz(int(ti)) for ti in list(Tinv)]
 
     dt = time.monotonic() - t1
     logger.info(f"Computed T(z) = sqrt(S(z)) in {dt:.3f}s")
