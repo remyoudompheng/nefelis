@@ -1,5 +1,4 @@
-// Sieve on rational side.
-//
+// Line sieve, step 1
 // Prepare roots: compute roots transformed for the q-sublattice.
 
 #version 450
@@ -21,7 +20,7 @@ layout(binding = 5) writeonly buffer Out2 { uint out2[]; };
 #ifdef THRESHOLD2
 layout(binding = 6) readonly buffer P2 { uint primes2[]; };
 layout(binding = 7) readonly buffer R2 { uint roots2[]; };
-layout(binding = 8) writeonly buffer Q2 { i16vec2 qroots2[]; };
+layout(binding = 8) writeonly buffer Q2 { uint qroots2[]; };
 #endif
 
 #include <arith.comp>
@@ -55,41 +54,8 @@ void doprime2(uint pidx) {
   int qx = int(modp_float(qqx, p, pinv));
   int qy = int(modp_float(qqy, p, pinv));
 
-  if (qy == 0) {
-    qroots2[pidx] = i16vec2(1, 0);
-    return;
-  }
-
-  const uint qr = mulmod(qx, invmod(qy, int(p)), p, pinv);
-  // Lattice reduction for x=qr*y mod p
-  ivec2 ui = ivec2(qr, 1);
-  ivec2 vi = ivec2(p, 0);
-  vec2 u = vec2(qr, 1);
-  vec2 v = vec2(p, 0);
-  float nu = dot(u, u);
-  float nv = dot(v, v);
-  while (true) {
-    // At most 20 iterations
-    float q = round(dot(u, v) / nu);
-    if (q == 0)
-      break;
-    v -= q * u;
-    vi -= int(q) * ui;
-    nv = dot(v, v);
-    // Now nv < nu
-    // Swap u and v
-    vec2 uu = u;
-    u = v;
-    v = uu;
-    ivec2 uui = ui;
-    ui = vi;
-    vi = uui;
-    float n = nu;
-    nu = nv;
-    nv = nu;
-  }
-  // Now u and v should be less than 16 bits.
-  qroots2[pidx] = i16vec2(u);
+  const uint qr = (qy == 0) ? p : mulmod(qx, invmod(qy, int(p)), p, pinv);
+  qroots2[pidx] = qr;
 }
 
 #endif

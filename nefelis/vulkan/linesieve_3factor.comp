@@ -1,0 +1,96 @@
+// Trial division for output relations
+// We are given an output array with len(facs) = FACS_PER_OUTPUTx len(result)
+// Each workgroup handles a set of results.
+
+#version 450
+
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+
+#ifndef THRESHOLD2
+#error THRESHOLD2 is required
+#endif
+
+const uint WGSIZE = 256;
+
+layout(local_size_x = WGSIZE, local_size_y = 1, local_size_z = 1) in;
+
+layout(binding = 0) readonly buffer Primes2 { uint primes2[]; };
+layout(binding = 1) readonly buffer QRoots2 { uint qroots2[]; };
+layout(binding = 2) readonly buffer QBasis { ivec4 q; };
+layout(binding = 3) readonly buffer Output { ivec2 result[]; };
+layout(binding = 4) coherent buffer Output2 { ivec2 result2[]; };
+
+shared ivec2 sresult[WGSIZE];
+// We wlil accumulate fixed-point log2(p)
+shared uint slog[WGSIZE];
+
+uint tidx = gl_LocalInvocationID.x;
+
+#include <arith.comp>
+
+void main() {
+  const uint outlen = result[0].x;
+  if (outlen == 0)
+    return;
+  uint out0 = gl_WorkGroupID.x * gl_WorkGroupSize.x;
+  uint out1 = out0 + gl_WorkGroupSize.x;
+  if (out0 > outlen)
+    return;
+
+  out0 = clamp(out0, 1, outlen + 1);
+  out1 = clamp(out1, 1, outlen + 1);
+
+  if (out0 + tidx < out1) {
+    sresult[tidx] = result[out0 + tidx];
+    slog[tidx] = 0;
+  }
+  barrier();
+  memoryBarrierShared();
+
+  // Perform trial division on results and accumulate logarithms
+  for (uint i = tidx; i < primes2.length(); i += gl_WorkGroupSize.x) {
+    const uint p = primes2[i];
+    if (p == 2)
+      continue;
+    const uint logp = uint(round(log2(float(p)) * 256.0));
+    // Compute 2-adic inverse of p
+    // Initial value is a cheap inverse modulo 16
+    // (3 Newton iterations are always enough for 32 bits)
+    uint pinv32 = p ^ (bitCount(p & 6) << 3);
+    for (uint z = 0; z < 3; z++)
+      pinv32 = pinv32 * (2 - p * pinv32);
+
+    // qroots2 is such that we want to solve equation
+    // x - y * r == 0 mod p
+    // We assume that y*r fits 31 bits (H < 1000 and P < 2000000)
+    const uint r = qroots2[i];
+
+    // Upper bound for size of 2^31/p
+    const uint qbits = 31 - findMSB(p);
+    for (uint j = out0; j < out1; j++) {
+      const ivec2 z = sresult[j - out0];
+      // y is small so z.y*r.x fits 32 bits
+      int zmod = (r == p) ? z.y : z.x - int(r) * z.y;
+      // zmod is divisible by p iff zmod/p is an exact 2-adic integer
+      // This is usually much faster than any other method.
+      const uint zmod_over_p = uint(abs(zmod)) * pinv32;
+      if ((zmod_over_p >> qbits) == 0) {
+        atomicAdd(slog[j - out0], logp);
+      }
+    }
+  }
+
+  barrier();
+  memoryBarrierShared();
+
+  if (out0 + tidx < out1) {
+    if (int(slog[tidx]) >= THRESHOLD2 * 256) {
+      const uint ridx = atomicAdd(result2[0].x, 1);
+      if (ridx + 1 < result2.length()) {
+        // Don't multiply by q
+        result2[1 + ridx] = result[out0 + tidx];
+      }
+    }
+  }
+}

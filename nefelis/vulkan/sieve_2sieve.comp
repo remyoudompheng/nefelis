@@ -1,5 +1,5 @@
-// Sieve on rational side.
-//
+// Lattice sieve, step 2
+// Sieve on the "main" side.
 // Naïve version: each workgroup handles a row of the sieving region.
 // Each workgroup computes the starting offset of all primes.
 
@@ -43,7 +43,7 @@ layout(binding = 5) coherent buffer Debug { uint debug[]; };
 shared uint row[WIDTH / 4];
 
 uint tidx = gl_LocalInvocationID.x;
-int y0 = int(gl_WorkGroupID.x) * WGROWS - WIDTH;
+int y0 = int(gl_WorkGroupID.x) * WGROWS + 1;// - WIDTH;
 
 #ifdef HUGE_PRIME
 // Start of huge buffers
@@ -64,8 +64,8 @@ void doprime(uint pidx, int y, bool small) {
 
   uint x = mulmod(int(qr), y, p, pinv);
 #if DEBUG
-  if (y == 1337)
-    qroots[pidx] = x;
+  //if (y == 1337)
+  //  qroots[pidx] = x;
 #endif
 
   if (x >= WIDTH)
