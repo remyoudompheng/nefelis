@@ -16,9 +16,12 @@ import time
 
 import flint
 
-from nefelis.sieve import Siever
+from nefelis.skewpoly import skewness
+from nefelis.sieve import Siever, LineSiever
 from nefelis.integers import factor, smallprimes
-from nefelis.factor.polyselect import polyselect
+from nefelis.factor.polyselect_basem import polyselect
+from nefelis.factor.polyselect import polyselect4
+from nefelis.factor.polyselect3 import polyselect3
 
 logger = logging.getLogger("sieve")
 
@@ -84,7 +87,7 @@ SIEVER = None
 
 def worker_init(*args):
     global SIEVER
-    SIEVER = Siever(*args)
+    SIEVER = LineSiever(*args)
 
 
 def worker_task(args):
@@ -95,50 +98,48 @@ def worker_task(args):
 
 
 PARAMS = [
-    # bitsize, degree, B1f, B2f, B2g, cofactor bits, I=logwidth, qmin
+    # bitsize, degree, B1f, B2f, B2g, cofactor bits, A=logarea, qmin
     # FIXME: calibrate parameters
     # Use bounds for a single large prime (avoid extreme CPU pressure)
-    (60, 2, 500, 11, 10, 5, 11, 50),
-    (80, 3, 1000, 12, 11, 15, 12, 50),
-    (100, 3, 5000, 13, 12, 15, 13, 50),
-    (120, 3, 10000, 15, 13, 15, 13, 300),
-    (140, 3, 30000, 16, 14, 20, 13, 500),
-    (160, 3, 80000, 18, 17, 20, 13, 1000),
-    # Degree 4 is better from here
-    (180, 4, 100000, 19, 16, 20, 13, 2000),
-    (200, 4, 100000, 19, 17, 20, 14, 3000),
-    (220, 4, 200_000, 20, 18, 20, 14, 6000),
-    (240, 4, 500_000, 21, 19, 20, 14, 20000),
-    (260, 4, 800_000, 21, 20, 20, 14, 30000),
+    (60, 3, 2000, 12, 10, 15, 23, 20),
+    (80, 3, 3000, 12, 11, 15, 24, 20),
+    (100, 3, 5000, 13, 12, 15, 24, 50),
+    (120, 3, 10000, 15, 13, 15, 24, 300),
+    (140, 3, 30000, 16, 14, 20, 25, 300),
+    (160, 3, 80000, 18, 17, 20, 25, 500),
+    (180, 3, 80000, 19, 16, 20, 26, 2000),
+    (200, 3, 100000, 19, 17, 20, 26, 3000),
+    (220, 3, 200_000, 20, 18, 20, 26, 6000),
+    # Degree 4
+    (240, 4, 400_000, 21, 19, 20, 27, 8000),
+    (260, 4, 800_000, 21, 19, 25, 27, 10000),
     # NFS can be useful starting from these sizes
-    (280, 4, 1500_000, 22, 21, 30, 14, 50000),
-    (300, 4, 2500_000, 23, 22, 35, 14, 80000),
-    # (320, 2000_000, 23, 21, 45, 14, 500000),
-    # (340, 3000_000, 23, 22, 55, 14, 1000000),
-    # 2 large primes
-    # (300, 4, 800_000, 22, 21, 40, 14, 20000),
-    # (320, 1500_000, 23, 21, 60, 14, 700000),
-    # (340, 2500_000, 23, 22, 65, 14, 1500000),
+    (280, 4, 1500_000, 22, 21, 30, 28, 10000),
+    (300, 4, 2500_000, 23, 22, 35, 28, 20000),
+    (320, 4, 3000_000, 24, 22, 30, 29, 50000),
+    # 2 large primes?
+    (340, 4, 2000_000, 24, 23, 65, 29, 400000),
 ]
 
-# Parameters for trial division
+# Parameters for trial division (threshold must be <128)
 PARAMS2 = [
     # bitsize, B1f, thrF
-    (60, 1000, 15),
+    (60, 0, 0),
     (80, 1000, 20),
     (100, 2000, 25),
     (120, 5_000, 30),
     (140, 10_000, 30),
-    (160, 20_000, 30),
-    (180, 25_000, 25),
-    (200, 40_000, 26),
-    (220, 50_000, 28),
-    (240, 100_000, 28),
-    (260, 200_000, 30),
-    (280, 300_000, 32),
-    (300, 300_000, 35),
-    # (320, 600_000, 30),
-    # (340, 800_000, 30),
+    (160, 20_000, 35),
+    (180, 25_000, 35),
+    (200, 30_000, 35),
+    (220, 40_000, 40),
+    # Degree 4
+    (240, 100_000, 35),
+    (260, 200_000, 35),
+    (280, 300_000, 35),
+    (300, 300_000, 40),
+    (320, 500_000, 40),
+    (340, 500_000, 45),
     # (360, 300_000, 23),
     # (380, 400_000, 24),
     # (400, 1_000_000, 30),
@@ -172,7 +173,7 @@ def main_impl(args):
     datadir = pathlib.Path(args.WORKDIR)
     datadir.mkdir(exist_ok=True)
 
-    degree, B1f, B2f, B2g, COFACTOR_BITS, I, qmin = get_params(N)
+    degree, B1f, B2f, B2g, COFACTOR_BITS, logA, qmin = get_params(N)
     B1g, thr2 = 0, 0
     if not args.nogpufactor:
         B1g, thr2 = get_params2(N)
@@ -180,7 +181,13 @@ def main_impl(args):
         f"Sieving with B1={B1f / 1000:.0f}k,{B1g / 1000:.0f}k log(B2)={B2f},{B2g} q={qmin}.. {COFACTOR_BITS} cofactor bits"
     )
 
-    f, g = polyselect(N, degree)
+    if degree == 3:
+        f, g = polyselect3(N)
+    elif degree == 4:
+        f, g = polyselect4(N)
+    else:
+        f, g = polyselect(N, degree)
+    skew = skewness(f)
     v, u = g
 
     r = v * pow(-u, -1, N) % N
@@ -215,13 +222,26 @@ def main_impl(args):
 
     degf = len(f) - 1
     sizef = max(fi.bit_length() for fi in f)
-    LOGAREA = qs[-1].bit_length() + 2 * I
+    if degf == 4:
+        sizef = f[2].bit_length()
+    else:
+        sizef = f[1].bit_length() - int(skew).bit_length() // 2
+    LOGAREA = qs[-1].bit_length() + logA + 1
     THRESHOLD = sizef + degf * (LOGAREA // 2) - qs[-1].bit_length() - COFACTOR_BITS
+
+    # Choose rectangle size for area 2^(2I+1)
+    skew2 = skew / (1.5 * qmin)
+    H = int(math.sqrt(2 ** (logA - 1) / skew2))
+    W = (int(H * skew2 / LineSiever.SEGMENT_SIZE) + 1) * LineSiever.SEGMENT_SIZE
+    logger.info(
+        f"Sieve rectangle size {2 * W >> 10}k x {H} (skewness: {W / H:.3g}, area: {(2 * W * H) >> 20}M)"
+    )
 
     sievepool = multiprocessing.Pool(
         1,
         initializer=worker_init,
-        initargs=(f, ls, rs, THRESHOLD, I, g, ls2, rs2, thr2),
+        # Parameters for LineSiever
+        initargs=(f, ls, rs, THRESHOLD, W, H, g, ls2, rs2, thr2),
     )
     factorpool = multiprocessing.Pool(
         args.ncpu or os.cpu_count(),
@@ -240,7 +260,7 @@ def main_impl(args):
             },
             w,
         )
-    AREA = 2 ** (2 * I + 1)
+    AREA = 2 * W * H
     seen = set()
     relf = open(datadir / "relations.sieve", "w", buffering=1)
     total = 0

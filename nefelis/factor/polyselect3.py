@@ -1,8 +1,7 @@
 """
-Selection of polynomials of degree 4
+Selection of polynomials of degree 3
 
-Use Kleinjung2008 algorithm
-as described in
+Use Kleinjung2008 algorithm as described in
 https://homepages.loria.fr/EThome/teaching/2022-cse-291-14/slides/cse-291-14-lecture-09.pdf
 """
 
@@ -21,12 +20,6 @@ from nefelis import skewpoly
 
 logger = logging.getLogger("poly")
 
-# A is a small number
-# skew =
-# raw polynomial f = A x^4 + B x^3 + C x^2 + D x + E
-# translation
-# f(x+t) = A x^4 + (4At+B) x^3 + f''(t)/2 x + f'(t) x + f(t)
-
 
 class Polyselect:
     def __init__(self, N: int, pmax: int, best: Value):
@@ -35,10 +28,10 @@ class Polyselect:
         self.best: Value = best
 
     def process(self, ad: int):
-        res = find_raw(self.N, ad, self.pmax, self.best)
-        if res is None:
+        result = find_raw(self.N, ad, self.pmax, self.best)
+        if result is None:
             return None
-        f, g, score = res
+        f, g, score = result
         return f, g
 
 
@@ -57,29 +50,27 @@ def worker_do(ad):
 # Ratio of norm(g) in score
 GSCORE = 1.0
 
-
-# Target normf is N^(1/6)
 PARAMS = [
     # (Nbits, admin, admax, adstride, PMAX)
-    (240, 6, 60, 6, 10_000),
-    (260, 6, 60, 6, 20_000),
-    (280, 12, 72, 6, 60_000),
-    (300, 24, 92, 6, 100_000),
-    (320, 24, 120, 6, 200_000),
-    (340, 24, 240, 6, 300_000),
-    #(360, 30, 2000, 30, 500_000),
-    (360, 3000, 4000, 30, 500_000),
+    (100, 6, 60, 6, 300),
+    (120, 6, 60, 6, 500),
+    (140, 6, 60, 6, 1_000),
+    (160, 6, 60, 6, 4_000),
+    (180, 6, 72, 6, 10_000),
+    (200, 6, 96, 6, 15_000),
+    (220, 6, 120, 6, 20_000),
 ]
 
-def polyselect4(N: int) -> tuple[list[int], list[int]]:
+
+
+def polyselect3(N: int) -> tuple[list[int], list[int]]:
     best = Value("d", 1e9)
     _, admin, admax, adstride, pmax = min(PARAMS, key=lambda t: abs(t[0] - N.bit_length()))
-    logger.info(f"Start polynomial selection for ad=[{admin}:{admax}:{adstride}] and {pmax=}")
     pool = Pool(initializer=worker_init, initargs=(N, pmax, best))
     best_fg = None
     score_fg = 1e9
     t0 = time.monotonic()
-    for item in pool.imap_unordered(worker_do, range(admin, admax+1, adstride)):
+    for item in pool.imap_unordered(worker_do, range(admin, admax + 1, adstride)):
         if item is None:
             continue
         f, g = item
@@ -102,9 +93,9 @@ def polyselect4(N: int) -> tuple[list[int], list[int]]:
 def lemma21(N, v, u, ad):
     # Decompose N as ad u^4 + ... + v^4
     # Res(f, vx-u) = N
-    ri = (N - ad * u**4) // v
+    ri = (N - ad * u**3) // v
     f = [ad]
-    for i in (3, 2, 1, 0):
+    for i in (2, 1, 0):
         ui = u**i
         ti = (-ri * pow(v, -1, ui)) % ui
         if 2 * ti > ui:
@@ -117,37 +108,25 @@ def lemma21(N, v, u, ad):
     return f
 
 
-def roots4(N, ad, p) -> list[int]:
+def roots3(N, ad, p) -> list[int]:
     """
-    Compute 4-th roots of N/ad modulo p^2
+    Compute cubic roots of N/ad modulo p^2
     """
-    try:
-        r = (flint.nmod(N, p) / ad).sqrt()
-    except Exception:
-        return []
-    rs = []
-    try:
-        r2 = r.sqrt()
-        rs.extend([int(r2), int(-r2)])
-    except Exception:
-        pass
-    try:
-        r2 = (-r).sqrt()
-        rs.extend([int(r2), int(-r2)])
-    except Exception:
-        pass
-    lifts = []
+    assert p % 3 == 2
+    np = flint.nmod(N, p) / ad
+    r = int(np ** ((2 * p - 1) // 3))
     p2 = p * p
-    for r in rs:
-        r = r - (ad * r**4 - N) * pow(4 * ad * r**3, -1, p2)
-        lifts.append(r % p2)
-    return lifts
+    r = r - (ad * r**3 - N) * pow(3 * ad * r**2, -1, p2)
+    assert (ad * r**3 - N) % p2 == 0
+    return [r % p2]
 
 
 def root_optimize(f, g, s: float):
     # Look for range of k such that norm(f+kg) ~ norm(f)
-    sup = max(abs(f[2]) * s**2, abs(f[1]) * s, abs(f[0]))
-    bound = int(min(8e6, sup / 4 / abs(g[0])))
+    sup = max(abs(f[3]) * s**3, abs(f[1]) * s, abs(f[0]))
+    # For degree 3, bound is very small
+    bound = int(min(100e3, sup / 4 / abs(g[0])))
+    # print(bound)
     if bound < 16:
         # Nothing to do
         return f
@@ -166,7 +145,8 @@ def root_optimize(f, g, s: float):
         alpha_l = []
         for i in range(-bound, -bound + ll):
             fi = [f[0] + i * g[0], f[1] + i * g[1]] + f[2:]
-            v = polys.avgval4(discs[i + bound], l, fi)
+            fi_arr = np.array(fi, dtype=object)
+            v = polys.avgval3(discs[i + bound], fi[0], fi[1], fi[2], fi[3], l, fi_arr)
             alpha_l.append(v)
         alpha_l = np.array(alpha_l, dtype=np.float32) * math.log2(l) * l / (l + 1)
         S += np.tile(alpha_l, (2 * bound) // ll + 1)[: len(S)]
@@ -193,7 +173,7 @@ def root_optimize(f, g, s: float):
     return bestf
 
 
-def find_raw(N, ad, pmax: int, global_best: Value):
+def find_raw(N, ad, pmax, global_best: Value):
     # Find u (small) such that N=v^4 mod u^2 with v very close to N^1/4 and v >> u
     # then N = v^4 + B v^2 u^2 + C v u^3 + D u^4
     # and B ~= (N - v^4) / v^2 u^2
@@ -204,11 +184,13 @@ def find_raw(N, ad, pmax: int, global_best: Value):
     # Generate "special-q"
     qrs = []
     # Select auxiliary q to reduce skew
-    for q in range(503, 700, 4):
+    for q in range(11, 100, 3):
         if not flint.fmpz(q).is_probable_prime():
             continue
-        for qr in roots4(N, ad, q):
-            assert (ad * qr**4 - N) % (q * q) == 0
+        if ad % q == 0:
+            continue
+        for qr in roots3(N, ad, q):
+            assert (ad * qr**3 - N) % (q * q) == 0
             qrs.append((q, qr))
     # Prepare roots
     prs = []
@@ -216,29 +198,31 @@ def find_raw(N, ad, pmax: int, global_best: Value):
     for p in primes[len(primes) // 16 :]:
         if p <= qrs[-1][0]:
             continue
-        rs = roots4(N, ad, p)
+        if p % 3 != 2:
+            continue
+        rs = roots3(N, ad, p)
         if rs:
             prs.append((p, rs))
     del p, q, qr
 
     best = (None, None, 1e9)
-    Nroot = int((N // ad) ** (1 / 4))
+    Nroot = int((N // ad) ** (1 / 3))
     S = set()
     for q, qr in qrs:
         # print("try", q)
         q2 = q * q
         v0 = Nroot - q2 * BOUND // 2
         v0 += qr - v0 % q2
-        # assert (N - ad * v0**4) % q2 == 0
+        # assert (N - ad * v0**3) % q2 == 0
         # we are looking for v0 + kq
         primes = integers.smallprimes(pmax)
         for p, pr in prs:
             p2 = p * p
             q2inv = pow(q2, -1, p2)
             roots = [(_r - v0) * q2inv % p2 for _r in pr]
-            # assert all((ad * (v0 + q2 * r) ** 4 - N) % p2 == 0 for r in roots)
+            # assert all((ad * (v0 + q2 * r) ** 3 - N) % p2 == 0 for r in roots)
             for r in roots:
-                # assert (ad * (v0 + q2 * r) ** 4 - N) % p2 == 0
+                # assert (ad * (v0 + q2 * r) ** 3 - N) % p2 == 0
                 for x in range(r, BOUND, p2):
                     dv = v0 + q2 * x - Nroot
                     if dv not in S:
@@ -246,20 +230,20 @@ def find_raw(N, ad, pmax: int, global_best: Value):
                         continue
                     # Compute polynomials
                     facs = integers.factor_smooth(
-                        abs(N - ad * (Nroot + dv) ** 4), pmax.bit_length()
+                        abs(N - ad * (Nroot + dv) ** 3), pmax.bit_length()
                     )
                     pq = 1
                     for l, e in facs:
                         if e & 1 == 0:
                             pq *= l ** (e // 2)
 
-                    assert (ad * (Nroot + dv) ** 4 - N) % pq**2 == 0
+                    assert (ad * (Nroot + dv) ** 3 - N) % pq**2 == 0
                     f = lemma21(N, pq, Nroot + dv, ad)
                     g = [-(Nroot + dv), pq]
                     skew = skewpoly.skewness(f)
                     norm = math.log2(math.sqrt(skewpoly.l2norm(f, skew)))
                     normg = math.log2(math.sqrt(skewpoly.l2norm(g, skew)))
-                    if norm + GSCORE * normg - 3.0 > min(global_best.value, best[2]):
+                    if norm + GSCORE * normg - 3.0 > best[2]:
                         continue
                     # Optimize roots
                     f = root_optimize(f, g, skew)
@@ -297,7 +281,7 @@ def main():
     if args.v:
         logging.getLogger().setLevel(logging.DEBUG)
         logger.setLevel(logging.DEBUG)
-    f, g = polyselect4(args.N)
+    f, g = polyselect3(args.N)
     print("f", f)
     print("g", g)
 

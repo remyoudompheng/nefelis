@@ -7,6 +7,7 @@ It is also tentatively compatible with Cado-NFS relation files.
 
 import argparse
 import gzip
+import math
 import sys
 
 import numpy
@@ -162,6 +163,8 @@ def process_file(f):
     cov = (xys @ xys.T) / len(xs)
     print(cov)
     area = 2 * deciles(xabs)[-2] * deciles(yabs)[-2]
+    skew = math.sqrt(cov[0, 0] / cov[1, 1])
+    print(f"Effective skew = {skew:.3f}")
     print(f"Sieve area (95%) = {area:.3g}")
 
 

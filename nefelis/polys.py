@@ -2,6 +2,7 @@
 Various helpers about polyomials (discriminants, "bad ideals", norms)
 """
 
+from enum import Enum, auto
 import math
 
 import flint
@@ -59,6 +60,30 @@ def l2norm(f: list[int]) -> float:
         )
 
 
+class BadType(Enum):
+    """
+    A crude classification of singularities for 1-dimensional schemes.
+    """
+
+    # This type includes regular points (type ax+b=0 and x^2+p=0)
+    # but also singular points which are always transverse to lines ax+b
+    # such as: x^3+p=0, x^3+p^2=0
+    # In this case, there is only 1 associated prime for a given root (p,r)
+    REGULAR = auto()
+    # A nodal singularity is a multiple root (multiplicity k)
+    # which lifts to k distinct roots modulo p^2
+    # For this type of singularity, the valuation of ax+b
+    # will be > 1 for at most 1 prime.
+    # There are k associated primes (p,r+ai*p) and each root lifts
+    # to a p-adic root.
+    NODAL = auto()
+    # All other singularity types (unsupported)
+    COMPLEX = auto()
+
+    def __repr__(self):
+        return f"BadType.{self.name}"
+
+
 def bad_ideals(f: list[int]) -> list[tuple[int, int]]:
     """
     Check f (irreducible polynomial) for bad ideals.
@@ -82,12 +107,12 @@ def bad_ideals(f: list[int]) -> list[tuple[int, int]]:
     Actual bad ideals:
 
     >>> bad_ideals([1289893690830, 616104301861, 721392287424])
-    [(11, 7)]
+    [(11, 7, BadType.NODAL)]
 
     (23, 2) is not a bad prime:
 
     >>> bad_ideals([294521483864, -44775242482, 175176273279])
-    [(2, 0), (5, 4)]
+    [(2, 0, BadType.NODAL), (5, 4, BadType.NODAL)]
 
     Newton polygon is not enough for these ones:
 
@@ -95,6 +120,11 @@ def bad_ideals(f: list[int]) -> list[tuple[int, int]]:
     []
     >>> bad_ideals([4, 0, -1, 0, 1])  # doctest: +SKIP
     []
+
+    A very ugly ramification 1+x^3+9x^4 at prime 3:
+
+    >>> bad_ideals([1, 0, 0, 1, 9])
+    [(3, 2, BadType.COMPLEX)]
     """
     assert 3 <= len(f) <= 5
     disc = discriminant(f)
@@ -116,7 +146,7 @@ def bad_ideals(f: list[int]) -> list[tuple[int, int]]:
             # Now (l, r) is a multiple root of f.
             if e > 3:
                 # raise NotImplementedError
-                bad.append((l, int(r)))
+                bad.append((l, int(r), BadType.COMPLEX))
                 continue
             # If multiplicity is 2 or 3, (l, r) is a bad ideal
             # if and only if the polynomial has a l-adic root.
@@ -153,8 +183,13 @@ def bad_ideals(f: list[int]) -> list[tuple[int, int]]:
                     # No root modulo l^k
                     continue
 
-            # Not supported
-            bad.append((l, int(r)))
+            e2 = sum(1 for a in range(0, l * l, l) if poly_r(a) % (l ** (e + 1)) == 0)
+            if e2 == e:
+                # Nodal singularity
+                bad.append((l, int(r), BadType.NODAL))
+            else:
+                # Not supported
+                bad.append((l, int(r), BadType.COMPLEX))
 
     return bad
 
@@ -269,7 +304,10 @@ def alpha3(D, a, b, c, d):
     >>> 1.90 < alpha3(-104, 2, 2, 3, 1) < 1.94
     True
     """
-    poly = numpy.array([d, c, b, a], dtype=numpy.int32)
+    if any(abs(pi) > 2**16 for pi in [a, b, c, d]):
+        poly = numpy.array([d, c, b, a], dtype=object)
+    else:
+        poly = numpy.array([d, c, b, a], dtype=numpy.int32)
     # for l in SMALLPRIMES:
     #     print(l, math.log(l) * (1 / (l - 1) - avgval3(D, a, b, c, d, l, poly) * l / (l + 1)))
     return sum(

@@ -17,6 +17,16 @@ Advances in Cryptology - CRYPTO 2006, 26th Annual International Cryptology Confe
 Lecture Notes in Computer Science, 4117, 326-344
 https://iacr.org/archive/crypto2006/41170323/41170323.pdf
 
+<a id="Kl1">[Kl1]</a> Thorsten Kleinjung.
+*On polynomial selection for the general number field sieve*.
+Math. Comp. 75 (2006), 2037-2047
+https://doi.org/10.1090/S0025-5718-06-01870-9
+
+<a id="Kl2">[Kl2]</a> Thorsten Kleinjung.
+*Polynomial selection for the number field sieve*.
+Topics in Computational Number Theory Inspired by Peter L. Montgomery, chapter 6.
+https://www.joppebos.com/montgomery/book_ch6.pdf
+
 <a id="BGGM">[BGGM]</a> Razvan Barbulescu, Pierrick Gaudry, Aurore Guillevic, François Morain.
 *Improving NFS for the Discrete Logarithm Problem in Non-prime Finite Fields.*
 EUROCRYPT 2015, Proceedings, Part I, Apr 2015, Sofia, Bulgaria. pp.129-155,

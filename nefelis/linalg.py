@@ -1,1 +1,1 @@
-from .backends.kompute.linalg import SpMV
+from .backends.kompute.linalg import SpMV as SpMV
