@@ -1,11 +1,13 @@
 // Line sieve, step 2
 // Sieve on the "main" side.
 //
-// Each workgroup handles a single row (y=1..H) of the sieving rectangle.
-// The number of rows is usually small (H between 128 and 1024).
-// The line length is larger (2W ~= 1M) and split
-// into segments of fixed length 16384 (constant).
+// Each workgroup handles several rows (y=1..H) of the sieving rectangle.
+// The total number of rows is usually small (H between 100 and 4000).
+// Each line is split into segments of fixed length 16384 (constant).
 //
+// Since lines are larger than in the square case, a workgroup will usually
+// handle less than 10 rows.
+
 // This sieve is meant for large skewness values (s/q ~= W/H)
 
 #version 450
@@ -28,6 +30,10 @@
 
 #ifndef W
 #error Region width W is missing
+#endif
+
+#ifndef LINES_PER_WG
+#error LINES_PER_WG is not defined
 #endif
 
 const int SEGMENT_SIZE = 16384;
@@ -54,18 +60,18 @@ layout(binding = 5) coherent buffer Debug { uint debug[]; };
 shared uint row[SEGMENT_SIZE / 4];
 
 uint tidx = gl_LocalInvocationID.x;
-int y = int(gl_WorkGroupID.x) + 1;
-bool yeven = (y & 1) == 0;
+int y0 = int(gl_WorkGroupID.x) * LINES_PER_WG + 1;
+bool yeven = (y0 & 1) == 0;
 
 #if defined(HUGE_PRIME) && defined(BUCKET_SIZE)
 // Start of huge buffers
-uint huge0 = int(gl_WorkGroupID.x) * (N_SEGMENTS - 1) * BUCKET_SIZE;
-shared uint hugelen[N_SEGMENTS - 1];
+uint huge0 = int(gl_WorkGroupID.x) * LINES_PER_WG * N_SEGMENTS * BUCKET_SIZE;
+shared uint hugelen[LINES_PER_WG][N_SEGMENTS];
 #endif
 
 #include <arith.comp>
 
-uint doprime(uint pidx, int xseg, bool small) {
+uint doprime(uint pidx, int y, int xseg, bool small) {
   const uint p = primes[pidx];
   const uint logp = findMSB(p);
   const float pinv = 1.0 / float(p);
@@ -136,41 +142,44 @@ void prepare_huge(uint pidx) {
   if (qr == p)
     return; // FIXME
 
-  int64_t x_ = int64_t(qr) * int64_t(y);
-  // If y is even, divide by 2 (start is -W + 2x + 1 = qr * y)
-  if (yeven) {
-    x_ += W - 1;
-  } else {
-    x_ += W;
-  }
-  uint x = modp_float(x_, p, pinv);
-  if (yeven) {
-    if ((x & 1) == 1)
-      x = (x + p) / 2;
-    else
-      x = x / 2;
-  }
+  int64_t x0_ = int64_t(qr) * int64_t(y0) + W;
+  uint x0 = modp_float(x0_, p, pinv);
+  for (uint dy = 0; dy < LINES_PER_WG; dy++) {
+    bool yeven = ((y0 + dy) & 1) == 0;
+    // If y is even, divide by 2 (start is -W + 2x + 1 = qr * y)
+    uint x = x0;
+    if (yeven) {
+      x -= 1;
+      if ((x & 1) == 1)
+        x = (x + p) / 2;
+      else
+        x = x / 2;
+    }
+    // Increment for next row
+    x0 += qr;
+    if (x0 >= p) x0 -= p;
 
-  // Fill 1st segment
-  if (x < SEGMENT_SIZE) {
-    atomicAdd(row[x / 4], logp << (8 * (x % 4)));
-    x += p;
-  }
+    // Fill 1st segment
+    if (dy == 0 && x < SEGMENT_SIZE) {
+      atomicAdd(row[x / 4], logp << (8 * (x % 4)));
+      x += p;
+    }
 
-  const uint xmax = yeven ? W : 2 * W;
-  // Now x >= SEGMENT_SIZE
-  while (x < xmax) {
-    const uint j = x / SEGMENT_SIZE - 1;
-    const uint hidx = atomicAdd(hugelen[j], 1);
-    huges[huge0 + j * BUCKET_SIZE + hidx] =
-        uint16_t(x + SEGMENT_SIZE * logp_bits);
-    x += p;
+    const uint xmax = yeven ? W : 2 * W;
+    // Now x >= SEGMENT_SIZE
+    while (x < xmax) {
+      const uint j = x / SEGMENT_SIZE;
+      const uint hidx = atomicAdd(hugelen[dy][j], 1);
+      huges[huge0 + (dy * N_SEGMENTS + j) * BUCKET_SIZE + hidx] =
+          uint16_t(x + SEGMENT_SIZE * logp_bits);
+      x += p;
+    }
   }
 }
 
-void dohuge(int xseg) {
-  const uint bidx0 = huge0 + (xseg - 1) * BUCKET_SIZE;
-  const uint blen = hugelen[xseg - 1];
+void dohuge(int y, int xseg) {
+  const uint bidx0 = huge0 + ((y - y0) * N_SEGMENTS + xseg) * BUCKET_SIZE;
+  const uint blen = hugelen[y - y0][xseg];
   for (uint i = 0; i < blen; i += gl_WorkGroupSize.x) {
     if (i + tidx < blen) {
       uint x = huges[bidx0 + i + tidx];
@@ -188,8 +197,10 @@ void main() {
   }
 
 #if defined(HUGE_PRIME) && defined(BUCKET_SIZE)
-  if (tidx < hugelen.length())
-    hugelen[tidx] = 0;
+  if (tidx < N_SEGMENTS) {
+    for (uint i = 0; i < LINES_PER_WG; i++)
+      hugelen[i][tidx] = 0;
+  }
 #endif
 
   barrier();
@@ -204,52 +215,58 @@ void main() {
   uint poffsets[(HUGE_PRIME - N_SMALL) / gl_WorkGroupSize.x + 1];
 
   const uint nsegs = yeven ? N_SEGMENTS / 2 : N_SEGMENTS;
-  for (int xseg = 0; xseg < nsegs; xseg++) {
-    for (uint pidx = N_TINY + gl_SubgroupID; pidx < N_SMALL;
-         pidx += gl_NumSubgroups) {
-      doprime(pidx, xseg, true);
-    }
-    // Medium primes
-    for (uint pidx = N_SMALL + tidx; pidx < HUGE_PRIME;
-         pidx += gl_WorkGroupSize.x) {
-      uint regidx = (pidx - N_SMALL) / gl_WorkGroupSize.x;
-      if (xseg == 0) {
-        poffsets[regidx] = doprime(pidx, xseg, false) - SEGMENT_SIZE;
-      } else {
-        poffsets[regidx] =
-            domedprime(pidx, xseg, poffsets[regidx]) - SEGMENT_SIZE;
+  for (int y = y0; y < y0 + LINES_PER_WG; y++) {
+    if (y > H)
+      break;
+    yeven = (y & 1) == 0;
+    for (int xseg = 0; xseg < nsegs; xseg++) {
+      // Invariant: row is zeroed at each iteration.
+      for (uint pidx = N_TINY + gl_SubgroupID; pidx < N_SMALL;
+           pidx += gl_NumSubgroups) {
+        doprime(pidx, y, xseg, true);
       }
-    }
-    // Huge primes
-#ifdef BUCKET_SIZE
-    if (xseg == 0) {
-      for (uint pidx = HUGE_PRIME + tidx; pidx < primes.length();
-           pidx += gl_WorkGroupSize.x)
-        prepare_huge(pidx);
-      barrier();
-      memoryBarrier();
-    } else {
-      dohuge(xseg);
-    }
-#endif
-    barrier();
-    memoryBarrierShared();
-
-    for (uint i = 0; i < row.length(); i += gl_WorkGroupSize.x) {
-      u8vec4 logs = unpack8(atomicExchange(row[i + tidx], 0));
-      for (uint ii = 0; ii < 4; ii++) {
-        // Adjust threshold if x,y are small
-        if (int(logs[ii]) >= THRESHOLD) {
-          const int x = int(xseg * SEGMENT_SIZE + 4 * (i + tidx) + ii);
-          const uint ridx = atomicAdd(result[0].x, 1);
-          if (ridx + 1 < result.length())
-            // don't multiply by Q matrix yet
-            result[1 + ridx] = ivec2(yeven ? (-W + 2 * x + 1) : (-W + x), y);
+      // Medium primes
+      for (uint pidx = N_SMALL + tidx; pidx < HUGE_PRIME;
+           pidx += gl_WorkGroupSize.x) {
+        uint regidx = (pidx - N_SMALL) / gl_WorkGroupSize.x;
+        if (xseg == 0) {
+          poffsets[regidx] = doprime(pidx, y, xseg, false) - SEGMENT_SIZE;
+        } else {
+          poffsets[regidx] =
+              domedprime(pidx, xseg, poffsets[regidx]) - SEGMENT_SIZE;
         }
       }
-    }
+      // Huge primes
+#ifdef BUCKET_SIZE
+      if (y == y0 && xseg == 0) {
+        for (uint pidx = HUGE_PRIME + tidx; pidx < primes.length();
+             pidx += gl_WorkGroupSize.x)
+          prepare_huge(pidx);
+        barrier();
+        memoryBarrier();
+      } else {
+        dohuge(y, xseg);
+      }
+#endif
+      barrier();
+      memoryBarrierShared();
 
-    barrier();
-    memoryBarrierShared();
+      for (uint i = 0; i < row.length(); i += gl_WorkGroupSize.x) {
+        u8vec4 logs = unpack8(atomicExchange(row[i + tidx], 0));
+        for (uint ii = 0; ii < 4; ii++) {
+          // Adjust threshold if x,y are small
+          if (int(logs[ii]) >= THRESHOLD) {
+            const int x = int(xseg * SEGMENT_SIZE + 4 * (i + tidx) + ii);
+            const uint ridx = atomicAdd(result[0].x, 1);
+            if (ridx + 1 < result.length())
+              // don't multiply by Q matrix yet
+              result[1 + ridx] = ivec2(yeven ? (-W + 2 * x + 1) : (-W + x), y);
+          }
+        }
+      }
+
+      barrier();
+      memoryBarrierShared();
+    }
   }
 }

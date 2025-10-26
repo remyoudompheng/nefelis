@@ -266,11 +266,14 @@ class LineSiever:
 
         assert W % LineSiever.SEGMENT_SIZE == 0
         NSEGS = 2 * W // LineSiever.SEGMENT_SIZE
+        LINES_PER_WG = max(1, int(round(H / 512)))
 
         defines = {
             "THRESHOLD": threshold,
             "DEGREE": len(poly) - 1,
             "W": W,
+            "H": H,
+            "LINES_PER_WG": LINES_PER_WG,
         }
 
         GPU_FACTOR = False
@@ -292,6 +295,8 @@ class LineSiever:
                 pidx for pidx, p in enumerate(primes) if p > 2 * LineSiever.SEGMENT_SIZE
             )
             hugep = primes[hugeidx]
+            # Check no-overflow assumption
+            assert H * hugep < 2**31
             avg_bucket = LineSiever.SEGMENT_SIZE * (
                 math.log(math.log(primes[-1]) / math.log(hugep))
             )
@@ -302,7 +307,7 @@ class LineSiever:
                 "BUCKET_SIZE": bucket,
             }
             thuge = mgr.tensor_t(
-                np.zeros(H * bucket * (NSEGS - 1), dtype=np.uint16).view(np.uint32)
+                np.zeros(H * bucket * NSEGS, dtype=np.uint16).view(np.uint32)
             )
 
             memhuge = thuge.size() * 4
@@ -335,7 +340,7 @@ class LineSiever:
         algo2 = mgr.algorithm(
             [tprimes, tqroots, tq, touttemp if GPU_FACTOR else tout, thuge, tdebug],
             shader2,
-            (H, 1, 1),
+            (H // LINES_PER_WG + 1, 1, 1),
         )
         if GPU_FACTOR:
             shader3 = shader("linesieve_3factor", defines)
