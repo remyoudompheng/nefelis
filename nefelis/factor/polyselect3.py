@@ -62,10 +62,11 @@ PARAMS = [
 ]
 
 
-
 def polyselect3(N: int) -> tuple[list[int], list[int]]:
     best = Value("d", 1e9)
-    _, admin, admax, adstride, pmax = min(PARAMS, key=lambda t: abs(t[0] - N.bit_length()))
+    _, admin, admax, adstride, pmax = min(
+        PARAMS, key=lambda t: abs(t[0] - N.bit_length())
+    )
     pool = Pool(initializer=worker_init, initargs=(N, pmax, best))
     best_fg = None
     score_fg = 1e9
@@ -163,11 +164,11 @@ def root_optimize(f, g, s: float):
         if alpha < bestalpha:
             # Usually there are always bad ideals: we want only mild singularities
             if bads := polys.bad_ideals([int(c) for c in fi]):
-                if any(typ == polys.BadType.COMPLEX for _, _, typ in bads):
-                    logger.warning(
-                        f"Skipping interesting polynomial f {fi} with bad primes {bads}"
-                    )
-                    continue
+                # if any(typ == polys.BadType.COMPLEX for _, _, typ in bads):
+                logger.warning(
+                    f"Skipping interesting polynomial f {fi} with bad primes {bads}"
+                )
+                continue
             bestf, bestalpha = fi, alpha
 
     return bestf
@@ -179,6 +180,8 @@ def find_raw(N, ad, pmax, global_best: Value):
     # and B ~= (N - v^4) / v^2 u^2
     # if v = N^1/4 + eps, B ~ 4 N^1/4 eps / N^1/2 u^2
 
+    d = 3
+    NN = d**d * ad ** (d - 1) * N
     # FIXME: choose according to size of N
     BOUND = pmax**2
     # Generate "special-q"
@@ -189,8 +192,8 @@ def find_raw(N, ad, pmax, global_best: Value):
             continue
         if ad % q == 0:
             continue
-        for qr in roots3(N, ad, q):
-            assert (ad * qr**3 - N) % (q * q) == 0
+        for qr in roots3(NN, 1, q):
+            assert (qr**3 - NN) % (q * q) == 0
             qrs.append((q, qr))
     # Prepare roots
     prs = []
@@ -200,13 +203,13 @@ def find_raw(N, ad, pmax, global_best: Value):
             continue
         if p % 3 != 2:
             continue
-        rs = roots3(N, ad, p)
+        rs = roots3(NN, 1, p)
         if rs:
             prs.append((p, rs))
     del p, q, qr
 
     best = (None, None, 1e9)
-    Nroot = int((N // ad) ** (1 / 3))
+    Nroot = int(NN ** (1 / 3))
     S = set()
     for q, qr in qrs:
         # print("try", q)
@@ -215,14 +218,13 @@ def find_raw(N, ad, pmax, global_best: Value):
         v0 += qr - v0 % q2
         # assert (N - ad * v0**3) % q2 == 0
         # we are looking for v0 + kq
-        primes = integers.smallprimes(pmax)
         for p, pr in prs:
             p2 = p * p
             q2inv = pow(q2, -1, p2)
             roots = [(_r - v0) * q2inv % p2 for _r in pr]
-            # assert all((ad * (v0 + q2 * r) ** 3 - N) % p2 == 0 for r in roots)
+            # assert all(((v0 + q2 * r) ** 3 - NN) % p2 == 0 for r in roots)
             for r in roots:
-                # assert (ad * (v0 + q2 * r) ** 3 - N) % p2 == 0
+                # assert ((v0 + q2 * r) ** 3 - NN) % p2 == 0
                 for x in range(r, BOUND, p2):
                     dv = v0 + q2 * x - Nroot
                     if dv not in S:
@@ -230,20 +232,27 @@ def find_raw(N, ad, pmax, global_best: Value):
                         continue
                     # Compute polynomials
                     facs = integers.factor_smooth(
-                        abs(N - ad * (Nroot + dv) ** 3), pmax.bit_length()
+                        abs(NN - (Nroot + dv) ** 3), pmax.bit_length()
                     )
-                    pq = 1
+                    u = 1
                     for l, e in facs:
-                        if e & 1 == 0:
-                            pq *= l ** (e // 2)
+                        if e & 1 == 0 and (d * ad % l) != 0:
+                            u *= l ** (e // 2)
 
-                    assert (ad * (Nroot + dv) ** 3 - N) % pq**2 == 0
-                    f = lemma21(N, pq, Nroot + dv, ad)
-                    g = [-(Nroot + dv), pq]
+                    assert ((Nroot + dv) ** 3 - NN) % u**2 == 0
+                    # Convert to original coefficients
+                    # v = d ad vv + k u
+                    vv = Nroot + dv
+                    k = vv * pow(u, -1, d * ad) % (d * ad)
+                    if 2 * k > d * ad:
+                        k -= d * ad
+                    v = (vv - k * u) // (d * ad)
+                    f = lemma21(N, u, v, ad)
+                    g = [-v, u]
                     skew = skewpoly.skewness(f)
                     norm = math.log2(math.sqrt(skewpoly.l2norm(f, skew)))
                     normg = math.log2(math.sqrt(skewpoly.l2norm(g, skew)))
-                    if norm + GSCORE * normg - 3.0 > best[2]:
+                    if norm + GSCORE * normg - 3.0 > min(global_best.value, best[2]):
                         continue
                     # Optimize roots
                     f = root_optimize(f, g, skew)
@@ -261,7 +270,7 @@ def find_raw(N, ad, pmax, global_best: Value):
                         with global_best.get_lock():
                             global_best.value = min(global_best.value, score)
                         logger.info(
-                            f"f = {f} u={pq} log2(norm) {norm:.3f} "
+                            f"f = {f} u={u} log2(norm) {norm:.3f} "
                             + f"α {alpha:.3f} score {score:.3f} skew {skew:.0f}"
                         )
 
