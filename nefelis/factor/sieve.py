@@ -5,6 +5,7 @@ The sieve is done on the algebraic side (polynomial f).
 """
 
 import argparse
+from concurrent.futures import ProcessPoolExecutor
 import itertools
 import json
 import logging
@@ -243,7 +244,7 @@ def main_impl(args):
         # Parameters for LineSiever
         initargs=(f, ls, rs, THRESHOLD, W, H, g, ls2, rs2, thr2),
     )
-    factorpool = multiprocessing.Pool(
+    factorpool = ProcessPoolExecutor(
         args.ncpu or os.cpu_count(),
         initializer=factorer_init,
         initargs=(f, g, B2f, B2g),
@@ -272,15 +273,23 @@ def main_impl(args):
     total_q = 0
     seenf = set()
     seeng = set()
+    fcount, gcount = 0, 0
 
     with sievepool, factorpool:
+        factor_jobs = []
         for q, qr, dt, reports in sievepool.imap(worker_task, list(zip(qs, qrs))):
-            nrels = 0
-            print(f"# q={q} r={qr}", file=relf)
+            fut = factorpool.submit(factorer_task, (q, reports))
+            factor_jobs.append((q, qr, dt, fut))
+            remaining = []
+            for item in factor_jobs:
+                q, qr, dt, fut = item
+                if not fut.done():
+                    remaining.append(item)
+                    continue
 
-            batchsize = 64
-            chunks = ((q, chunk) for chunk in itertools.batched(reports, batchsize))
-            for reschunk in factorpool.imap_unordered(factorer_task, chunks):
+                nrels = 0
+                reschunk = fut.result()
+                print(f"# q={q} r={qr}", file=relf)
                 for x, y, facf, facg, idealf in reschunk:
                     # Normalize sign
                     if y < 0:
@@ -297,20 +306,24 @@ def main_impl(args):
                     seen.add(xy)
                     relf.write(f"{x},{y}:{str_facg}:{str_facf}\n")
                     nrels += 1
-            print(f"# Found {nrels} relations for {q=} (time {dt:.3f}s)", file=relf)
-            total_q += 1
-            total += nrels
-            total_area += AREA
-            elapsed = time.monotonic() - t0
-            fcount = len(seenf)
-            gcount = len(seeng)
-            if elapsed < 2 or elapsed > last_log + 1:
-                # Don't log too often.
-                last_log = elapsed
-                logger.info(
-                    f"Sieved q={q:<8} r={qr:<8} area {total_area / 1e9:.0f}G in {dt:.3f}s (speed {total_area / elapsed / 1e9:.3f}G/s): "
-                    f"{nrels}/{len(reports)} relations, {fcount}/{gcount} K/Q primes, total {total}"
-                )
+                print(f"# Found {nrels} relations for {q=} (time {dt:.3f}s)", file=relf)
+                total_q += 1
+                total += nrels
+                total_area += AREA
+                elapsed = time.monotonic() - t0
+                fcount = len(seenf)
+                gcount = len(seeng)
+                if elapsed < 2 or elapsed > last_log + 1:
+                    # Don't log too often.
+                    last_log = elapsed
+                    logger.info(
+                        f"Sieved q={q:<8} r={qr:<8} area {total_area / 1e9:.0f}G in {dt:.3f}s "
+                        + f"(speed {total_area / elapsed / 1e9:.3f}G/s shader {AREA / dt / 1e9:.3f}G/s): "
+                        + f"{nrels}/{len(reports)} relations, {fcount}/{gcount} K/Q primes, total {total}"
+                    )
+            factor_jobs = remaining
+            if len(factor_jobs) > 100:
+                logger.warning(f"{len(factor_jobs)} jobs waiting for cofactorization!")
             if total > 1.1 * (fcount + gcount):
                 logger.info("Enough relations")
                 break
