@@ -122,6 +122,34 @@ def roots3(N, ad, p) -> list[int]:
     return [r % p2]
 
 
+def size_optimize(f, g, s: float):
+    # Optimal translation should be between [-2s, 2s]
+    n0 = skewpoly.l2norm(f, s)
+    fpoly = flint.fmpz_poly(f)
+    t1, t2 = int(-2 * s), int(2 * s)
+    f1 = [float(f) for f in fpoly(flint.fmpz_poly([t1, 1]))]
+    f2 = [float(f) for f in fpoly(flint.fmpz_poly([t2, 1]))]
+    n1 = skewpoly.l2norm(f1, skewpoly.skewness(f1))
+    n2 = skewpoly.l2norm(f2, skewpoly.skewness(f2))
+    while t2 - t1 > 100:
+        m1 = (2 * t1 + t2) // 3
+        m2 = (t1 + 2 * t2) // 3
+        f1 = [float(f) for f in fpoly(flint.fmpz_poly([m1, 1]))]
+        f2 = [float(f) for f in fpoly(flint.fmpz_poly([m2, 1]))]
+        nn1 = skewpoly.l2norm(f1, skewpoly.skewness(f1))
+        nn2 = skewpoly.l2norm(f2, skewpoly.skewness(f2))
+        if nn1 < nn2:
+            t2, n2 = m2, nn2
+        else:
+            t1, n1 = m1, nn1
+    t = (t1 + t2) // 2
+    f = [int(fi) for fi in fpoly(flint.fmpz_poly([t, 1]))]
+    g = [g[0] + t * g[1], g[1]]
+    nopt = skewpoly.l2norm(f, skew := skewpoly.skewness(f))
+    # logger.debug(f"translate t={t} {n0}=>{nopt} ratio {n0 / nopt:.3f}")
+    return f, g, skew
+
+
 def root_optimize(f, g, s: float):
     # Look for range of k such that norm(f+kg) ~ norm(f)
     sup = max(abs(f[3]) * s**3, abs(f[1]) * s, abs(f[0]))
@@ -255,6 +283,7 @@ def find_raw(N, ad, pmax, global_best: Value):
                     if norm + GSCORE * normg - 3.0 > min(global_best.value, best[2]):
                         continue
                     # Optimize roots
+                    f, g, skew = size_optimize(f, g, skew)
                     f = root_optimize(f, g, skew)
                     if f is None:
                         # sometimes all polynomials are bad

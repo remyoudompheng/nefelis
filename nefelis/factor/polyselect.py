@@ -22,25 +22,56 @@ logger = logging.getLogger("poly")
 
 
 class Polyselect:
-    def __init__(self, N: int, pmax: int, best: Value):
+    def __init__(self, N: int, pmax: int, best: Value, bestsize: Value):
         self.N = N
         self.pmax = pmax
         self.best: Value = best
+        self.bestsize: Value = bestsize
 
     def process(self, ad: int):
         res = find_raw(self.N, ad, self.pmax, self.best)
-        if res is None:
+
+        best = None, None, 1e9
+        for score, f, g in res:
+            if score < self.bestsize.value:
+                with self.bestsize.get_lock():
+                    self.bestsize.value = min(self.bestsize.value, score)
+            if score > self.bestsize.value + 3.0:
+                continue
+
+            skew = skewpoly.skewness(f)
+            f, g, skew = size_optimize(f, g, skew)
+            f = root_optimize(f, g, skew)
+            if f is None:
+                # sometimes all polynomials are bad
+                continue
+            skew = skewpoly.skewness(f)
+            norm = math.log2(math.sqrt(skewpoly.l2norm(f, skew)))
+            normg = math.log2(math.sqrt(skewpoly.l2norm(g, skew)))
+            alpha = polys.alpha(polys.discriminant(f), f)
+            score = norm + GSCORE * normg + alpha
+            if score < best[2]:
+                best = (f, g, score)
+            if score < self.best.value:
+                with self.best.get_lock():
+                    self.best.value = min(self.best.value, score)
+                logger.info(
+                    f"f={f} g={g} log2(norm) {norm:.3f} "
+                    + f"α {alpha:.3f} score {score:.3f} skew {skew:.0f}"
+                )
+
+        if best[0] is None:
             return None
-        f, g, score = res
+        f, g, score = best
         return f, g
 
 
 WORKER = None
 
 
-def worker_init(N: int, pmax: int, global_best: Value):
+def worker_init(N: int, pmax: int, global_best: Value, global_bestsize: Value):
     global WORKER
-    WORKER = Polyselect(N, pmax, global_best)
+    WORKER = Polyselect(N, pmax, global_best, global_bestsize)
 
 
 def worker_do(ad):
@@ -67,13 +98,14 @@ PARAMS = [
 
 def polyselect4(N: int) -> tuple[list[int], list[int]]:
     best = Value("d", 1e9)
+    bestsize = Value("d", 1e9)
     _, admin, admax, adstride, pmax = min(
         PARAMS, key=lambda t: abs(t[0] - N.bit_length())
     )
     logger.info(
         f"Start polynomial selection for ad=[{admin}:{admax}:{adstride}] and {pmax=}"
     )
-    pool = Pool(initializer=worker_init, initargs=(N, pmax, best))
+    pool = Pool(initializer=worker_init, initargs=(N, pmax, best, bestsize))
     best_fg = None
     score_fg = 1e9
     t0 = time.monotonic()
@@ -142,6 +174,34 @@ def roots4(N, ad, p) -> list[int]:
     return lifts
 
 
+def size_optimize(f, g, s: float):
+    # Optimal translation should be between [-2s, 2s]
+    n0 = skewpoly.l2norm(f, s)
+    fpoly = flint.fmpz_poly(f)
+    t1, t2 = int(-2 * s), int(2 * s)
+    f1 = [float(f) for f in fpoly(flint.fmpz_poly([t1, 1]))]
+    f2 = [float(f) for f in fpoly(flint.fmpz_poly([t2, 1]))]
+    n1 = skewpoly.l2norm(f1, skewpoly.skewness(f1))
+    n2 = skewpoly.l2norm(f2, skewpoly.skewness(f2))
+    while t2 - t1 > 100:
+        m1 = (2 * t1 + t2) // 3
+        m2 = (t1 + 2 * t2) // 3
+        f1 = [float(f) for f in fpoly(flint.fmpz_poly([m1, 1]))]
+        f2 = [float(f) for f in fpoly(flint.fmpz_poly([m2, 1]))]
+        nn1 = skewpoly.l2norm(f1, skewpoly.skewness(f1))
+        nn2 = skewpoly.l2norm(f2, skewpoly.skewness(f2))
+        if nn1 < nn2:
+            t2, n2 = m2, nn2
+        else:
+            t1, n1 = m1, nn1
+    t = (t1 + t2) // 2
+    f = [int(fi) for fi in fpoly(flint.fmpz_poly([t, 1]))]
+    g = [g[0] + t * g[1], g[1]]
+    nopt = skewpoly.l2norm(f, skew := skewpoly.skewness(f))
+    # logger.debug(f"translate t={t} {n0}=>{nopt} ratio {n0 / nopt:.3f}")
+    return f, g, skew
+
+
 def root_optimize(f, g, s: float):
     # Look for range of k such that norm(f+kg) ~ norm(f)
     sup = max(abs(f[2]) * s**2, abs(f[1]) * s, abs(f[0]))
@@ -182,9 +242,9 @@ def root_optimize(f, g, s: float):
             # Usually there are always bad ideals: we want only mild singularities
             if bads := polys.bad_ideals([int(c) for c in fi]):
                 # if any(typ == polys.BadType.COMPLEX for _, _, typ in bads):
-                logger.warning(
-                    f"Skipping interesting polynomial f {fi} with bad primes {bads}"
-                )
+                # logger.warning(
+                #    f"Skipping interesting polynomial f {fi} with bad primes {bads}"
+                # )
                 continue
             bestf, bestalpha = fi, alpha
 
@@ -221,9 +281,9 @@ def find_raw(N, ad, pmax: int, global_best: Value):
             prs.append((p, rs))
     del p, q, qr
 
-    best = (None, None, 1e9)
     Nroot = int(NN ** (1 / 4))
-    S = set()
+    S = np.zeros(1 << 20, dtype=np.int64)
+    count = 0
     for q, qr in qrs:
         # print("try", q)
         q2 = q * q
@@ -232,64 +292,66 @@ def find_raw(N, ad, pmax: int, global_best: Value):
         # assert (N - ad * v0**4) % q2 == 0
         # we are looking for v0 + kq
         for p, pr in prs:
+            if p == q:
+                continue
             p2 = p * p
             q2inv = pow(q2, -1, p2)
             roots = [(_r - v0) * q2inv % p2 for _r in pr]
-            # assert all(((v0 + q2 * r) ** 4 - NN) % p2 == 0 for r in roots)
+            # assert all((v0 + q2 * r) ** 4 - NN) % p2 == 0 for r in roots)
             for r in roots:
-                # assert ((v0 + q2 * r) ** 4 - NN) % p2 == 0
-                for x in range(r, BOUND, p2):
-                    dv = v0 + q2 * x - Nroot
-                    if dv not in S:
-                        S.add(dv)
-                        continue
-                    # Compute polynomials
-                    facs = integers.factor_smooth(
-                        abs(NN - (Nroot + dv) ** 4), pmax.bit_length()
-                    )
-                    u = 1
-                    for l, e in facs:
-                        if e & 1 == 0 and (d * ad % l) != 0:
-                            u *= l ** (e // 2)
+                assert ((v0 + q2 * r) ** 4 - NN) % p2 == 0
+                vals = np.arange(
+                    v0 + q2 * r - Nroot,
+                    v0 + q2 * BOUND - Nroot,
+                    q2 * p2,
+                    dtype=np.int64,
+                )
+                if len(vals) == 0:
+                    continue
+                if count + len(vals) >= len(S):
+                    S = np.resize(S, len(S) * 2)
+                S[count : count + len(vals)] = vals
+                count += len(vals)
+    S = S[:count]
 
-                    assert ((Nroot + dv) ** 4 - NN) % u**2 == 0
-                    # Convert to original coefficients
-                    # v = d ad vv + k u
-                    vv = Nroot + dv
-                    k = vv * pow(u, -1, d * ad) % (d * ad)
-                    if 2 * k > d * ad:
-                        k -= d * ad
-                    v = (vv - k * u) // (d * ad)
-                    f = lemma21(N, u, v, ad)
-                    g = [-v, u]
-                    skew = skewpoly.skewness(f)
-                    norm = math.log2(math.sqrt(skewpoly.l2norm(f, skew)))
-                    normg = math.log2(math.sqrt(skewpoly.l2norm(g, skew)))
-                    if norm + GSCORE * normg - 3.0 > min(global_best.value, best[2]):
-                        continue
-                    # Optimize roots
-                    f = root_optimize(f, g, skew)
-                    if f is None:
-                        # sometimes all polynomials are bad
-                        continue
-                    skew = skewpoly.skewness(f)
-                    norm = math.log2(math.sqrt(skewpoly.l2norm(f, skew)))
-                    normg = math.log2(math.sqrt(skewpoly.l2norm(g, skew)))
-                    alpha = polys.alpha(polys.discriminant(f), f)
-                    score = norm + GSCORE * normg + alpha
-                    if score < best[2]:
-                        best = (f, g, score)
-                    if score < global_best.value:
-                        with global_best.get_lock():
-                            global_best.value = min(global_best.value, score)
-                        logger.info(
-                            f"f = {f} u={u} log2(norm) {norm:.3f} "
-                            + f"α {alpha:.3f} score {score:.3f} skew {skew:.0f}"
-                        )
+    # Find duplicates and small values of dv
+    S.sort()
+    dvs = S[(S[:-1] == S[1:]).nonzero()[0]]
+    good = []
+    for dv in dvs:
+        # Compute polynomials
+        facs = integers.factor_smooth(abs(NN - (Nroot + dv) ** 4), pmax.bit_length())
+        u = 1
+        for l, e in facs:
+            if e & 1 == 0 and (d * ad % l) != 0:
+                u *= l ** (e // 2)
+        if u < pmax:
+            continue
 
-    if best[0] is None:
-        return None
-    return best
+        assert ((Nroot + dv) ** 4 - NN) % u**2 == 0
+        # Convert to integral coefficients v=V/(d ad)
+        # v = d ad V + k u
+        vv = Nroot + int(dv)
+        k = vv * pow(u, -1, d * ad) % (d * ad)
+        v = (vv - k * u) // (d * ad)
+        f = lemma21(N, u, v, ad)
+        g = [-v, u]
+        skew = skewpoly.skewness(f)
+        norm = math.log2(math.sqrt(skewpoly.l2norm(f, skew)))
+        normg = math.log2(math.sqrt(skewpoly.l2norm(g, skew)))
+        size = norm + GSCORE * normg
+        good.append((size, f, g))
+
+    if not good:
+        return []
+    good.sort()
+    best_score = good[0][0]
+    results = []
+    for score, f, g in good:
+        if score - 2.0 > best_score:
+            break
+        results.append((score, f, g))
+    return results
 
 
 def main():
