@@ -407,6 +407,23 @@ class LineSiever:
                 else:
                     assert (xx - r * yy) % p == 0, (p, r)
             del p, r, rq
+            if self.algo3:
+                tprimes2 = self.algo1.get_tensors()[6]
+                troots2 = self.algo1.get_tensors()[7]
+                tqroots2 = self.algo1.get_tensors()[8]
+                self.mgr.sequence().record(
+                    kp.OpTensorSyncLocal([tprimes2, troots2, tqroots2])
+                ).eval()
+                for p, r, rq in zip(tprimes2.data(), troots2.data(), tqroots2.data()):
+                    if rq == p:
+                        xx, yy = q, 0
+                    else:
+                        xx = q * rq + qr
+                        yy = 1
+                    if r == p:
+                        assert yy % p == 0
+                    else:
+                        assert (xx - r * yy) % p == 0, (p, r)
 
         bout = self.tout.data()
         outsize = bout.size // 2

@@ -75,20 +75,22 @@ void doprime2(uint pidx) {
     v -= q * u;
     vi -= int(q) * ui;
     nv = dot(v, v);
-    // Now nv < nu
-    // Swap u and v
-    vec2 uu = u;
-    u = v;
-    v = uu;
-    ivec2 uui = ui;
-    ui = vi;
-    vi = uui;
-    float n = nu;
-    nu = nv;
-    nv = nu;
+    // If u is extremely short, v may still be longer
+    if (nv < nu) {
+      // Swap u and v
+      vec2 uu = u;
+      u = v;
+      v = uu;
+      ivec2 uui = ui;
+      ui = vi;
+      vi = uui;
+      float n = nu;
+      nu = nv;
+      nv = nu;
+    }
   }
   // Now u and v should be less than 16 bits.
-  qroots2[pidx] = i16vec2(u);
+  qroots2[pidx] = i16vec2(ui);
 }
 
 #endif
