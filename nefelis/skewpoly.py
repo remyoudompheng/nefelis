@@ -36,6 +36,20 @@ def l2norm(f: list[int], s: float) -> float:
             + 6 * (a0 * c0 + a1 * c1)
             + 3 * b**2
         )
+    elif len(f) == 6:
+        a0, a1, a2, c2, c1, c0 = f
+        a0, a1 = a0 / s**2, a1 / s
+        c2, c1, c0 = c2 * s, c1 * s**2, c0 * s**3
+        return (
+            float(
+                6 * (a2 * c1 + a0 * c1 + a1 * c2 + a1 * c0)
+                + 14 * (c0 * c2 + a0 * a2)
+                + 63 * (a0**2 + c0**2)
+                + 7 * (a1**2 + c1**2)
+                + 3 * (a2**2 + c2**2)
+            )
+            / s
+        )
 
 
 def skewness(f: list[int]) -> float:

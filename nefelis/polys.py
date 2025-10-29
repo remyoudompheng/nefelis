@@ -35,7 +35,8 @@ def discriminant(f: list[int]) -> int:
         D1 = 2 * c**3 - 9 * b * c * d + 27 * b * b * e + 27 * a * d * d - 72 * a * c * e
         return (4 * D0**3 - D1**2) // 27
     else:
-        raise NotImplementedError
+        fpoly = flint.fmpz_poly(f)
+        return int(fpoly.resultant(fpoly.derivative())) // f[-1]
 
 
 def l2norm(f: list[int]) -> float:
@@ -126,7 +127,7 @@ def bad_ideals(f: list[int]) -> list[tuple[int, int]]:
     >>> bad_ideals([1, 0, 0, 1, 9])
     [(3, 2, BadType.COMPLEX)]
     """
-    assert 3 <= len(f) <= 5
+    assert 3 <= len(f) <= 6
     disc = discriminant(f)
     assert disc != 0
     # There may be large bad ideals but we only care about
@@ -201,6 +202,8 @@ def alpha(D, f):
         return alpha3(D, f[3], f[2], f[1], f[0])
     elif len(f) == 5:
         return alpha4(D, f)
+    elif len(f) == 6:
+        return alpha5(D, f)
     else:
         raise NotImplementedError
 
@@ -213,7 +216,10 @@ SQUARES = set((l, i * i % l) for l in SMALLPRIMES for i in range(l))
 
 FIELDS = {
     l: numpy.array(
-        [[1, x, x * x % l, x * x * x % l, x * x * x * x % l] for x in range(l)],
+        [
+            [1, x, x * x % l, x * x * x % l, pow(x, 4, l), pow(x, 5, l)]
+            for x in range(l)
+        ],
         dtype=numpy.int32,
     )
     for l in SMALLPRIMES
@@ -451,5 +457,81 @@ def avgval4(D, l, poly):
 def nroots4(poly, l):
     fp = FIELDS[l]
     vals = fp[:, :5] @ poly
+    infty = 1 if poly[-1] % l == 0 else 0
+    return l - numpy.count_nonzero(vals % l) + infty
+
+
+# Degree 5
+
+
+def alpha5(D, f):
+    return sum(
+        math.log2(l) * (1 / (l - 1) - avgval5(D, l, f) * l / (l + 1))
+        for l in SMALLPRIMES
+    )
+
+
+def avgval5(D, l, poly):
+    poly = numpy.array(poly, dtype=object)
+    if D % l != 0 and l > 2:
+        return nroots5(poly, l) / (l - 1)
+
+    # Discriminant is zero: polynomial is necessarily split.
+    f, e, d, c, b, a = [int(ai) for ai in poly]
+    if l <= 5:
+        fp = FIELDS[l]
+        vals = fp[:, :6] @ poly
+        roots = [int(x) for x in (vals % l == 0).nonzero()[0]]
+        val = len(roots) / l
+        for k in range(1, 5):
+            li = l**k
+            roots_lift = []
+            for r in roots:
+                for x in range(r, r + l * li, li):
+                    fx = (a * x * x + b * x + c) * x * x * x + (d * x * x + e * x + f)
+                    if fx % (l * li) == 0:
+                        roots_lift.append(r)
+            count = len(roots_lift)
+            if count == 0:
+                break
+            val += count / (l * li)
+            roots = roots_lift
+        # Roots at infinity
+        if a % l == 0:
+            val += 1 / l
+            roots = [0]
+            for k in range(1, 5):
+                li = l**k
+                roots_lift = []
+                for r in roots:
+                    for x in range(r, r + l * li, li):
+                        fx = (f * x * x + e * x + d) * x * x * x + c * x * x + b * x + a
+                        if fx % (l * li) == 0:
+                            roots_lift.append(r)
+                count = len(roots_lift)
+                if count == 0:
+                    break
+                val += count / (l * li)
+                roots = roots_lift
+        return val
+    else:
+        fp = FIELDS[l]
+        vals = fp[:, :6] @ poly
+        roots = [int(x) for x in (vals % l == 0).nonzero()[0]]
+        val = len(roots) / l
+        count2 = 0
+        for r in roots:
+            for x in range(r, r + l * l, l):
+                fx = (a * x * x + b * x + c) * x * x * x + d * x * x + e * x + f
+                if fx % (l * l) == 0:
+                    count2 += 1
+        if a % l == 0:
+            val += 1 / l
+        return val + count2 / (l * (l - 1))
+
+
+def nroots5(poly, l):
+    fp = FIELDS[l]
+    vals = fp[:, :6] @ poly
     infty = 1 if poly[-1] % l == 0 else 0
     return l - numpy.count_nonzero(vals % l) + infty
