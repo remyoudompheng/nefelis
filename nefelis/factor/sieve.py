@@ -20,9 +20,9 @@ import flint
 from nefelis.skewpoly import skewness
 from nefelis.sieve import Siever, LineSiever
 from nefelis.integers import factor, smallprimes
-from nefelis.factor.polyselect_basem import polyselect
-from nefelis.factor.polyselect import polyselect4
-from nefelis.factor.polyselect3 import polyselect3
+
+# from nefelis.factor.polyselect_basem import polyselect
+from nefelis.factor.polyselect import polyselect
 
 logger = logging.getLogger("sieve")
 
@@ -182,12 +182,7 @@ def main_impl(args):
         f"Sieving with B1={B1f / 1000:.0f}k,{B1g / 1000:.0f}k log(B2)={B2f},{B2g} q={qmin}.. {COFACTOR_BITS} cofactor bits"
     )
 
-    if degree == 3:
-        f, g = polyselect3(N)
-    elif degree == 4:
-        f, g = polyselect4(N)
-    else:
-        f, g = polyselect(N, degree)
+    f, g = polyselect(N, degree)
     skew = skewness(f)
     v, u = g
 

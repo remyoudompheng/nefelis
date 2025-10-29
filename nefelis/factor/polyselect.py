@@ -1,5 +1,5 @@
 """
-Selection of polynomials of degree 4
+Selection of polynomials
 
 Use Kleinjung2008 algorithm as described in
 https://homepages.loria.fr/EThome/teaching/2022-cse-291-14/slides/cse-291-14-lecture-09.pdf
@@ -22,14 +22,15 @@ logger = logging.getLogger("poly")
 
 
 class Polyselect:
-    def __init__(self, N: int, pmax: int, best: Value, bestsize: Value):
+    def __init__(self, N: int, deg: int, pmax: int, best: Value, bestsize: Value):
         self.N = N
+        self.deg = deg
         self.pmax = pmax
         self.best: Value = best
         self.bestsize: Value = bestsize
 
     def process(self, ad: int):
-        res = find_raw(self.N, ad, self.pmax, self.best)
+        res = find_raw(self.N, self.deg, ad, self.pmax, self.best)
 
         best = None, None, 1e9
         for score, f, g in res:
@@ -69,9 +70,9 @@ class Polyselect:
 WORKER = None
 
 
-def worker_init(N: int, pmax: int, global_best: Value, global_bestsize: Value):
+def worker_init(N: int, d: int, pmax: int, global_best: Value, global_bestsize: Value):
     global WORKER
-    WORKER = Polyselect(N, pmax, global_best, global_bestsize)
+    WORKER = Polyselect(N, d, pmax, global_best, global_bestsize)
 
 
 def worker_do(ad):
@@ -82,8 +83,19 @@ def worker_do(ad):
 GSCORE = 1.0
 
 
+PARAMS3 = [
+    # (Nbits, admin, admax, adstride, PMAX)
+    (100, 6, 60, 6, 300),
+    (120, 6, 60, 6, 500),
+    (140, 6, 60, 6, 1_000),
+    (160, 6, 60, 6, 4_000),
+    (180, 6, 72, 6, 10_000),
+    (200, 6, 96, 6, 15_000),
+    (220, 6, 120, 6, 20_000),
+]
+
 # Target normf is N^(1/6)
-PARAMS = [
+PARAMS4 = [
     # (Nbits, admin, admax, adstride, PMAX)
     (240, 6, 60, 6, 10_000),
     (260, 6, 60, 6, 20_000),
@@ -96,16 +108,21 @@ PARAMS = [
 ]
 
 
-def polyselect4(N: int) -> tuple[list[int], list[int]]:
+def polyselect(N: int, deg: int) -> tuple[list[int], list[int]]:
     best = Value("d", 1e9)
     bestsize = Value("d", 1e9)
+
+    if deg == 3:
+        PARAMS = PARAMS3
+    else:
+        PARAMS = PARAMS4
     _, admin, admax, adstride, pmax = min(
         PARAMS, key=lambda t: abs(t[0] - N.bit_length())
     )
     logger.info(
         f"Start polynomial selection for ad=[{admin}:{admax}:{adstride}] and {pmax=}"
     )
-    pool = Pool(initializer=worker_init, initargs=(N, pmax, best, bestsize))
+    pool = Pool(initializer=worker_init, initargs=(N, deg, pmax, best, bestsize))
     best_fg = None
     score_fg = 1e9
     t0 = time.monotonic()
@@ -129,12 +146,12 @@ def polyselect4(N: int) -> tuple[list[int], list[int]]:
     return best_fg
 
 
-def lemma21(N, v, u, ad):
+def lemma21(N, v, u, d, ad):
     # Decompose N as ad u^4 + ... + v^4
     # Res(f, vx-u) = N
-    ri = (N - ad * u**4) // v
+    ri = (N - ad * u**d) // v
     f = [ad]
-    for i in (3, 2, 1, 0):
+    for i in range(d - 1, -1, -1):
         ui = u**i
         ti = (-ri * pow(v, -1, ui)) % ui
         if 2 * ti > ui:
@@ -147,12 +164,12 @@ def lemma21(N, v, u, ad):
     return f
 
 
-def roots4(N, ad, p) -> list[int]:
+def roots4(N, p) -> list[int]:
     """
     Compute 4-th roots of N/ad modulo p^2
     """
     try:
-        r = (flint.nmod(N, p) / ad).sqrt()
+        r = flint.nmod(N, p).sqrt()
     except Exception:
         return []
     rs = []
@@ -169,9 +186,22 @@ def roots4(N, ad, p) -> list[int]:
     lifts = []
     p2 = p * p
     for r in rs:
-        r = r - (ad * r**4 - N) * pow(4 * ad * r**3, -1, p2)
+        r = r - (r**4 - N) * pow(4 * r**3, -1, p2)
         lifts.append(r % p2)
     return lifts
+
+
+def roots_nth(N, d, p) -> list[int]:
+    if d == 4:
+        return roots4(N, p)
+    if p % d == 1:
+        return []
+    inv = pow(d, -1, p - 1)
+    r = pow(N, inv, p)
+    assert (r**d - N) % p == 0
+    p2 = p * p
+    r2 = r - (r**d - N) * pow(d * r ** (d - 1), -1, p2)
+    return [r2 % p2]
 
 
 def size_optimize(f, g, s: float):
@@ -224,7 +254,17 @@ def root_optimize(f, g, s: float):
         alpha_l = []
         for i in range(-bound, -bound + ll):
             fi = [f[0] + i * g[0], f[1] + i * g[1]] + f[2:]
-            v = polys.avgval4(discs[i + bound], l, fi)
+            if len(f) == 4:
+                fi_arr = np.array(fi, dtype=object)
+                v = polys.avgval3(
+                    discs[i + bound], fi[0], fi[1], fi[2], fi[3], l, fi_arr
+                )
+            elif len(f) == 5:
+                v = polys.avgval4(discs[i + bound], l, fi)
+            elif len(f) == 6:
+                v = polys.avgval5(discs[i + bound], l, fi)
+            else:
+                raise NotImplementedError
             alpha_l.append(v)
         alpha_l = np.array(alpha_l, dtype=np.float32) * math.log2(l) * l / (l + 1)
         S += np.tile(alpha_l, (2 * bound) // ll + 1)[: len(S)]
@@ -251,13 +291,12 @@ def root_optimize(f, g, s: float):
     return bestf
 
 
-def find_raw(N, ad, pmax: int, global_best: Value):
+def find_raw(N, d: int, ad, pmax: int, global_best: Value):
     # Find u (small) such that N=v^4 mod u^2 with v very close to N^1/4 and v >> u
     # then N = v^4 + B v^2 u^2 + C v u^3 + D u^4
     # and B ~= (N - v^4) / v^2 u^2
     # if v = N^1/4 + eps, B ~ 4 N^1/4 eps / N^1/2 u^2
 
-    d = 4
     NN = d**d * ad ** (d - 1) * N
     # FIXME: choose according to size of N
     BOUND = pmax**2
@@ -267,8 +306,8 @@ def find_raw(N, ad, pmax: int, global_best: Value):
     for q in range(503, 700, 4):
         if not flint.fmpz(q).is_probable_prime():
             continue
-        for qr in roots4(NN, 1, q):
-            assert (qr**4 - NN) % (q * q) == 0
+        for qr in roots_nth(NN, d, q):
+            assert (qr**d - NN) % (q * q) == 0
             qrs.append((q, qr))
     # Prepare roots
     prs = []
@@ -276,12 +315,12 @@ def find_raw(N, ad, pmax: int, global_best: Value):
     for p in primes[len(primes) // 16 :]:
         if p <= qrs[-1][0]:
             continue
-        rs = roots4(NN, 1, p)
+        rs = roots_nth(NN, d, p)
         if rs:
             prs.append((p, rs))
     del p, q, qr
 
-    Nroot = int(NN ** (1 / 4))
+    Nroot = int(NN ** (1 / d))
     S = np.zeros(1 << 20, dtype=np.int64)
     count = 0
     for q, qr in qrs:
@@ -297,9 +336,9 @@ def find_raw(N, ad, pmax: int, global_best: Value):
             p2 = p * p
             q2inv = pow(q2, -1, p2)
             roots = [(_r - v0) * q2inv % p2 for _r in pr]
-            # assert all((v0 + q2 * r) ** 4 - NN) % p2 == 0 for r in roots)
+            # assert all((v0 + q2 * r) ** d - NN) % p2 == 0 for r in roots)
             for r in roots:
-                assert ((v0 + q2 * r) ** 4 - NN) % p2 == 0
+                assert ((v0 + q2 * r) ** d - NN) % p2 == 0
                 vals = np.arange(
                     v0 + q2 * r - Nroot,
                     v0 + q2 * BOUND - Nroot,
@@ -320,7 +359,7 @@ def find_raw(N, ad, pmax: int, global_best: Value):
     good = []
     for dv in dvs:
         # Compute polynomials
-        facs = integers.factor_smooth(abs(NN - (Nroot + dv) ** 4), pmax.bit_length())
+        facs = integers.factor_smooth(abs(NN - (Nroot + dv) ** d), pmax.bit_length())
         u = 1
         for l, e in facs:
             if e & 1 == 0 and (d * ad % l) != 0:
@@ -328,13 +367,13 @@ def find_raw(N, ad, pmax: int, global_best: Value):
         if u < pmax:
             continue
 
-        assert ((Nroot + dv) ** 4 - NN) % u**2 == 0
+        assert ((Nroot + dv) ** d - NN) % u**2 == 0
         # Convert to integral coefficients v=V/(d ad)
         # v = d ad V + k u
         vv = Nroot + int(dv)
         k = vv * pow(u, -1, d * ad) % (d * ad)
         v = (vv - k * u) // (d * ad)
-        f = lemma21(N, u, v, ad)
+        f = lemma21(N, u, v, d, ad)
         g = [-v, u]
         skew = skewpoly.skewness(f)
         norm = math.log2(math.sqrt(skewpoly.l2norm(f, skew)))
@@ -358,6 +397,7 @@ def main():
     argp = argparse.ArgumentParser()
     argp.add_argument("-v", action="store_true")
     argp.add_argument("N", type=int)
+    argp.add_argument("DEGREE", type=int)
     args = argp.parse_args()
 
     logging.getLogger().setLevel(logging.INFO)
@@ -365,7 +405,7 @@ def main():
     if args.v:
         logging.getLogger().setLevel(logging.DEBUG)
         logger.setLevel(logging.DEBUG)
-    f, g = polyselect4(args.N)
+    f, g = polyselect(args.N, args.DEGREE)
     print("f", f)
     print("g", g)
 
