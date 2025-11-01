@@ -21,7 +21,7 @@ import numpy as np
 
 from nefelis.skewpoly import skewness
 from nefelis.sieve import Siever, LineSiever
-from nefelis.integers import factor, smallprimes
+from nefelis.integers import factor_smooth, smallprimes
 
 # from nefelis.factor.polyselect_basem import polyselect
 from nefelis.factor.polyselect import polyselect
@@ -54,16 +54,17 @@ class Factorer:
             vf //= q
             vg = abs(u * x + v * y)
 
-            facf = [q]
-            for _l, _e in factor(vf):
-                facf += _e * [int(_l)]
-            if any(_f.bit_length() > self.B2f for _f in facf):
-                continue
-
             facg = []
-            for _l, _e in factor(vg):
+            for _l, _e in factor_smooth(vg, self.B2g):
                 facg += _e * [int(_l)]
             if any(_l.bit_length() > self.B2g for _l in facg):
+                continue
+
+            # TODO: move f first when using 2 large primes?
+            facf = [q]
+            for _l, _e in factor_smooth(vf, self.B2f):
+                facf += _e * [int(_l)]
+            if any(_f.bit_length() > self.B2f for _f in facf):
                 continue
 
             idealf = [x * pow(y, -1, _l) % _l if y % _l else _l for _l in facf]
