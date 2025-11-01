@@ -6,7 +6,6 @@ The sieve is done on the algebraic side (polynomial f).
 
 import argparse
 from concurrent.futures import ProcessPoolExecutor
-import itertools
 import json
 import logging
 import math
@@ -15,6 +14,7 @@ import os
 import pathlib
 import time
 
+import numpy as np
 import flint
 
 from nefelis.skewpoly import skewness
@@ -270,6 +270,14 @@ def main_impl(args):
     seeng = set()
     fcount, gcount = 0, 0
 
+    # Singleton live tracking
+    # For each relation: number of singleton primes (less than 255)
+    orphans = np.zeros(1 << 20, dtype=np.uint8)
+    # For each singleton prime, index of relation containing it
+    orphanf = {}
+    orphang = {}
+
+    excess1, excess2 = -9999, -9999
     with sievepool, factorpool:
         factor_jobs = []
         for q, qr, dt, reports in sievepool.imap(worker_task, list(zip(qs, qrs))):
@@ -296,30 +304,57 @@ def main_impl(args):
                     str_facf = ",".join(f"{_l:x}" for _l in facf)
                     str_facg = ",".join(f"{_l:x}" for _l in facg)
                     for _l, _r in zip(facf, idealf):
-                        seenf.add((_l << 32) | _r)
-                    seeng.update(facg)
+                        _lr = (_l << 32) | _r
+                        if _lr not in seenf:
+                            # new singleton
+                            orphans[total] += 1
+                            orphanf[_lr] = total
+                            seenf.add(_lr)
+                        else:
+                            if (idx := orphanf.pop(_lr, None)) is not None:
+                                orphans[idx] -= 1
+                    for _l in facg:
+                        if _l not in seeng:
+                            orphans[total] += 1
+                            orphang[_l] = total
+                            seeng.add(_l)
+                        else:
+                            if (idx := orphang.pop(_l, None)) is not None:
+                                orphans[idx] -= 1
+                    total += 1
                     seen.add(xy)
                     relf.write(f"{x},{y}:{str_facg}:{str_facf}\n")
                     nrels += 1
                 print(f"# Found {nrels} relations for {q=} (time {dt:.3f}s)", file=relf)
                 total_q += 1
-                total += nrels
                 total_area += AREA
                 elapsed = time.monotonic() - t0
                 fcount = len(seenf)
                 gcount = len(seeng)
                 if elapsed < 2 or elapsed > last_log + 1:
                     # Don't log too often.
+                    n_orphans = np.count_nonzero(orphans)
+                    if total > len(orphans) / 2:
+                        orphans.resize((len(orphans) * 2,))
+                    excess1 = total - fcount - gcount
+                    excess2 = (total - n_orphans) - (
+                        fcount + gcount - len(orphanf) - len(orphang)
+                    )
                     last_log = elapsed
                     logger.info(
                         f"Sieved q={q:<8} r={qr:<8} area {total_area / 1e9:.0f}G in {dt:.3f}s "
                         + f"(speed {total_area / elapsed / 1e9:.3f}G/s shader {AREA / dt / 1e9:.3f}G/s): "
                         + f"{nrels}/{len(reports)} relations, {fcount}/{gcount} K/Q primes, total {total}"
+                        + f" excess {excess1}/{excess2}"
                     )
+
             factor_jobs = remaining
             if len(factor_jobs) > 100:
                 logger.warning(f"{len(factor_jobs)} jobs waiting for cofactorization!")
-            if total > 1.1 * (fcount + gcount):
+
+            # Compute excess with/without singletons
+            excess1 = total - fcount - gcount
+            if max(excess1, excess2) > max(64, min(10000, total / 20)):
                 logger.info("Enough relations")
                 break
 
@@ -332,7 +367,10 @@ def main_impl(args):
     relf.write(
         f"# Total {total} reports [{1 / rels_per_t:.3g}s/r, {rels_per_q:.3f}r/sq] in {elapsed:.2f} elapsed s\n"
     )
-    logger.info(f"{total} relations {duplicates} duplicates in {elapsed:.3f}s")
+    singles = np.count_nonzero(orphans)
+    logger.info(
+        f"{total} relations {duplicates} duplicates {singles} orphans in {elapsed:.3f}s"
+    )
     relf.close()
 
 
