@@ -4,18 +4,20 @@ Sieve for factoring
 The sieve is done on the algebraic side (polynomial f).
 """
 
+from typing import Iterator
+
 import argparse
+import concurrent.futures
 from concurrent.futures import ProcessPoolExecutor
 import json
 import logging
 import math
-import multiprocessing
 import os
 import pathlib
 import time
 
-import numpy as np
 import flint
+import numpy as np
 
 from nefelis.skewpoly import skewness
 from nefelis.sieve import Siever, LineSiever
@@ -233,7 +235,7 @@ def main_impl(args):
         f"Sieve rectangle size {2 * W >> 10}k x {H} (skewness: {W / H:.3g}, area: {(2 * W * H) >> 20}M)"
     )
 
-    sievepool = multiprocessing.Pool(
+    sievepool = ProcessPoolExecutor(
         1,
         initializer=worker_init,
         # Parameters for LineSiever
@@ -278,14 +280,33 @@ def main_impl(args):
     orphang = {}
 
     excess1, excess2 = -9999, -9999
+    sieve_args: Iterator[tuple[int, int]] = zip(qs, qrs)
+    MAX_SIEVE_QUEUE = 64
     with sievepool, factorpool:
+        sieve_jobs = []
         factor_jobs = []
-        for q, qr, dt, reports in sievepool.imap(worker_task, list(zip(qs, qrs))):
-            fut = factorpool.submit(factorer_task, (q, reports))
-            factor_jobs.append((q, qr, dt, fut))
+        while True:
+            while len(sieve_jobs) < MAX_SIEVE_QUEUE:
+                sieve_jobs.append(sievepool.submit(worker_task, next(sieve_args)))
+            # Always wait for at least 1 sieve
+            _ = sieve_jobs[0].result()
+            sieve_pending = []
+            for sfut in sieve_jobs:
+                if not sfut.done():
+                    sieve_pending.append(sfut)
+                    continue
+                q, qr, dt, reports = sfut.result()
+                fut = factorpool.submit(factorer_task, (q, reports))
+                factor_jobs.append((q, qr, dt, len(reports), fut))
+            # Throttle if factoring is late
+            concurrent.futures.wait(
+                [f for _, _, _, _, f in factor_jobs[:-MAX_SIEVE_QUEUE]]
+            )
+
+            sieve_jobs = sieve_pending
             remaining = []
             for item in factor_jobs:
-                q, qr, dt, fut = item
+                q, qr, dt, nreports, fut = item
                 if not fut.done():
                     remaining.append(item)
                     continue
@@ -344,7 +365,7 @@ def main_impl(args):
                     logger.info(
                         f"Sieved q={q:<8} r={qr:<8} area {total_area / 1e9:.0f}G in {dt:.3f}s "
                         + f"(speed {total_area / elapsed / 1e9:.3f}G/s shader {AREA / dt / 1e9:.3f}G/s): "
-                        + f"{nrels}/{len(reports)} relations, {fcount}/{gcount} K/Q primes, total {total}"
+                        + f"{nrels}/{nreports} relations, {fcount}/{gcount} K/Q primes, total {total}"
                         + f" excess {excess1}/{excess2}"
                     )
 
