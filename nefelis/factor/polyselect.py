@@ -359,7 +359,8 @@ def find_raw(N, d: int, ad, pmax: int, global_best: Value):
     good = []
     for dv in dvs:
         # Compute polynomials
-        facs = integers.factor_smooth(abs(NN - (Nroot + dv) ** d), pmax.bit_length())
+        vv = Nroot + int(dv)
+        facs = integers.factor_smooth(abs(NN - vv**d), pmax.bit_length())
         u = 1
         for l, e in facs:
             if e & 1 == 0 and (d * ad % l) != 0:
@@ -367,10 +368,9 @@ def find_raw(N, d: int, ad, pmax: int, global_best: Value):
         if u < pmax:
             continue
 
-        assert ((Nroot + dv) ** d - NN) % u**2 == 0
+        assert (vv**d - NN) % u**2 == 0
         # Convert to integral coefficients v=V/(d ad)
         # v = d ad V + k u
-        vv = Nroot + int(dv)
         k = vv * pow(u, -1, d * ad) % (d * ad)
         v = (vv - k * u) // (d * ad)
         f = lemma21(N, u, v, d, ad)
