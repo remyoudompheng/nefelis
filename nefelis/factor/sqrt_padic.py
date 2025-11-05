@@ -38,8 +38,9 @@ def sqrt(f: list[int], xys: list[tuple[int, int]], size_hint: int) -> list[int]:
     degf = len(f) - 1
     fmonic = [A ** (degf - 1 - i) * f[i] for i in range(degf)] + [1]
     # 0. Select a word-sized inert prime and the desired p-adic precision
-    # We choose p=4k+3 so that p^d-1 is not divisible by a huge power of 2.
-    for p in range(2**64 - 5, 2**63, -12):
+    # We should not restrict the residue class of p (some special polynomials
+    # may never have inert primes in some residue classes).
+    for p in range(2**64 - 5, 2**63, -2):
         if not flint.fmpz(p).is_probable_prime():
             continue
         _a, facs = flint.nmod_poly(f, p).factor()
