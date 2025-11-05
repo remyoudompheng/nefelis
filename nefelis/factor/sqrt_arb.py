@@ -99,18 +99,27 @@ def signs(reals, cplxs):
     """
     k = len(reals) + len(cplxs) - 1
     for sgn in range(2**k):
-        rsigns = [reals[0]]
-        csigns = []
-        for i in range(k):
-            if i < len(reals) - 1:
-                if sgn & (1 << i):
-                    rsigns.append(-reals[i + 1])
+        if reals:
+            rsigns = [reals[0]]
+            csigns = []
+            for i in range(k):
+                if i < len(reals) - 1:
+                    if sgn & (1 << i):
+                        rsigns.append(-reals[i + 1])
+                    else:
+                        rsigns.append(reals[i + 1])
                 else:
-                    rsigns.append(reals[i + 1])
-            else:
-                j = i - len(reals) + 1
+                    j = i - len(reals) + 1
+                    if sgn & (1 << i):
+                        csigns.append(-cplxs[j])
+                    else:
+                        csigns.append(cplxs[j])
+        else:
+            rsigns = []
+            csigns = [cplxs[0]]
+            for i in range(k):
                 if sgn & (1 << i):
-                    csigns.append(-cplxs[j])
+                    csigns.append(-cplxs[i + 1])
                 else:
-                    csigns.append(cplxs[j])
+                    csigns.append(cplxs[i + 1])
         yield rsigns, csigns
