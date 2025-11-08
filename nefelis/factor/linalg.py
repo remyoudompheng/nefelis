@@ -63,7 +63,7 @@ def main_impl(args):
         assert sum(fi * z**i for i, fi in enumerate(f)) % n == 0
         assert sum(gi * z**i for i, gi in enumerate(g)) % n == 0
 
-    Zn = flint.fmpz_mod_ctx(n)
+    assert len(g) == 2
 
     # Prepare quadratic characters
     chis = []
@@ -77,17 +77,6 @@ def main_impl(args):
     assert len(chis) >= 16
     chis = chis[:16]
     logger.info(f"Prepared {len(chis)} quadratic characters")
-    # Prepare more quadratic characters for sanity checks
-    testchis = []
-    for l in range(2**61, 2**61 + 5000):
-        if not flint.fmpz(l).is_prime():
-            continue
-        fmodl = flint.nmod_poly(f, l)
-        for r, e in fmodl.roots():
-            if e == 1:
-                testchis.append((l, int(r)))
-    assert len(testchis) >= 16
-    logger.info(f"Prepared {len(testchis)} quadratic characters for validation")
 
     # When reading relations, we compute exact integer exponents
     # (necessary for the sqrt part?) but the kernel part will be modulo 2.
@@ -144,12 +133,53 @@ def main_impl(args):
     rels2 = filter.filter(rels, pathlib.Path(workdir))
 
     M = SpMV(rels2)
-    dim = M.dim
-    kers = M.left_kernel()
+    facs = [n]
+    while True:
+        kers = M.left_kernel()
+        sqrt_start = time.monotonic()
+        facs = factor_with_kernels(n, f, g, z, zrels, M, kers, facs)
+        sqrt_dt = time.monotonic() - sqrt_start
+        logsqrt.info(f"Sqrt step done in {sqrt_dt:.3f}s")
+        if all(
+            flint.fmpz(_f).is_prime() or _f.bit_length() < n.bit_length() / 2
+            for _f in facs
+        ):
+            break
 
+        logger.info(f"Not enough ({len(kers)}) kernel elements, retrying")
+
+    if any(not flint.fmpz(_f).is_prime() for _f in facs):
+        facprimes = [_f for _f in facs if flint.fmpz(_f).is_prime()]
+        faccomps = [_f for _f in facs if not flint.fmpz(_f).is_prime()]
+        logsqrt.info(f"Found prime factors {facprimes}")
+        logsqrt.info(f"Found composite factors {faccomps}")
+
+
+def factor_with_kernels(
+    n: int, f, g, z, zrels, M, kers, facs: list[int] = None
+) -> list:
+    Zn = flint.fmpz_mod_ctx(n)
+    if facs is None:
+        facs = [n]
+
+    # Prepare more quadratic characters for sanity checks
+    testchis = []
+    for l in range(2**61, 2**61 + 5000):
+        if not flint.fmpz(l).is_prime():
+            continue
+        fmodl = flint.nmod_poly(f, l)
+        for r, e in fmodl.roots():
+            if e == 1:
+                testchis.append((l, int(r)))
+    assert len(testchis) >= 16
+    logger.info(f"Prepared {len(testchis)} quadratic characters for validation")
+
+    dim = M.dim
     zn = Zn(z)
+    assert len(f) > 2
     A = f[-1]
-    sqrt_start = time.monotonic()
+
+    facs: list[int] = [int(n)]
     for ki in kers:
         s = set()
         for j in range(dim):
@@ -221,14 +251,31 @@ def main_impl(args):
             d2 = flint.fmpz(n).gcd(int(sqrt + sqrtz))
             if d1 > 1 and d1 < n:
                 logsqrt.info(f"Found factor {d1}")
-                break
+                facsplit = []
+                for _f in facs:
+                    if (f1 := d1.gcd(_f)) not in (1, _f):
+                        facsplit += [int(f1), int(_f // f1)]
+                    else:
+                        facsplit.append(_f)
+                facs = facsplit
             elif d2 > 1 and d2 < n:
                 logsqrt.info(f"Found factor {d2}")
-                break
+                facsplit = []
+                for _f in facs:
+                    if (f1 := d2.gcd(_f)) not in (1, _f):
+                        facsplit += [int(f1), int(_f // f1)]
+                    else:
+                        facsplit.append(_f)
+                facs = facsplit
             else:
                 logsqrt.info("No factor from this square")
-    sqrt_dt = time.monotonic() - sqrt_start
-    logsqrt.info(f"Sqrt step done in {sqrt_dt:.3f}s")
+
+            if all(flint.fmpz(_f).is_prime() for _f in facs):
+                facs.sort()
+                logsqrt.info(f"Found prime factors {facs}")
+                break
+
+    return facs
 
 
 if __name__ == "__main__":
