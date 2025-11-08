@@ -94,7 +94,9 @@ def prune(
             break
 
     removed = 0
-    max_removed = (excess - 200) // 2
+    remove_passes = 0
+    # Keep 50000 excess or at least half original excess + 100
+    max_removed = max((excess - 200) // 2, excess - 50000)
     while removed < max_removed:
         m1 = [p for p, rs in stats.items() if rs is not None and len(rs) == 1]
         singles = 0
@@ -105,6 +107,10 @@ def prune(
         if singles:
             logger.info(f"[prune] pruned {singles} singletons")
 
+        if remove_passes >= 2:
+            # Only 2 passes
+            break
+        remove_passes += 1
         m2 = [(p, rs) for p, rs in stats.items() if rs is not None and len(rs) == 2]
         g = Graph()
         for p, rs in m2:
@@ -112,7 +118,7 @@ def prune(
         # They are not cliques at all but the term is used in literature.
         cliques = list(connected_components(g))
         cliques.sort(key=score)
-        to_remove = max(100, max_removed // 4)
+        to_remove = max(100, max_removed // 2)
         to_remove = min(max_removed - removed, to_remove)
         if to_remove > 0:
             cliques_removed = cliques[-to_remove:]
@@ -207,39 +213,36 @@ def filter(rels, datadir: pathlib.Path | None):
         # Modulo p^k we have probabikity 1/p of missing a generator
         # for each excess relation
         MIN_EXCESS = 64 + D.bit_length()
-        while True:
-            # d-merges
-            md = [k for k in stats if len(stats[k]) <= d]
-            if not md:
-                break
-            logger.debug(f"{len(md)} {d}-merges candidates {min(md)}..{max(md)}")
-            merged = 0
-            for p in md:
-                rs = stats.get(p)
-                if not rs or len(rs) > d:
-                    # prime already eliminated or weight has grown
-                    continue
-                # Pivot has fewest coefficients and pivot value is ±1
-                assert all(p in rels[ridx] for ridx in stats[p])
-                rs = sorted(rs, key=lambda ridx: weight(rels[ridx]))
-                pividx = rs[0]
-                piv = rels[pividx]
-                for ridx in rs[1:]:
-                    rp = pivot(piv, rels[ridx], p)
-                    delstat(ridx, rels[ridx])
-                    addstat(ridx, rp)
-                    # If relation becomes empty, remove it
-                    rels[ridx] = rp if len(rp) > 0 else None
-                # Remove and save pivot
-                delstat(pividx, piv)
-                rels[pividx] = None
-                removed += 1
-                assert p not in stats
-                merged += 1
 
-            if not merged:
-                break
-            logger.debug(f"{merged} pivots done")
+        # d-merges
+        md = [k for k in stats if len(stats[k]) <= d]
+        if not md:
+            break
+        logger.debug(f"{len(md)} {d}-merges candidates {min(md)}..{max(md)}")
+        merged = 0
+        for p in md:
+            rs = stats.get(p)
+            if not rs or len(rs) > d:
+                # prime already eliminated or weight has grown
+                continue
+            # Pivot has fewest coefficients and pivot value is ±1
+            assert all(p in rels[ridx] for ridx in stats[p])
+            rs = sorted(rs, key=lambda ridx: weight(rels[ridx]))
+            pividx = rs[0]
+            piv = rels[pividx]
+            for ridx in rs[1:]:
+                rp = pivot(piv, rels[ridx], p)
+                delstat(ridx, rels[ridx])
+                addstat(ridx, rp)
+                # If relation becomes empty, remove it
+                rels[ridx] = rp if len(rp) > 0 else None
+            # Remove and save pivot
+            delstat(pividx, piv)
+            rels[pividx] = None
+            removed += 1
+            assert p not in stats
+            merged += 1
+        logger.debug(f"{merged} pivots done")
 
         remaining = [_r for _r in rels if _r is not None]
         nr, nc = len(remaining), len(stats)

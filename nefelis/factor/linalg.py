@@ -17,6 +17,7 @@ import time
 
 import flint
 
+from nefelis import filter_disk
 from nefelis import filter_gf2 as filter
 from nefelis.linalg_gf2 import SpMV
 from nefelis.factor import sqrt_arb
@@ -91,33 +92,46 @@ def main_impl(args):
     # When reading relations, we compute exact integer exponents
     # (necessary for the sqrt part?) but the kernel part will be modulo 2.
 
-    rels = []
-    zrels = {}
+    dedup_keys = {}
+    rels: list[set] = []
+    zrels: dict = {}
     seen_xy = set()
     duplicates = 0
 
+    if not (workdir / "relations.sieve.pruned").is_file():
+        filter_disk.prune(str(workdir / "relations.sieve"))
+
     t0 = time.monotonic()
-    for x, y, facg, facf in read_relations(workdir / "relations.sieve"):
+    for x, y, facg, facf in read_relations(workdir / "relations.sieve.pruned"):
         if (x, y) in seen_xy:
             duplicates += 1
             continue
         seen_xy.add((x, y))
-        rel = {"CONSTANT": 1}
-        # Marker to recognize filtering output
-        rel[f"K_{x}_{y}"] = 1
+        # Marker K_x_y to recognize filtering output
+        rel = {"CONSTANT", f"K_{x}_{y}"}
         for _l in facf:
             _r = x * pow(y, -1, _l) % _l if y % _l else _l
             key = f"f_{_l}_{_r}"
-            rel[key] = rel.get(key, 0) + 1
+            key = dedup_keys.setdefault(key, key)
+            if key in rel:
+                rel.remove(key)
+            else:
+                rel.add(key)
         for key, _l, _r in chis:
             if flint.fmpz(x - _r * y).jacobi(_l) == -1:
-                rel[key] = 1
+                rel.add(key)
         for _l in facg:
             key = f"Z_{_l}"
-            rel[key] = rel.get(key, 0) - 1
+            key = dedup_keys.setdefault(key, key)
+            if key in rel:
+                rel.remove(key)
+            else:
+                rel.add(key)
         zrels[(x, -y)] = facg
         # FIXME: add quadratic characters here
         rels.append(rel)
+    del dedup_keys
+    del seen_xy
 
     dt = time.monotonic() - t0
     logger.info(
@@ -127,13 +141,9 @@ def main_impl(args):
     if duplicates:
         logger.info(f"{duplicates} duplicate results in input file, ignored")
 
-    rels2, _ = filter.prune(rels, pathlib.Path(workdir))
-    rels3 = filter.filter(rels2, pathlib.Path(workdir))
-    # Truncate to obtain a square matrix
-    dim = len(set(key for r in rels3 for key in r))
-    rels3 = rels3[:dim]
+    rels2 = filter.filter(rels, pathlib.Path(workdir))
 
-    M = SpMV(rels3)
+    M = SpMV(rels2)
     dim = M.dim
     kers = M.left_kernel()
 
