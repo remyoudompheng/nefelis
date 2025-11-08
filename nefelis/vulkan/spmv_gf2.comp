@@ -25,12 +25,16 @@
 #error Block size undefined
 #endif
 
+#ifndef OUTIDX
+#error Output offset undefined
+#endif
+
 #extension GL_EXT_shader_explicit_arithmetic_types : require
 
 // Each thread handles a row.
 layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
 
-layout(binding = 0) readonly buffer Dense { uint8_t[DENSE_N] dense[]; };
+layout(binding = 0) readonly buffer Dense { uint[DENSE_N] dense[]; };
 layout(binding = 1) readonly buffer Sparse { uint16_t sparse[]; };
 layout(binding = 2) readonly buffer Idx { uint sidx[]; };
 // Vector of size 2N:
@@ -49,6 +53,8 @@ layout(binding = 6) coherent buffer Wout { uint[K] wout[]; };
 // wsel[idx]=1)
 layout(binding = 5) coherent buffer Wout { uint[M][K] wout[]; };
 #endif
+
+#define UNROLL 16
 
 void main() {
   uint idx = iter[gl_WorkGroupID.x];
@@ -73,18 +79,78 @@ void main() {
 #endif
   for (uint i = 0; i < K; i++)
     acc[i] = 0;
-  // Dense block
+  // Dense block (note that vjk is uniform!)
   for (uint i = 0; i < DENSE_N; i++) {
-    if (dense[row][i] == 1) {
-      for (uint k = 0; k < K; k++)
-        acc[k] ^= v[off0 + i][k];
+    uint dij = dense[row][i];
+    for (int j = 0; j < 32; j++) {
+      uint bit = bitfieldExtract(dij, j, 1);
+      for (uint k = 0; k < K; k++) {
+        uint vjk = v[off0 + 32 * i + j][k];
+        if (bit == 1)
+          acc[k] ^= vjk;
+      }
     }
   }
   // Sparse coefficients
   uint i0 = sidx[row];
   uint i1 = sidx[row + 1];
   uint base = 0;
-  for (uint i = i0; i < i1; i++) {
+  uint i = i0;
+#ifdef UNROLL
+  // Partial unroll groups of UNROLL indices.
+  for (i = i0; i + UNROLL < i1; i += UNROLL) {
+    uint c[UNROLL];
+    uint vi[UNROLL][K];
+    for (uint ii = 0; ii < UNROLL; ii++)
+      c[ii] = sparse[i + ii];
+    for (uint ii = 0; ii < UNROLL; ii++) {
+      if (N >= 0xffff && c[ii] == 0xffff) {
+        base += 0xffff;
+        c[ii] = -1;
+      } else {
+        c[ii] = base + c[ii];
+      }
+    }
+    for (uint ii = 0; ii < UNROLL; ii++) {
+      if (c[ii] != -1)
+        vi[ii] = v[off0 + c[ii]];
+    }
+    for (uint ii = 0; ii < UNROLL; ii++) {
+      if (c[ii] != -1) {
+        for (uint k = 0; k < K; k++)
+          acc[k] ^= vi[ii][k];
+      }
+    }
+  }
+#endif
+#if defined(UNROLL) && UNROLL > 4
+  // Unroll block of 4
+  for (; i + 4 < i1; i += 4) {
+    uint c[4];
+    uint vi[4][K];
+    for (uint ii = 0; ii < 4; ii++)
+      c[ii] = sparse[i + ii];
+    for (uint ii = 0; ii < 4; ii++) {
+      if (N >= 0xffff && c[ii] == 0xffff) {
+        base += 0xffff;
+        c[ii] = -1;
+      } else {
+        c[ii] = base + c[ii];
+      }
+    }
+    for (uint ii = 0; ii < 4; ii++) {
+      if (c[ii] != -1)
+        vi[ii] = v[off0 + c[ii]];
+    }
+    for (uint ii = 0; ii < 4; ii++) {
+      if (c[ii] != -1) {
+        for (uint k = 0; k < K; k++)
+          acc[k] ^= vi[ii][k];
+      }
+    }
+  }
+#endif
+  for (; i < i1; i++) {
     uint c = sparse[i];
     if (N >= 0xffff && c == 0xffff) {
       base += 0xffff;
@@ -97,8 +163,8 @@ void main() {
   v[off1 + row] = acc;
 #ifndef POLYEVAL
   // The output sequence is just v[0] .. v[m-1]
-  if (gl_GlobalInvocationID.x < M)
-    wout[idx][gl_GlobalInvocationID.x] = acc;
+  if (OUTIDX <= gl_GlobalInvocationID.x && gl_GlobalInvocationID.x < OUTIDX + M)
+    wout[idx][gl_GlobalInvocationID.x - OUTIDX] = acc;
 #endif
   barrier();
   if (gl_LocalInvocationID.x == 0)

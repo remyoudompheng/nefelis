@@ -13,6 +13,8 @@ from nefelis.vulkan import shader, stamp_period
 
 # Avoid row reordering when constructing SpMV matrices.
 DEBUG_NO_SORT_ROWS = False
+# Don't add padding in extra columns
+DEBUG_NO_PADDING = False
 # Sanity check for matrix representation
 DEBUG_CHECK_ENCODING = False
 # Extra checks for returns kernel elements
@@ -20,12 +22,6 @@ DEBUG_CHECK_KERNEL = False
 
 
 logger = logging.getLogger("linalg")
-
-
-def berlekamp_massey(seq: list[int], l: int) -> list[int]:
-    ctx = flint.fmpz_mod_poly_ctx(l)
-    poly = ctx.minpoly(seq)
-    return [int(coef) for coef in poly]
 
 
 class SpMV:
@@ -49,7 +45,6 @@ class SpMV:
         weight = sum(len(r) for r in rels)
         basis, rowidx, dense, sparserows = to_sparse_matrix(rels)
         dim, dense_n = dense.shape
-        assert (dim * dense_n) % 4 == 0
         self.defines = {"N": dim, "DENSE_N": dense_n}
 
         # For debugging
@@ -58,7 +53,7 @@ class SpMV:
         self.sparserows = sparserows
 
         if DEBUG_CHECK_ENCODING:
-            assert np.all(dense >> 1 == 0)
+            # FIXME
 
             keyidx = {k: idx for idx, k in enumerate(basis)}
             for ridx in range(dim):
@@ -84,7 +79,7 @@ class SpMV:
         # Encode rows
         def encode_row(row):
             "Encode row when dimension is large"
-            nonlocal dense_n, dim
+            nonlocal dim
             if dim <= 0xFFFF:
                 return row
             enc = []
@@ -113,10 +108,10 @@ class SpMV:
         self.tensors = [xd, xplus, xidxp]
         bitsize = 32 * sum(t.size() for t in self.tensors)
         logger.debug(f"Matrix format using {bitsize / weight:.1f} bits/coefficient")
-        self.flops = dim * dense_n + size_plus
+        self.flops = dim * dense_n * 32 + size_plus
         self.weight = weight
         logger.debug(
-            f"{self.flops} int1 ops per matrix multiplication (original weight {weight})"
+            f"{self.flops} bit ops per matrix multiplication (original weight {weight})"
         )
 
     def shaders(self, defines, transpose: bool):
@@ -177,9 +172,9 @@ class SpMV:
         Compute a list of right-kernel elements: non-zero vectors Vi
         such that M*Vi == 0.
         """
-        if self.dim < 2048:
-            m = 8
-        elif self.dim < 16384:
+        # We want large m to obtain many kernel elements,
+        # but the CPU cost is high.
+        if self.dim < 16384:
             m = 16
         else:
             m = 32
@@ -213,38 +208,54 @@ class SpMV:
         # assert self.polyeval(poly1, v, m) == 0
 
     def left_kernel(self):
-        if self.dim < 2048:
-            m = 4
-        elif self.dim < 16384:
-            m = 8
-        elif self.dim < 65536:
+        if self.dim < 16384:
             m = 16
         else:
             m = 32
         # If sum(ak X^k) is a matrix generator of the sequence W0 M^k V0
-        # then sum(ak W0 M^k) is a possible right kernel element.
+        # then sum(ak W0 M^k) is a possible left kernel element.
+        #
         # W0 is not random and is always a zero-padded identity matrix.
-        poly, v = self.block_wiedemann(m, left=True)
+        # W0 is shifted by a random amount of columns.
+        outidx = random.randrange(0, self.dim - m)
+        poly, v = self.block_wiedemann(m, outidx=outidx, left=True)
         # FIXME: assumes m <= 32
         w0 = np.zeros((self.dim, (m + 31) // 32), dtype=np.uint32)
         for i in range(m):
-            w0[i, i // 32] = 1 << (i % 32)
+            iout = outidx + i
+            w0[iout, i // 32] = 1 << (i % 32)
         poly1 = [poly[len(poly) - i - 1] for i in range(len(poly))]
-        # print(poly1[0])
-        # print(poly1[1])
-        w = self.polyeval(poly1, w0, m, transpose=True)
-        polyx = [np.zeros((m, m), dtype=np.uint8), np.identity(m, dtype=np.uint8)]
-        wx = self.polyeval(polyx, w, m, transpose=True)
+        logger.debug(f"Linear generator has degree {len(poly) - 1}")
+
+        # Usually the degree 0 matrix has many zero rows, try dividing by X
+        shifted = 0
+        for i in range(m):
+            if np.all(poly1[0][i, :] == 0):
+                shifted += 1
+                for j in range(1, len(poly1)):
+                    poly1[j - 1][i, :] = poly1[j][i, :]
+        logger.info(f"Shifted {shifted} rows with polynomials divisible by X")
 
         kers = []
         seen = set()
+
+        w = self.polyeval(poly1, w0, m, transpose=True)
+        polyx = [np.zeros((m, m), dtype=np.uint8), np.identity(m, dtype=np.uint8)]
+        wx = self.polyeval(polyx, w, m, transpose=True)
+        wx2 = self.polyeval(polyx, wx, m, transpose=True)
+
+        dups = 0
         for i in range(m):
             wi = list(((w[:, 0] >> i) & 1).flatten())
             wxi = list(((wx[:, 0] >> i) & 1).flatten())
+            wx2i = list(((wx2[:, 0] >> i) & 1).flatten())
+            if sum(wxi) != 0 and sum(wx2i) == 0:
+                logger.debug(f"w[{i}] is not in kernel, shifting to wx[{i}]")
+                wi, wxi = wxi, wx2i
             if sum(wi) > 0 and sum(wxi) == 0:
                 wstr = "".join(str(b) for b in wi)
                 if wstr in seen:
-                    logger.debug("Ignoring duplicate kernel element")
+                    dups += 1
                     continue
                 kers.append(wi)
                 seen.add(wstr)
@@ -264,11 +275,11 @@ class SpMV:
                         if not _l.startswith("K_")
                     )
                     # print(mw)
-        logger.debug(f"Found {len(kers)} distinct nonzero left kernel elements")
+        logger.debug(f"Found {len(kers)} distinct nonzero left kernel elements ({dups} duplicates)")
         return kers
 
     def block_wiedemann(
-        self, m=32, left=False
+        self, m=32, outidx=0, left=False
     ) -> tuple[list[npt.NDArray], npt.NDArray]:
         """
         Compute a matrix linear generator using block Wiedemann algorithm
@@ -289,13 +300,13 @@ class SpMV:
         dim = self.dim
         N_WG = (dim + WGSIZE - 1) // WGSIZE
 
-        BATCHSIZE = 32
+        BATCHSIZE = 16
         K = (m + 31) // 32
 
         ITERS = dim // m + dim // m + 32
         ITERS = (ITERS // BATCHSIZE + 2) * BATCHSIZE
 
-        defines = self.defines | {"M": m, "K": K}
+        defines = self.defines | {"M": m, "K": K, "OUTIDX": outidx}
 
         # Tensor holding M^k V and M^(k+1) V
         v = np.zeros((2, dim, K), dtype=np.uint32)
@@ -367,7 +378,7 @@ class SpMV:
         dim = self.dim
         N_WG = (dim + WGSIZE - 1) // WGSIZE
 
-        BATCHSIZE = 32
+        BATCHSIZE = 16
         K = (m + 31) // 32
 
         defines = self.defines | {"M": m, "K": K, "POLYEVAL": 1}
@@ -412,7 +423,7 @@ DENSE_ALIGN = 32
 
 def to_sparse_matrix(
     rels: list[set],
-) -> tuple[list, list, npt.NDArray[np.int8], list[int], list, list]:
+) -> tuple[list[int], list[int], npt.NDArray[np.uint32], list[list[int]]]:
     """
     Converts a list of relations into a representation suitable
     for sparse matrix kernels.
@@ -423,7 +434,7 @@ def to_sparse_matrix(
     Returns:
     - primes: the list of column labels
     - rowidx: the list of relations indices used for each row
-    - dense: a dense tensor for the first n columns
+    - dense: a dense tensor (bit packed) for the first n columns
     - densebig: a tensor of big integers for large columns
     - plus, minus: a CSR representation of other columns separated by sign
     """
@@ -436,10 +447,11 @@ def to_sparse_matrix(
         for p in rel_trim:
             stats[p] = stats.get(p, 0) + 1
     rels = rels_trim
-    # Find densest columns above 33% fill ratio
+    # Find densest columns
     counts = sorted((count, p) for p, count in stats.items())
     dense_n = sum(1 for count, _ in counts if count > len(rels) // 4)
-    dense_n = max(DENSE_ALIGN, dense_n - dense_n % DENSE_ALIGN)
+    if dense_n % DENSE_ALIGN:
+        dense_n += DENSE_ALIGN - dense_n % DENSE_ALIGN
     dense_p = [p for _, p in counts[-dense_n:]]
     assert len(dense_p) % DENSE_ALIGN == 0
 
@@ -465,21 +477,33 @@ def to_sparse_matrix(
     rowidx = [ridx for _, ridx, _ in size_rels]
     rels = [_r for _, _, _r in size_rels]
 
-    dense = np.zeros((len(rels), len(dense_p)), dtype=np.int8)
+    dense = np.zeros((len(rels), len(dense_p) // 32), dtype=np.uint32)
     for i, r in enumerate(rels):
-        dense[i, :] = [int(p in r) for p in dense_p]
+        for j, p in enumerate(dense_p):
+            if p in r:
+                dense[i, j // 32] |= 1 << (j % 32)
 
     primes = dense_p + sorted(p for p in stats if p not in dense_set)
 
+    padding = {}
+    if not DEBUG_NO_PADDING:
+        # For extra columns, add padding elements (weight 4)
+        for j in range(len(primes), len(rels) - 64):
+            ii = [random.randrange(len(rels)) for _ in range(4)]
+            for i in ii:
+                padding.setdefault(i, []).append(j)
+
     prime_idx = {p: idx for idx, p in enumerate(primes)}
     sparse = []
-    for r in rels:
+    for ridx, r in enumerate(rels):
         row = []
         for p in r:
             if p in dense_set:
                 continue
             idx = prime_idx[p]
             row.append(idx)
+        if ridx in padding:
+            row.extend(set(padding[ridx]))
         row.sort()
         sparse.append(row)
     return primes, rowidx, dense, sparse
