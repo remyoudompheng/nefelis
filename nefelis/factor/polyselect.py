@@ -186,6 +186,8 @@ def roots4(N, p) -> list[int]:
     lifts = []
     p2 = p * p
     for r in rs:
+        if r == 0:
+            continue
         r = r - (r**4 - N) * pow(4 * r**3, -1, p2)
         lifts.append(r % p2)
     return lifts
@@ -306,9 +308,12 @@ def find_raw(N, d: int, ad, pmax: int, global_best: Value):
     for q in range(503, 700, 4):
         if not flint.fmpz(q).is_probable_prime():
             continue
+        if d % q == 0 or NN % q == 0:
+            continue
         for qr in roots_nth(NN, d, q):
             assert (qr**d - NN) % (q * q) == 0
             qrs.append((q, qr))
+
     # Prepare roots
     prs = []
     primes = integers.smallprimes(pmax)
@@ -373,8 +378,15 @@ def find_raw(N, d: int, ad, pmax: int, global_best: Value):
         # v = d ad V + k u
         k = vv * pow(u, -1, d * ad) % (d * ad)
         v = (vv - k * u) // (d * ad)
+        if math.gcd(u, v) != 1:
+            continue
         f = lemma21(N, u, v, d, ad)
         g = [-v, u]
+        assert f[-1] == ad
+        if sum(fi * v**i * u ** (d - i) for i, fi in enumerate(f)) % N != 0:
+            # FIXME: should not happen!
+            logger.error(f"invalid polynomial {f=} {g=}")
+            continue
         skew = skewpoly.skewness(f)
         norm = math.log2(math.sqrt(skewpoly.l2norm(f, skew)))
         normg = math.log2(math.sqrt(skewpoly.l2norm(g, skew)))

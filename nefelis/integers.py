@@ -47,7 +47,7 @@ def factor_smooth(n: int | flint.fmpz, bits: int) -> list[tuple[int, int]]:
     """
     Compute a partial factorization to obtain factors under bit length.
     """
-    if pymqs is not None:
+    if pymqs is not None and n.bit_length() < 512:
         facs = pymqs.factor_smooth(abs(int(n)), bits)
         # assert product(facs) == abs(int(n)), n
         facd = {}

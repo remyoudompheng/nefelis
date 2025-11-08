@@ -43,22 +43,39 @@ def l2norm(f: list[int]) -> float:
     # FIXME: explain
     if len(f) == 2:
         u, v = f
-        return float(u * u + v * v)
+        return float(u * u + v * v) / 4.0
     elif len(f) == 3:
         u, v, w = f
-        return float(3 * (u * u + w * w) + 2 * u * w + v * v) / 6.0
+        return float(3 * (u * u + w * w) + 2 * u * w + v * v) / 24.0
     elif len(f) == 4:
         a, b, c, d = f
-        return float(5 * (a * a + d * d) + 2 * (a * c + b * d) + b * b + c * c) / 8.0
+        return float(5 * (a * a + d * d) + 2 * (a * c + b * d) + b * b + c * c) / 64.0
     elif len(f) == 5:
         a0, a1, b, c1, c0 = f
-        return float(
-            35 * (a0**2 + c0**2)
-            + 10 * b * (a0 + c0)
-            + 5 * (a1**2 + c1**2)
-            + 6 * (a0 * c0 + a1 * c1)
-            + 3 * b**2
+        return (
+            float(
+                35 * (a0**2 + c0**2)
+                + 10 * b * (a0 + c0)
+                + 5 * (a1**2 + c1**2)
+                + 6 * (a0 * c0 + a1 * c1)
+                + 3 * b**2
+            )
+            / 640.0
         )
+    elif len(f) == 6:
+        a0, a1, a2, c2, c1, c0 = f
+        return (
+            float(
+                6 * (a2 * c1 + a0 * c1 + a1 * c2 + a1 * c0)
+                + 14 * (c0 * c2 + a0 * a2)
+                + 63 * (a0**2 + c0**2)
+                + 7 * (a1**2 + c1**2)
+                + 3 * (a2**2 + c2**2)
+            )
+            / 1536.0
+        )
+    else:
+        raise NotImplementedError
 
 
 class BadType(Enum):

@@ -2,11 +2,6 @@
 Optimal skewness and norms
 """
 
-import math
-
-import flint
-import numpy
-
 
 def l2norm(f: list[int], s: float) -> float:
     """
@@ -50,6 +45,8 @@ def l2norm(f: list[int], s: float) -> float:
             )
             / s
         )
+    else:
+        raise NotImplementedError
 
 
 def skewness(f: list[int]) -> float:
