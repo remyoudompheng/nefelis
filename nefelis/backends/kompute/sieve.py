@@ -15,6 +15,8 @@ from nefelis.vulkan import shader, stamp_period
 DEBUG_ROOTS = False
 DEBUG_TIMINGS = False
 
+DEBUG_LINESIEVE = False
+
 
 class Siever:
     def __init__(
@@ -358,6 +360,7 @@ class LineSiever:
         self.primes = primes
         self.roots = roots
         self.poly = poly
+        self.poly2 = poly2
         self.tq = tq
         self.tout = tout
         self.algo1 = algo1
@@ -434,6 +437,252 @@ class LineSiever:
         for i in range(1, outlen + 1):
             x, y = int(bout[i, 0]), int(bout[i, 1])
             results.append((q * x + qr * y, y))
+
+        if DEBUG_LINESIEVE and self.algo2:
+            print(self.poly2)
+            for x, y in results:
+                deg2 = len(self.poly2) - 1
+                gxy = sum(
+                    gi * x**i * y ** (deg2 - i) for i, gi in enumerate(self.poly2)
+                )
+                from nefelis import integers
+
+                print(x, y, integers.factor_smooth(gxy, q.bit_length()))
+        return results
+
+
+class LineSiever2:
+    SEGMENT_SIZE = 16384
+
+    def __init__(
+        self,
+        poly,
+        poly2,
+        primes,
+        roots,
+        threshold,
+        primes2,
+        roots2,
+        threshold2,
+        W: int,
+        H: int,
+        reduce_q: bool,
+        /,
+        outsize=256 * 1024,
+    ):
+        self.reduce_q = reduce_q
+
+        mgr = kp.Manager()
+        tprimes = mgr.tensor_t(np.array(primes, dtype=np.uint32))
+        troots = mgr.tensor_t(np.array(roots, dtype=np.uint32))
+        tqroots = mgr.tensor_t(np.array(roots, dtype=np.uint32))
+        tq = mgr.tensor_t(np.zeros(4, dtype=np.int32))
+        tout = mgr.tensor_t(np.zeros(2 * outsize, dtype=np.int32))
+
+        assert W % LineSiever.SEGMENT_SIZE == 0
+        NSEGS = 2 * W // LineSiever.SEGMENT_SIZE
+        LINES_PER_WG = max(1, int(round(H / 512)))
+
+        defines = {
+            "THRESHOLD": threshold,
+            "THRESHOLD2": threshold2,
+            "DEGREE": len(poly) - 1,
+            "DEGREE2": len(poly2) - 1,
+            "W": W,
+            "H": H,
+            "LINES_PER_WG": LINES_PER_WG,
+        }
+
+        assert primes2 and roots2 and len(primes2) == len(roots2) and threshold2
+        tprimes2 = mgr.tensor_t(np.array(primes2, dtype=np.uint32))
+        troots2 = mgr.tensor_t(np.array(roots2, dtype=np.uint32))
+        tqroots2 = mgr.tensor_t(np.zeros(len(roots2), dtype=np.uint32))
+
+        if primes[-1] > 4 * LineSiever.SEGMENT_SIZE:
+            # Manage huge primes
+            hugeidx = next(
+                pidx for pidx, p in enumerate(primes) if p > 2 * LineSiever.SEGMENT_SIZE
+            )
+            hugep = primes[hugeidx]
+            # Check no-overflow assumption
+            assert H * hugep < 2**31
+            avg_bucket = LineSiever.SEGMENT_SIZE * (
+                math.log(math.log(primes[-1]) / math.log(hugep))
+            )
+            bucket = int(1.1 * avg_bucket / 8 + 1) * 8
+
+            defines |= {
+                "HUGE_PRIME": hugeidx,
+                "BUCKET_SIZE": bucket,
+            }
+            thuge = mgr.tensor_t(
+                np.zeros(H * bucket * NSEGS, dtype=np.uint16).view(np.uint32)
+            )
+
+            memhuge = thuge.size() * 4
+            logging.info(
+                f"Sieving f with huge primes (primes[{hugeidx}]={hugep}, bucket size {bucket}, expected fill rate {avg_bucket:.0f}, memory {memhuge >> 20}MiB)"
+            )
+        else:
+            defines |= {
+                "HUGE_PRIME": len(primes),
+                "BUCKET_SIZE": 0,
+            }
+            thuge = mgr.tensor_t(np.zeros(1, dtype=np.int32))
+
+        if primes2[-1] > 4 * LineSiever.SEGMENT_SIZE:
+            # Manage huge primes
+            hugeidx2 = next(
+                pidx
+                for pidx, p in enumerate(primes2)
+                if p > 2 * LineSiever.SEGMENT_SIZE
+            )
+            hugep2 = primes2[hugeidx2]
+            # Check no-overflow assumption
+            assert H * hugep2 < 2**31
+            avg_bucket = LineSiever.SEGMENT_SIZE * (
+                math.log(math.log(primes2[-1]) / math.log(hugep2))
+            )
+            bucket = int(1.1 * avg_bucket / 8 + 1) * 8
+
+            defines |= {
+                "HUGE_PRIME2": hugeidx2,
+                "BUCKET_SIZE2": bucket,
+            }
+            thuge2 = mgr.tensor_t(
+                np.zeros(H * bucket * NSEGS, dtype=np.uint16).view(np.uint32)
+            )
+
+            memhuge = thuge2.size() * 4
+            logging.info(
+                f"Sieving g with huge primes (primes2[{hugeidx2}]={hugep2}, bucket size {bucket}, expected fill rate {avg_bucket:.0f}, memory {memhuge >> 20}MiB)"
+            )
+        else:
+            defines |= {
+                "HUGE_PRIME2": len(primes),
+                "BUCKET_SIZE2": 0,
+            }
+            thuge2 = mgr.tensor_t(np.zeros(1, dtype=np.int32))
+
+        shader1 = shader("linesieve_1roots", defines)
+        shader2 = shader("linesieve_2sieveboth", defines)
+        tensors1 = [
+            tprimes,
+            troots,
+            tq,
+            tqroots,
+            tout,
+            tout,
+            tprimes2,
+            troots2,
+            tqroots2,
+        ]
+        wg1 = max(len(primes), len(primes2)) // 256 + 1
+        algo1 = mgr.algorithm(tensors1, shader1, (wg1, 1, 1))
+        algo2 = mgr.algorithm(
+            [tprimes, tqroots, tprimes2, tqroots2, tq, tout, thuge, thuge2],
+            shader2,
+            (H // LINES_PER_WG + 1, 1, 1),
+        )
+
+        # Send constants
+        mgr.sequence().record(
+            kp.OpTensorSyncDevice([tprimes, troots, tprimes2, troots2])
+        ).eval()
+
+        self.mgr = mgr
+        self.primes = primes
+        self.roots = roots
+        self.poly = poly
+        self.poly2 = poly2
+        self.tq = tq
+        self.tout = tout
+        self.algo1 = algo1
+        self.algo2 = algo2
+        self.defines = defines
+
+    def sieve(self, q: int, qr: int):
+        if q == qr:
+            qred = flint.fmpz_mat([[0, q], [1, 0]])
+        else:
+            qred = flint.fmpz_mat([[q, 0], [qr, 1]])
+        if self.reduce_q:
+            qred = qred.lll()
+        a, c, b, d = qred.entries()
+
+        self.tq.data()[:] = [a, b, c, d]
+        seq = self.mgr.sequence(total_timestamps=16)
+        seq.record(kp.OpTensorSyncDevice([self.tq]))
+        seq.record(kp.OpAlgoDispatch(self.algo1))
+        seq.record(kp.OpAlgoDispatch(self.algo2))
+        seq.record(kp.OpTensorSyncLocal([self.tout]))
+        seq.eval()
+
+        if DEBUG_TIMINGS:
+            ts = seq.get_timestamps()
+            print(
+                [
+                    round((t1 - t0) * stamp_period() * 1e-6, 3)
+                    for t0, t1 in zip(ts, ts[1:])
+                ]
+            )
+
+        if DEBUG_ROOTS:
+            tprimes = self.algo1.get_tensors()[0]
+            troots = self.algo1.get_tensors()[1]
+            tqroots = self.algo1.get_tensors()[3]
+            self.mgr.sequence().record(
+                kp.OpTensorSyncLocal([tprimes, troots, tqroots])
+            ).eval()
+            assert len(tprimes.data()) == len(self.primes)
+            for p, r, rq in zip(tprimes.data(), troots.data(), tqroots.data()):
+                if rq == p:
+                    xx, yy = q, 0
+                else:
+                    xx = q * rq + qr
+                    yy = 1
+                if r == p:
+                    assert yy % p == 0
+                else:
+                    assert (xx - r * yy) % p == 0, (p, r)
+            del p, r, rq
+            tprimes2 = self.algo1.get_tensors()[6]
+            troots2 = self.algo1.get_tensors()[7]
+            tqroots2 = self.algo1.get_tensors()[8]
+            self.mgr.sequence().record(
+                kp.OpTensorSyncLocal([tprimes2, troots2, tqroots2])
+            ).eval()
+            for p, r, rq in zip(tprimes2.data(), troots2.data(), tqroots2.data()):
+                if rq == p:
+                    xx, yy = q, 0
+                else:
+                    xx = q * rq + qr
+                    yy = 1
+                if r == p:
+                    assert yy % p == 0
+                else:
+                    assert (xx - r * yy) % p == 0, (p, r)
+
+        bout = self.tout.data()
+        outsize = bout.size // 2
+        bout = bout.reshape((outsize, 2))
+        outlen = min(bout[0, 0], outsize - 1)
+        # FIXME: use numpy here
+        results = []
+        for i in range(1, outlen + 1):
+            x, y = int(bout[i, 0]), int(bout[i, 1])
+            results.append((a * x + b * y, c * x + d * y))
+
+        if DEBUG_LINESIEVE and self.algo2:
+            print(self.poly2)
+            for x, y in results:
+                deg2 = len(self.poly2) - 1
+                gxy = sum(
+                    gi * x**i * y ** (deg2 - i) for i, gi in enumerate(self.poly2)
+                )
+                from nefelis import integers
+
+                print(x, y, integers.factor_smooth(gxy, q.bit_length()))
         return results
 
 

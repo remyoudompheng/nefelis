@@ -86,25 +86,39 @@ GSCORE = 1.0
 PARAMS3 = [
     # (Nbits, admin, admax, adstride, PMAX)
     (100, 6, 60, 6, 300),
-    (120, 6, 60, 6, 500),
-    (140, 6, 60, 6, 1_000),
-    (160, 6, 60, 6, 4_000),
-    (180, 6, 72, 6, 10_000),
-    (200, 6, 96, 6, 15_000),
-    (220, 6, 120, 6, 20_000),
+    (120, 6, 60, 6, 400),
+    (140, 6, 60, 6, 500),
+    (160, 6, 60, 6, 500),
+    (180, 6, 60, 6, 800),
+    (200, 6, 96, 6, 1000),
+    (220, 6, 120, 6, 3000),
+    (240, 6, 180, 6, 5000),
 ]
 
-# Target normf is N^(1/6)
 PARAMS4 = [
     # (Nbits, admin, admax, adstride, PMAX)
+    (220, 30, 900, 6, 5_000),
     (240, 6, 60, 6, 10_000),
-    (260, 6, 60, 6, 20_000),
-    (280, 12, 72, 6, 60_000),
-    (300, 24, 92, 6, 100_000),
-    (320, 24, 120, 6, 200_000),
+    (260, 6, 90, 6, 20_000),
+    (280, 6, 120, 6, 40_000),
+    (300, 6, 180, 6, 100_000),
+    (320, 24, 180, 6, 200_000),
     (340, 24, 240, 6, 300_000),
-    # (360, 30, 2000, 30, 500_000),
-    (360, 3000, 4000, 30, 500_000),
+    (360, 24, 400, 6, 500_000),
+    (380, 24, 600, 6, 700_000),
+    (400, 24, 800, 6, 800_000),
+    (420, 6, 400, 2, 900_000),
+    (440, 6, 400, 2, 1200_000),
+]
+
+PARAMS5 = [
+    # (Nbits, admin, admax, adstride, PMAX)
+    (300, 2, 30, 2, 200_000),
+    (320, 2, 30, 2, 200_000),
+    (340, 2, 20, 2, 300_000),
+    (380, 6, 120, 2, 500_000),
+    (400, 30, 300, 6, 800_000),
+    (420, 6, 240, 2, 500_000),
 ]
 
 
@@ -114,8 +128,10 @@ def polyselect(N: int, deg: int) -> tuple[list[int], list[int]]:
 
     if deg == 3:
         PARAMS = PARAMS3
-    else:
+    elif deg == 4:
         PARAMS = PARAMS4
+    else:
+        PARAMS = PARAMS5
     _, admin, admax, adstride, pmax = min(
         PARAMS, key=lambda t: abs(t[0] - N.bit_length())
     )
@@ -150,6 +166,7 @@ def lemma21(N, v, u, d, ad):
     # Decompose N as ad u^4 + ... + v^4
     # Res(f, vx-u) = N
     ri = (N - ad * u**d) // v
+    # assert (N - ad * u**d) % v == 0
     f = [ad]
     for i in range(d - 1, -1, -1):
         ui = u**i
@@ -303,9 +320,15 @@ def find_raw(N, d: int, ad, pmax: int, global_best: Value):
     # FIXME: choose according to size of N
     BOUND = pmax**2
     # Generate "special-q"
-    qrs = []
     # Select auxiliary q to reduce skew
-    for q in range(503, 700, 4):
+    qrs = []
+    if d == 3:
+        qmin, qmax = 10, 100
+    elif d == 4:
+        qmin, qmax = 500, 700
+    else:
+        qmin, qmax = 50, 200
+    for q in range(qmin, qmax):
         if not flint.fmpz(q).is_probable_prime():
             continue
         if d % q == 0 or NN % q == 0:
@@ -333,7 +356,7 @@ def find_raw(N, d: int, ad, pmax: int, global_best: Value):
         q2 = q * q
         v0 = Nroot - q2 * BOUND // 2
         v0 += qr - v0 % q2
-        # assert (N - ad * v0**4) % q2 == 0
+        # assert (NN - v0**d) % q2 == 0
         # we are looking for v0 + kq
         for p, pr in prs:
             if p == q:
@@ -370,9 +393,9 @@ def find_raw(N, d: int, ad, pmax: int, global_best: Value):
         for l, e in facs:
             if e & 1 == 0 and (d * ad % l) != 0:
                 u *= l ** (e // 2)
-        if u < pmax:
-            continue
 
+        if u < qmax:
+            continue
         assert (vv**d - NN) % u**2 == 0
         # Convert to integral coefficients v=V/(d ad)
         # v = d ad V + k u

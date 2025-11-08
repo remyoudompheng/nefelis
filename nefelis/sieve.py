@@ -1,1 +1,3 @@
-from .backends.kompute.sieve import Siever as Siever, LineSiever as LineSiever
+from .backends.kompute.sieve import Siever, LineSiever, LineSiever2
+
+__all__ = [Siever, LineSiever, LineSiever2]

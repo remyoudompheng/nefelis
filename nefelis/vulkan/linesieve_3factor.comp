@@ -89,7 +89,7 @@ void main() {
       const uint ridx = atomicAdd(result2[0].x, 1);
       if (ridx + 1 < result2.length()) {
         // Don't multiply by q
-        result2[1 + ridx] = result[out0 + tidx];
+        result2[1 + ridx] = sresult[tidx];
       }
     }
   }
