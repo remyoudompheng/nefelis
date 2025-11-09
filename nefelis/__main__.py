@@ -5,6 +5,7 @@ import tempfile
 from nefelis import deg2
 from nefelis import deg3
 from nefelis import fp2
+from nefelis import factor
 
 
 def main():
@@ -30,7 +31,15 @@ def main():
         "--blockw", default=1, type=int, help="Use Block Wiedemann with size m=ARG n=1"
     )
 
-    argp.add_argument("METHOD", choices=("deg2", "deg3", "fp2"))
+    factor_args = argp.add_argument_group("Factoring options")
+    factor_args.add_argument(
+        "--snfs", action="store_true", help="Use Special number field sieve"
+    )
+    factor_args.add_argument(
+        "--parambias", type=int, default=0, help="Use parameters for size N+parambias"
+    )
+
+    argp.add_argument("METHOD", choices=("deg2", "deg3", "fp2", "factor"))
     argp.add_argument("N", type=int)
     argp.add_argument(
         "ARGS", nargs="*", type=str, help="Arguments for discrete logarithm"
@@ -53,9 +62,11 @@ def main():
     logging.getLogger().handlers[0].addFilter(add_relative_seconds)
 
     if args.WORKDIR is None:
-        logging.getLogger("main").info("Creating temporary directory for results")
         with tempfile.TemporaryDirectory(prefix="nefelis") as tmpdir:
             args.WORKDIR = tmpdir
+            logging.getLogger("main").info(
+                f"Creating temporary directory {tmpdir} for results"
+            )
             main_impl(args)
     else:
         main_impl(args)
@@ -78,6 +89,9 @@ def main_impl(args):
             fp2.linalg.main_impl(args)
             if args.ARGS:
                 fp2.dlog.main_impl(args)
+        case "factor":
+            factor.sieve.main_impl(args)
+            factor.linalg.main_impl(args)
         case _:
             raise NotImplementedError
 

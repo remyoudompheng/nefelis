@@ -136,6 +136,7 @@ def main_impl(args):
     facs = [n]
     while True:
         kers = M.left_kernel()
+        logger.info(f"Found {len(kers)} left kernel elements")
         sqrt_start = time.monotonic()
         facs = factor_with_kernels(n, f, g, z, zrels, M, kers, facs)
         sqrt_dt = time.monotonic() - sqrt_start

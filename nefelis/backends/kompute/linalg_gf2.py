@@ -275,9 +275,7 @@ class SpMV:
                         if not _l.startswith("K_")
                     )
                     # print(mw)
-        logger.debug(
-            f"Found {len(kers)} distinct nonzero left kernel elements ({dups} duplicates)"
-        )
+        logger.debug(f"Skipped {dups} duplicate kernel elements")
         return kers
 
     def block_wiedemann(
