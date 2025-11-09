@@ -163,11 +163,11 @@ void prepare_huge(uint p, uint qr, bool side2) {
       if (side2) {
         const uint hidx = atomicAdd(hugelen2[dy][j], 1);
         huges2[huge_off2 + (dy * N_SEGMENTS + j) * BUCKET_SIZE2 + hidx] =
-            uint16_t(x + SEGMENT_SIZE * logp_bits);
+            uint16_t(x % SEGMENT_SIZE + SEGMENT_SIZE * logp_bits);
       } else {
         const uint hidx = atomicAdd(hugelen[dy][j], 1);
         huges[huge_off + (dy * N_SEGMENTS + j) * BUCKET_SIZE + hidx] =
-            uint16_t(x + SEGMENT_SIZE * logp_bits);
+            uint16_t(x % SEGMENT_SIZE + SEGMENT_SIZE * logp_bits);
       }
       x += p;
     }

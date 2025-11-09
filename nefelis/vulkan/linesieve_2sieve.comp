@@ -171,7 +171,7 @@ void prepare_huge(uint pidx) {
       const uint j = x / SEGMENT_SIZE;
       const uint hidx = atomicAdd(hugelen[dy][j], 1);
       huges[huge0 + (dy * N_SEGMENTS + j) * BUCKET_SIZE + hidx] =
-          uint16_t(x + SEGMENT_SIZE * logp_bits);
+          uint16_t(x % SEGMENT_SIZE + SEGMENT_SIZE * logp_bits);
       x += p;
     }
   }
