@@ -30,7 +30,7 @@ import time
 import flint
 
 from nefelis import sieve
-from nefelis.integers import factor, smallprimes
+from nefelis.integers import factor, factor_smooth, smallprimes
 from nefelis.deg2.polyselect import polyselect
 
 logger = logging.getLogger("sieve")
@@ -59,13 +59,14 @@ class Factorer:
             vg = abs((u * x + v * y) // q)
 
             facf = []
+            # FIXME: factor_smooth has issues with very small smooth inputs
             for _l, _e in factor(vf):
                 facf += _e * [int(_l)]
             if any(_f.bit_length() > self.B2f for _f in facf):
                 continue
 
             facg = [q]
-            for _l, _e in factor(vg):
+            for _l, _e in factor_smooth(vg, self.B2g):
                 facg += _e * [int(_l)]
             if any(_l.bit_length() > self.B2g for _l in facg):
                 continue

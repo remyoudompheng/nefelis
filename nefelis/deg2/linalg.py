@@ -281,6 +281,9 @@ def main_impl(args):
         for _l, _e in flint.fmpz(f[2]).factor():
             Ainvlog -= _e * dlog[-_l]
 
+    Zn = flint.fmpz_mod_ctx(n)
+    ginv = Zn(gen) ** -1
+
     for l, v in list(dlog.items()):
         # The key u=g[1] actually represents u/A
         if l == g[1]:
@@ -298,7 +301,7 @@ def main_impl(args):
             dlogs.append((l, 0, r, v))
             # Check logarithm
             # assert pow(gen, v * coell, n) == pow(l, coell, n), f"{l} != ± {gen}^{v}"
-            if pow(gen, v * coell, n) != pow(l, coell, n):
+            if (Zn(l) * ginv**v) ** coell != 1:
                 logger.error(f"FAIL {l} != ± {gen}^{v}")
                 raise ValueError(f"Incorrect logarithm of rational prime {l}")
             else:
