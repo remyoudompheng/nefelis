@@ -3,6 +3,10 @@ Variant of merge/filter for linear algebra modulo 2.
 
 For factoring, we don't need to save purged/deleted relations,
 they will not be used.
+
+The convention is to represent relations as sets of integers:
+* nonnegative integers represent the ideal/character basis elements
+* negative integers represent the original relation indices (for sqrt step)
 """
 
 import logging
@@ -42,7 +46,7 @@ def prune(
         if r is None:
             continue
         for p in r:
-            if p.startswith("K_"):
+            if p < 0:
                 continue
             stats_p = stats.setdefault(p, [])
             if stats_p is None:
@@ -160,32 +164,29 @@ def filter(rels, datadir: pathlib.Path | None):
     D = 2**250
     dense_limit = 100
 
+    t = time.time()
     stats = {}
+    dense_cols = set()
     for ridx, r in enumerate(rels):
         for p in r:
-            if p.startswith("K_"):
+            if p < 0:
                 continue
-            stats.setdefault(p, set()).add(ridx)
-
-    def addstat(ridx, r):
-        for p in r:
-            if p.startswith("K_"):
-                continue
-            stats.setdefault(p, set()).add(ridx)
+            pset = stats.get(p)
+            if pset is None:
+                stats[p] = {ridx}
+            elif len(pset) < dense_limit:
+                pset.add(ridx)
+                if len(pset) == dense_limit:
+                    dense_cols.add(p)
 
     def delstat(ridx, r):
         for p in r:
-            if p.startswith("K_"):
+            if p < 0 or p in dense_cols:
                 continue
             stats[p].remove(ridx)
-            if not stats[p]:
-                stats.pop(p)
-
-    def pivot(piv, r, p):
-        return r.symmetric_difference(piv)
 
     def weight(row):
-        return sum(1 for _p in row if not _p.startswith("K_"))
+        return sum(1 for _p in row if p >= 0)
 
     excess = len(rels) - len(stats)
     logger.info(f"{len(stats)} primes appear in relations")
@@ -194,8 +195,6 @@ def filter(rels, datadir: pathlib.Path | None):
     # prime p = product(l^e)
 
     Ds = [2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 20]
-    Ds += [25, 30, 35, 40, 45, 50, 60, 70, 80, 90, 100]
-    t = time.time()
     removed = 0
     for d in Ds:
         remaining = [_r for _r in rels if _r is not None]
@@ -215,7 +214,7 @@ def filter(rels, datadir: pathlib.Path | None):
         MIN_EXCESS = 64 + D.bit_length()
 
         # d-merges
-        md = [k for k in stats if len(stats[k]) <= d]
+        md = [k for k in stats if len(stats[k]) <= d and k not in dense_cols]
         if not md:
             break
         logger.debug(f"{len(md)} {d}-merges candidates {min(md)}..{max(md)}")
@@ -226,25 +225,27 @@ def filter(rels, datadir: pathlib.Path | None):
                 # prime already eliminated or weight has grown
                 continue
             # Pivot has fewest coefficients and pivot value is ±1
-            assert all(p in rels[ridx] for ridx in stats[p])
+            # assert all(p in rels[ridx] for ridx in stats[p])
             rs = sorted(rs, key=lambda ridx: weight(rels[ridx]))
             pividx = rs[0]
             piv = rels[pividx]
             for ridx in rs[1:]:
-                rp = pivot(piv, rels[ridx], p)
-                delstat(ridx, rels[ridx])
-                addstat(ridx, rp)
+                rp = rels[ridx].symmetric_difference(piv)
                 # If relation becomes empty, remove it
                 rels[ridx] = rp if len(rp) > 0 else None
-            # Remove and save pivot
-            delstat(pividx, piv)
+            # For each element of piv, ridx will be toggled from stats[l]
+            for l in piv:
+                if l >= 0:
+                    stats[l].symmetric_difference_update(rs)
             rels[pividx] = None
             removed += 1
-            assert p not in stats
             merged += 1
         logger.debug(f"{merged} pivots done")
 
         remaining = [_r for _r in rels if _r is not None]
+        pivoted = [p for p, ps in stats.items() if not ps]
+        for p in pivoted:
+            stats.pop(p)
         nr, nc = len(remaining), len(stats)
         avgw = sum(len(r) for r in remaining) / nr
 
@@ -314,12 +315,13 @@ def filter(rels, datadir: pathlib.Path | None):
             f"Worst rows ({len(worst)}) have score {worst[0][0]:.3f}..{worst[-1][0]:.3f}"
         )
         for _, ridx in worst:
-            # Not a pivot, no need to save.
-            delstat(ridx, rels[ridx])
             rels[ridx] = None
 
+    cols = set()
     rels = [_r for _r in rels if _r is not None]
-    nr, nc = len(rels), len(stats)
+    for _r in rels:
+        cols.update(l for l in _r if l >= 0)
+    nr, nc = len(rels), len(cols)
     avgw = sum(len(r) for r in rels) / len(rels)
     dt = time.time() - t0
     logger.info(
@@ -329,7 +331,7 @@ def filter(rels, datadir: pathlib.Path | None):
     if datadir is not None:
         with open(datadir / "relations.filtered", "w") as w:
             for r in rels:
-                line = " ".join(l for l in sorted(r))
+                line = " ".join(str(l) for l in sorted(r))
                 w.write(line)
                 w.write("\n")
             logger.info(f"{len(rels)} relations written to {w.name}")

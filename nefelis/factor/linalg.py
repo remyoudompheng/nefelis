@@ -16,6 +16,7 @@ import pathlib
 import time
 
 import flint
+import numpy as np
 
 from nefelis import filter_disk
 from nefelis import filter_gf2 as filter
@@ -82,7 +83,7 @@ def main_impl(args):
     # (necessary for the sqrt part?) but the kernel part will be modulo 2.
 
     dedup_keys = {}
-    rels: list[set] = []
+    rels: list[set[int]] = []
     zrels: dict = {}
     seen_xy = set()
     duplicates = 0
@@ -90,37 +91,61 @@ def main_impl(args):
     if not (workdir / "relations.sieve.pruned").is_file():
         filter_disk.prune(str(workdir / "relations.sieve"))
 
+    # For factoring, we need to find a square in the number field,
+    # but we don't need to know which ideals are involved except for the rational side
+    # (saved in zrels dictionary)
+    #
+    # By convention we save:
+    # - negative integer (-1, ...) for the (x,y) element index
+    # - positive integers for the ideal/character basis
+    seen_basis: dict[str, int] = {"CONSTANT": 0}
+    name_basis: list[str] = ["CONSTANT"]
+    xy_elems: list[tuple] = [None]
+
+    for key, _, _ in chis:
+        seen_basis[key] = len(name_basis)
+        name_basis.append(key)
+
     t0 = time.monotonic()
     for x, y, facg, facf in read_relations(workdir / "relations.sieve.pruned"):
         if (x, y) in seen_xy:
             duplicates += 1
             continue
         seen_xy.add((x, y))
-        # Marker K_x_y to recognize filtering output
-        rel = {"CONSTANT", f"K_{x}_{y}"}
+        xy_elems.append((x, y))
+        # Index of (x,y) to reconstruct value from kernel vector
+        rel = {0, 1 - len(xy_elems)}
         for _l in facf:
             _r = x * pow(y, -1, _l) % _l if y % _l else _l
             key = f"f_{_l}_{_r}"
-            key = dedup_keys.setdefault(key, key)
-            if key in rel:
-                rel.remove(key)
+            idx = seen_basis.get(key)
+            if idx is None:
+                idx = len(name_basis)
+                seen_basis[key] = idx
+                name_basis.append(key)
+            if idx in rel:
+                rel.remove(idx)
             else:
-                rel.add(key)
+                rel.add(idx)
         for key, _l, _r in chis:
             if flint.fmpz(x - _r * y).jacobi(_l) == -1:
-                rel.add(key)
+                rel.add(seen_basis[key])
         for _l in facg:
             key = f"Z_{_l}"
-            key = dedup_keys.setdefault(key, key)
-            if key in rel:
-                rel.remove(key)
+            idx = seen_basis.get(key)
+            if idx is None:
+                idx = len(name_basis)
+                seen_basis[key] = idx
+                name_basis.append(key)
+            if idx in rel:
+                rel.remove(idx)
             else:
-                rel.add(key)
-        zrels[(x, -y)] = facg
-        # FIXME: add quadratic characters here
+                rel.add(idx)
+        zrels[(x, -y)] = np.array(facg, dtype=np.uint64)
         rels.append(rel)
     del dedup_keys
     del seen_xy
+    del seen_basis
 
     dt = time.monotonic() - t0
     logger.info(
@@ -138,7 +163,7 @@ def main_impl(args):
         kers = M.left_kernel()
         logger.info(f"Found {len(kers)} left kernel elements")
         sqrt_start = time.monotonic()
-        facs = factor_with_kernels(n, f, g, z, zrels, M, kers, facs)
+        facs = factor_with_kernels(n, f, g, z, xy_elems, zrels, M, kers, facs)
         sqrt_dt = time.monotonic() - sqrt_start
         logsqrt.info(f"Sqrt step done in {sqrt_dt:.3f}s")
         if all(
@@ -157,7 +182,7 @@ def main_impl(args):
 
 
 def factor_with_kernels(
-    n: int, f, g, z, zrels, M, kers, facs: list[int] = None
+    n: int, f, g, z, xy_elems, zrels, M, kers, facs: list[int] = None
 ) -> list:
     Zn = flint.fmpz_mod_ctx(n)
     if facs is None:
@@ -172,6 +197,8 @@ def factor_with_kernels(
         for r, e in fmodl.roots():
             if e == 1:
                 testchis.append((l, int(r)))
+        if len(testchis) >= 32:
+            break  # 32 characters are enough for sanity check
     assert len(testchis) >= 16
     logger.info(f"Prepared {len(testchis)} quadratic characters for validation")
 
@@ -186,12 +213,11 @@ def factor_with_kernels(
         for j in range(dim):
             if ki[j]:
                 r = M.rels[M.rowidx[j]]
-                s.symmetric_difference_update([l for l in r if l.startswith("K_")])
+                s.symmetric_difference_update([ridx for ridx in r if ridx < 0])
 
         xys = []
-        for key in s:
-            prefix, x, y = key.split("_")
-            assert prefix == "K"
+        for ridx in s:
+            x, y = xy_elems[-ridx]
             xys.append((int(x), -int(y)))
 
         is_probably_square = True
@@ -237,7 +263,7 @@ def factor_with_kernels(
             # Compute square root on the rational side
             factors = {}
             for x, y in xys:
-                for _l in zrels[(x, y)]:
+                for _l in map(int, zrels[(x, y)]):
                     factors[_l] = factors.get(_l, 0) + 1
             sqrtz = Zn(1)
             for p, e in factors.items():

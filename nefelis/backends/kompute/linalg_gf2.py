@@ -442,7 +442,7 @@ def to_sparse_matrix(
     # Remove "K_" keys before working
     rels_trim = []
     for r in rels:
-        rel_trim = set(p for p in r if not p.startswith("K_"))
+        rel_trim = set(p for p in r if p >= 0)
         rels_trim.append(rel_trim)
         for p in rel_trim:
             stats[p] = stats.get(p, 0) + 1
