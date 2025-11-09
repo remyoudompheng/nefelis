@@ -329,16 +329,16 @@ def main_impl(args):
     last_log = 0
     total_area = 0
     total_q = 0
-    seenf = set()
-    seeng = set()
-    fcount, gcount = 0, 0
+    seenK = set()
+    seenQ = set()
+    Kcount, Qcount = 0, 0
 
     # Singleton live tracking
     # For each relation: number of singleton primes (less than 255)
     orphans = np.zeros(1 << 20, dtype=np.uint8)
     # For each singleton prime, index of relation containing it
-    orphanf = {}
-    orphang = {}
+    orphanK = {}
+    orphanQ = {}
 
     excess1, excess2 = -9999, -9999
     sieve_args: Iterator[tuple[int, int]] = zip(qs, qrs)
@@ -390,22 +390,22 @@ def main_impl(args):
                     else:
                         facK, facZ = facg, facf
                     for _l in facZ:
-                        if _l not in seenf:
+                        if _l not in seenQ:
                             orphans[total] += 1
-                            orphanf[_l] = total
-                            seenf.add(_l)
+                            orphanQ[_l] = total
+                            seenQ.add(_l)
                         else:
-                            if (idx := orphanf.pop(_l, None)) is not None:
+                            if (idx := orphanQ.pop(_l, None)) is not None:
                                 orphans[idx] -= 1
                     for _l, _r in zip(facK, ideals):
                         _lr = (_l << 32) | _r
-                        if _lr not in seeng:
+                        if _lr not in seenK:
                             # new singleton
                             orphans[total] += 1
-                            orphang[_lr] = total
-                            seeng.add(_lr)
+                            orphanK[_lr] = total
+                            seenK.add(_lr)
                         else:
-                            if (idx := orphang.pop(_lr, None)) is not None:
+                            if (idx := orphanK.pop(_lr, None)) is not None:
                                 orphans[idx] -= 1
                     total += 1
                     seen.add(xy)
@@ -418,22 +418,22 @@ def main_impl(args):
                 total_q += 1
                 total_area += AREA
                 elapsed = time.monotonic() - t0
-                fcount = len(seenf)
-                gcount = len(seeng)
+                Kcount = len(seenK)
+                Qcount = len(seenQ)
                 if total_q < 10 or elapsed > last_log + 1:
                     # Don't log too often.
                     n_orphans = np.count_nonzero(orphans)
                     if total > len(orphans) / 2:
                         orphans.resize((len(orphans) * 2,))
-                    excess1 = total - fcount - gcount
+                    excess1 = total - Kcount - Qcount
                     excess2 = (total - n_orphans) - (
-                        fcount + gcount - len(orphanf) - len(orphang)
+                        Kcount + Qcount - len(orphanK) - len(orphanQ)
                     )
                     last_log = elapsed
                     logger.info(
                         f"Sieved q={q:<8} r={qr:<8} area {total_area / 1e9:.0f}G in {dt:.3f}s "
                         + f"(speed {total_area / elapsed / 1e9:.3f}G/s shader {AREA / dt / 1e9:.3f}G/s): "
-                        + f"{nrels}/{nreports} relations, {fcount}/{gcount} K/Q primes, total {total}"
+                        + f"{nrels}/{nreports} relations, {Kcount}/{Qcount} K/Q primes, total {total}"
                         + f" excess {excess1}/{excess2}"
                     )
                     if max(excess1, excess2) > max(64, min(10000, total / 20)):
@@ -444,7 +444,7 @@ def main_impl(args):
                 logger.warning(f"{len(factor_jobs)} jobs waiting for cofactorization!")
 
             # Compute excess with/without singletons
-            excess1 = total - fcount - gcount
+            excess1 = total - Kcount - Qcount
             if max(excess1, excess2) > max(64, min(10000, total / 20)):
                 logger.info("Enough relations")
                 [j.cancel() for j in sieve_jobs]
