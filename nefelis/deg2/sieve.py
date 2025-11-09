@@ -284,7 +284,7 @@ def main_impl(args):
             elapsed = time.monotonic() - t0
             Qcount = len(seenf | seeng)
             Kcount = len(seenf)
-            if elapsed < 2 or elapsed > last_log + 1:
+            if total_q < 10 or elapsed > last_log + 1:
                 # Don't log too often.
                 last_log = elapsed
                 logger.info(

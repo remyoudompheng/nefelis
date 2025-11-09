@@ -282,7 +282,7 @@ def main_impl(args):
 
     qs, qrs = [], []
     for _l, _r in zip(ls, rs):
-        if qmin <= _l <= 10 * qmin:
+        if qmin <= _l <= 30 * qmin:
             qs.append(_l)
             qrs.append(_r)
 
@@ -420,7 +420,7 @@ def main_impl(args):
                 elapsed = time.monotonic() - t0
                 fcount = len(seenf)
                 gcount = len(seeng)
-                if elapsed < 2 or elapsed > last_log + 1:
+                if total_q < 10 or elapsed > last_log + 1:
                     # Don't log too often.
                     n_orphans = np.count_nonzero(orphans)
                     if total > len(orphans) / 2:

@@ -111,6 +111,9 @@ class Descent:
         elif nbits < 300:
             self.MAX_QBITS = 56
             THRESHOLD = 25
+        else:
+            self.MAX_QBITS = 60
+            THRESHOLD = 30
 
         v, u = g
         rs = [(-v * pow(u, -1, l)) % l if u % l else l for l in zs]
