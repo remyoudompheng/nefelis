@@ -45,6 +45,8 @@ shared uint row[WIDTH / 4];
 uint tidx = gl_LocalInvocationID.x;
 int y0 = int(gl_WorkGroupID.x) * WGROWS + 1;// - WIDTH;
 
+const uint LOGHUGE = LOGWIDTH + 3;
+
 #ifdef HUGE_PRIME
 // Start of huge buffers
 uint huge0 = gl_WorkGroupID.x * (WGROWS - 1) * BUCKET_SIZE;
@@ -55,7 +57,7 @@ shared uint hugelen[WGROWS - 1];
 
 void doprime(uint pidx, int y, bool small) {
   const uint p = primes[pidx];
-  const uint logp = findMSB(p);
+  const uint logp = findMSB(p + p / 2);
   const float pinv = 1.0 / float(p);
 
   const uint qr = qroots[pidx];
@@ -100,9 +102,9 @@ void doprime(uint pidx, int y, bool small) {
 #ifdef HUGE_PRIME
 void prepare_huge(uint pidx) {
   const uint p = primes[pidx];
-  const uint logp = findMSB(p);
+  const uint logp = findMSB(p) + 1;
   // We store logp/2 in the upper bits of the huge buffer.
-  const uint logp_bits = clamp((logp - LOGWIDTH) / 2, 0, 65536 / WIDTH);
+  const uint logp_bits = clamp((logp - LOGHUGE) / 2, 0, 65536 / WIDTH);
   const float pinv = 1.0 / float(p);
 
   const uint qr = qroots[pidx];
@@ -132,7 +134,7 @@ void dohuge(int y) {
   for (uint i = 0; i < blen; i += gl_WorkGroupSize.x) {
     if (i + tidx < blen) {
       uint x = huges[bidx0 + i + tidx];
-      const uint logp = LOGWIDTH + 2 * (x / WIDTH);
+      const uint logp = LOGHUGE + 2 * (x / WIDTH);
       x %= WIDTH;
       atomicAdd(row[x / 4], logp << (8 * (x % 4)));
     }

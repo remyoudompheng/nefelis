@@ -77,6 +77,17 @@ def l2norm(f: list[int]) -> float:
     else:
         raise NotImplementedError
 
+def estimate_size(f, W, H):
+    logs = []
+    df = len(f) - 1
+    for x in range(-10, 11):
+        fval = sum(fi * (x * W / 10.0) ** i * H ** (df - i) for i, fi in enumerate(f))
+        logs.append(math.log2(abs(fval)))
+    for x in range(-10, 10):
+        fval = sum(fi * W ** i * (x * H / 10.0) ** (df - i) for i, fi in enumerate(f))
+        logs.append(math.log2(abs(fval)))
+    return int(sum(logs) / len(logs))
+
 
 class BadType(Enum):
     """
