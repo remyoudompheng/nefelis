@@ -300,7 +300,12 @@ class SpMV:
         dim = self.dim
         N_WG = (dim + WGSIZE - 1) // WGSIZE
 
-        BATCHSIZE = 16
+        if dim > 500_000:
+            BATCHSIZE = 4
+        elif dim > 200_000:
+            BATCHSIZE = 8
+        else:
+            BATCHSIZE = 16
         K = (m + 31) // 32
 
         ITERS = dim // m + dim // m + 32
