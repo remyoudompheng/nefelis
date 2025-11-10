@@ -339,7 +339,7 @@ class Descent:
                     best = facs, cofacs
 
             if best is not None:
-                max_cofac = best[1][-1][0]
+                max_cofac = best[1][-1][0] if best[1] else 1
                 if max_cofac.bit_length() < self.MAX_QBITS:
                     break
 
