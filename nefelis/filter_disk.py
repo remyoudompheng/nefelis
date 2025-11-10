@@ -248,7 +248,9 @@ def cliques(f, fnew, aggressive=False):
 
     n_singles = len(pruned)
     excess = len(lengths) - len(seenf) - len(seeng)
+    assert excess > 0, excess
     # print("excess", excess)
+
     cliques = list(connected_components(g))
     cliques.sort(key=score, reverse=True)
     # print(len(pruned), "singletons")
@@ -256,6 +258,8 @@ def cliques(f, fnew, aggressive=False):
     max_removed = (excess - 200) // 2
     if aggressive:
         max_removed = max(max_removed, excess - 50000)
+    assert max_removed > 0, max_removed
+
     for c in cliques[:max_removed]:
         pruned.update(c)
     r2 = sum(len(c) for c in cliques[:max_removed])
