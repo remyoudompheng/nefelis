@@ -77,6 +77,7 @@ def l2norm(f: list[int]) -> float:
     else:
         raise NotImplementedError
 
+
 def estimate_size(f, W, H):
     logs = []
     df = len(f) - 1

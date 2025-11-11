@@ -667,13 +667,13 @@ class LineSiever2:
         outsize = bout.size // 2
         bout = bout.reshape((outsize, 2))
         outlen = min(bout[0, 0], outsize - 1)
-        # FIXME: use numpy here
-        results = []
-        for i in range(1, outlen + 1):
-            x, y = int(bout[i, 0]), int(bout[i, 1])
-            results.append((a * x + b * y, c * x + d * y))
 
         if DEBUG_LINESIEVE and self.algo2:
+            results = []
+            for i in range(1, outlen + 1):
+                x, y = int(bout[i, 0]), int(bout[i, 1])
+                results.append((a * x + b * y, c * x + d * y))
+
             print(self.poly2)
             for x, y in results:
                 deg2 = len(self.poly2) - 1
@@ -683,7 +683,8 @@ class LineSiever2:
                 from nefelis import integers
 
                 print(x, y, integers.factor_smooth(gxy, q.bit_length()))
-        return results
+
+        return np.array([[a, b], [c, d]], dtype=np.int32), np.copy(bout[1:outlen+1, :])
 
 
 if __name__ == "__main__":

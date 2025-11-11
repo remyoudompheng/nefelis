@@ -307,7 +307,9 @@ def main_impl(args):
             while len(sieve_jobs) < MAX_SIEVE_QUEUE:
                 sieve_jobs.append(sievepool.submit(worker_task, next(sieve_args)))
             # Always wait for at least 1 sieve
-            concurrent.futures.wait(sieve_jobs, return_when= concurrent.futures.FIRST_COMPLETED)
+            concurrent.futures.wait(
+                sieve_jobs, return_when=concurrent.futures.FIRST_COMPLETED
+            )
             sieve_pending = []
             for sfut in sieve_jobs:
                 if not sfut.done():

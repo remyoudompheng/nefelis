@@ -29,6 +29,7 @@ from nefelis.factor.polyselect_snfs import snfs_select
 logger = logging.getLogger("sieve")
 
 
+
 class Factorer:
     def __init__(self, f, g, B2f, B2g):
         self.f = f
@@ -36,13 +37,16 @@ class Factorer:
         self.B2f = B2f
         self.B2g = B2g
 
-    def factor_fg(self, q, chunk):
+    def factor_fg(self, q, qmat, chunk):
         res = []
         f, g = self.f, self.g
         df = len(f) - 1
         dg = len(g) - 1
-        for x, y in chunk:
-            x, y = int(x), int(y)
+        a, b, c, d = int(qmat[0, 0]), int(qmat[0, 1]), int(qmat[1, 0]), int(qmat[1, 1])
+        assert chunk.shape[1] == 2
+        for idx in range(chunk.shape[0]):
+            x, y = int(chunk[idx, 0]), int(chunk[idx, 1])
+            x, y = a * x + b * y, c * x + d * y
             if math.gcd(x, y) != 1:
                 continue
             # value = u * x + v * y
@@ -85,8 +89,8 @@ def factorer_init(f, g, B2f, B2g):
 
 
 def factorer_task(args):
-    q, chunk = args
-    return FACTORER.factor_fg(q, chunk)
+    q, qmat, chunk = args
+    return FACTORER.factor_fg(q, qmat, chunk)
 
 
 SIEVER = None
@@ -100,8 +104,8 @@ def worker_init(*args):
 def worker_task(args):
     q, qr = args
     t = time.monotonic()
-    reports = SIEVER.sieve(q, qr)
-    return q, qr, time.monotonic() - t, reports
+    qmat, reports = SIEVER.sieve(q, qr)
+    return q, qr, time.monotonic() - t, qmat, reports
 
 
 # Parameters for high CPU or low GPU (gpu.cores/cpu.cores < 2)
@@ -356,8 +360,8 @@ def main_impl(args):
                 if not sfut.done():
                     sieve_pending.append(sfut)
                     continue
-                q, qr, dt, reports = sfut.result()
-                fut = factorpool.submit(factorer_task, (q, reports))
+                q, qr, dt, qmat, reports = sfut.result()
+                fut = factorpool.submit(factorer_task, (q, qmat, reports))
                 factor_jobs.append((q, qr, dt, len(reports), fut))
             # Throttle if factoring is late
             concurrent.futures.wait(
