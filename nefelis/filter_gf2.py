@@ -282,6 +282,8 @@ def filter(rels, datadir: pathlib.Path | None):
     # For the last step, we just want to minimize sparse weight
     # We ignore dense columns when scoring
     nr = len([_r for _r in rels if _r is not None])
+    nc = len([_ for _, _s in stats.items() if _s])
+    excess = nr - nc
     dense = set([p for p, _rels in stats.items() if len(_rels) > nr // 3])
     logger.debug(f"Ignoring {len(dense)} dense columns to eliminate worst rows")
 
