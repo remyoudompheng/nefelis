@@ -20,14 +20,13 @@ import flint
 import numpy as np
 
 from nefelis.skewpoly import skewness
-from nefelis.sieve import Siever, LineSiever2
+from nefelis.sieve import eta as sieve_eta, LineSiever2
 from nefelis.integers import factor_smooth, smallprimes
 
 from nefelis.factor.polyselect import polyselect
 from nefelis.factor.polyselect_snfs import snfs_select
 
 logger = logging.getLogger("sieve")
-
 
 
 class Factorer:
@@ -350,7 +349,12 @@ def main_impl(args):
 
     excess1, excess2 = -9999, -9999
     sieve_args: Iterator[tuple[int, int]] = zip(qs, qrs)
+    # Full sieve statistics
+    sieve_stats1 = []
+    # Sieve statistics without orphans
+    sieve_stats2 = []
     MAX_SIEVE_QUEUE = 64
+    MIN_EXCESS = 64
     with sievepool, factorpool:
         sieve_jobs = []
         factor_jobs = []
@@ -444,7 +448,48 @@ def main_impl(args):
                         + f"{nrels}/{nreports} relations, {Kcount}/{Qcount} K/Q primes, total {total}"
                         + f" excess {excess1}/{excess2}"
                     )
-                    if max(excess1, excess2) > max(64, min(10000, total / 20)):
+
+                    # Store stats for estimation
+                    # We compute stats after 1st singleton purge (without orphans).
+                    if total > n_orphans:
+                        sieve_stats1.append(
+                            (
+                                total,
+                                Kcount,
+                                Qcount,
+                            )
+                        )
+                        sieve_stats2.append(
+                            (
+                                total - n_orphans,
+                                Kcount - len(orphanK),
+                                Qcount - len(orphanQ),
+                            )
+                        )
+
+                    if len(sieve_stats1) % 30 == 10:
+                        boundK = max(seenK) >> 32
+                        boundZ = max(seenQ)
+                        eta1 = sieve_eta(
+                            boundK,
+                            boundZ,
+                            0,
+                            sieve_stats1,
+                        )
+                        eta2 = sieve_eta(
+                            boundK,
+                            boundZ,
+                            max(MIN_EXCESS, min(10000, total / 20)),
+                            sieve_stats2,
+                        )
+                        if eta1 is None or (eta2 is not None and eta1 > eta2):
+                            eta1 = eta2
+                        if eta1 is not None:
+                            logger.info(
+                                f"Requiring {int(eta1 * total)} relations ({100 / eta1:.1f}% done)"
+                            )
+
+                    if max(excess1, excess2) > max(MIN_EXCESS, min(10000, total / 20)):
                         break
 
             factor_jobs = remaining
@@ -453,7 +498,7 @@ def main_impl(args):
 
             # Compute excess with/without singletons
             excess1 = total - Kcount - Qcount
-            if max(excess1, excess2) > max(64, min(10000, total / 20)):
+            if max(excess1, excess2) > max(MIN_EXCESS, min(10000, total / 20)):
                 logger.info("Enough relations")
                 [j.cancel() for j in sieve_jobs]
                 [tup[-1].cancel() for tup in factor_jobs]
@@ -470,7 +515,7 @@ def main_impl(args):
     )
     singles = np.count_nonzero(orphans)
     logger.info(
-        f"{total} relations {duplicates} duplicates {singles} orphans in {elapsed:.3f}s"
+        f"{total} relations {duplicates} duplicates {singles} orphans for q={qmin}..{q} in {elapsed:.3f}s"
     )
     relf.close()
 
