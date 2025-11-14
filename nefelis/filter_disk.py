@@ -23,9 +23,12 @@ def prune(filepath: str):
     t0 = time.monotonic()
     singles(f, f + ".pruned.tmp")
     singles(f + ".pruned.tmp", f + ".pruned.singles")
-    cliques(f + ".pruned.singles", f + ".pruned")
-    cliques(f + ".pruned", f + ".pruned.tmp")
-    cliques(f + ".pruned.tmp", f + ".pruned", aggressive=True)
+    ok = cliques(f + ".pruned.singles", f + ".pruned")
+    if ok:
+        cliques(f + ".pruned", f + ".pruned.tmp")
+        cliques(f + ".pruned.tmp", f + ".pruned", aggressive=True)
+    else:
+        os.rename(f + ".pruned.singles", f + ".pruned")
     os.remove(f + ".pruned.tmp")
     dt = time.monotonic() - t0
     logger.info(f"Pruning completed in {dt:.3f}s")
@@ -258,7 +261,8 @@ def cliques(f, fnew, aggressive=False):
     max_removed = (excess - 200) // 2
     if aggressive:
         max_removed = max(max_removed, excess - 50000)
-    assert max_removed > 0, max_removed
+    if max_removed <= 0:
+        return False
 
     for c in cliques[:max_removed]:
         pruned.update(c)
@@ -281,6 +285,8 @@ def cliques(f, fnew, aggressive=False):
             if off in pruned:
                 continue
             w.write(l)
+
+    return True
 
 
 def main():
