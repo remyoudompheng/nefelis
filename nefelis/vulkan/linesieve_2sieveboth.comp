@@ -34,7 +34,11 @@
 #define REPORT_MARKER 64
 
 const int SEGMENT_SIZE = 16384;
-const uint LOGSEGMENT = 14;
+// To fit a sieve hit in a 16-bit integer, we store
+// the 14-bit segment offset and a 2-bit value:
+// we can represent 4 values LOGHUGE, LOGHUGE+2 .. LOGHUGE+6=23
+// Huge primes start at ~4 SEGMENT_SIZE so they have at least 17 bits.
+const uint LOGHUGE = 17;
 const uint N_SEGMENTS = 2 * W / SEGMENT_SIZE;
 
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
@@ -67,7 +71,8 @@ shared uint hugelen2[LINES_PER_WG][N_SEGMENTS];
 #include <arith.comp>
 
 uint doprime(uint p, uint qr, int y, int xseg, bool small) {
-  const uint logp = findMSB(p);
+  // On average logp = log2(p)+0.1±0.5
+  const uint logp = findMSB(p + p / 2);
   const float pinv = 1.0 / float(p);
 
   // Sieve hits are x=qr*y mod p
@@ -112,7 +117,8 @@ uint doprime(uint p, uint qr, int y, int xseg, bool small) {
 }
 
 uint domedprime(uint p, int xseg, uint xstart) {
-  const uint logp = findMSB(p);
+  // On average logp = log2(p)+0.1±0.5
+  const uint logp = findMSB(p + p / 2);
   uint x = xstart;
   while (x < SEGMENT_SIZE) {
     atomicAdd(row[x / 4], logp << (8 * (x % 4)));
@@ -123,10 +129,13 @@ uint domedprime(uint p, int xseg, uint xstart) {
 
 #if defined(HUGE_PRIME) && (defined(BUCKET_SIZE) || defined(BUCKET_SIZE2))
 void prepare_huge(uint p, uint qr, bool side2) {
-  const uint logp = findMSB(p);
+  // Since logp is rounded down to the nearest odd integer
+  // and findMSB is already floor(log2(p)), we add 1
+  // to obtained an unbiased approximation (logp = log2(p)+0.1±1)
+  const uint logp = findMSB(p) + 1;
   // We store logp/2 in the upper bits of the huge buffer.
   const uint logp_bits =
-      clamp((logp - LOGSEGMENT) / 2, 0, 65536 / SEGMENT_SIZE);
+      clamp((logp - LOGHUGE) / 2, 0, 65536 / SEGMENT_SIZE);
   const float pinv = 1.0 / float(p);
 
   if (qr == p)
@@ -180,7 +189,7 @@ void dohuge(int y, int xseg) {
   for (uint i = 0; i < blen; i += gl_WorkGroupSize.x) {
     if (i + tidx < blen) {
       uint x = huges[bidx0 + i + tidx];
-      const uint logp = LOGSEGMENT + 2 * (x / SEGMENT_SIZE);
+      const uint logp = LOGHUGE + 2 * (x / SEGMENT_SIZE);
       x %= SEGMENT_SIZE;
       atomicAdd(row[x / 4], logp << (8 * (x % 4)));
     }
@@ -193,7 +202,7 @@ void dohuge2(int y, int xseg) {
   for (uint i = 0; i < blen; i += gl_WorkGroupSize.x) {
     if (i + tidx < blen) {
       uint x = huges2[bidx0 + i + tidx];
-      const uint logp = LOGSEGMENT + 2 * (x / SEGMENT_SIZE);
+      const uint logp = LOGHUGE + 2 * (x / SEGMENT_SIZE);
       x %= SEGMENT_SIZE;
       atomicAdd(row[x / 4], logp << (8 * (x % 4)));
     }
@@ -236,7 +245,7 @@ void main() {
       float sizeratio =
           max(abs(float(xseg * SEGMENT_SIZE + SEGMENT_SIZE / 2) / W - 1),
               float(y) / H);
-      uint logsizeratio = min(5, uint(-floor(log2(sizeratio))));
+      float logsizeratio = clamp(-log2(sizeratio), 0.0, 5.0);
       // Invariant: row is zeroed at each iteration.
       for (uint pidx = N_TINY + gl_SubgroupID; pidx < N_SMALL;
            pidx += gl_NumSubgroups) {
@@ -271,7 +280,7 @@ void main() {
       memoryBarrierShared();
 
       // Sieve results for side 1 are replaced by a dummy value.
-      uint logbonus = logsizeratio * DEGREE;
+      uint logbonus = uint(floor(logsizeratio * DEGREE));
       for (uint i = 0; i < row.length(); i += gl_WorkGroupSize.x) {
         u8vec4 logs = unpack8(atomicExchange(row[i + tidx], 0));
         logs += uint8_t(logbonus);
@@ -321,7 +330,7 @@ void main() {
       barrier();
       memoryBarrierShared();
 
-      logbonus = logsizeratio * DEGREE2 ;
+      logbonus = uint(floor(logsizeratio * DEGREE2));
       for (uint i = 0; i < row.length(); i += gl_WorkGroupSize.x) {
         u8vec4 logs = unpack8(atomicExchange(row[i + tidx], 0));
         logs += uint8_t(logbonus);
