@@ -3,7 +3,6 @@ import logging
 import random
 import time
 
-import flint
 import kp
 import numpy as np
 import numpy.typing as npt
@@ -19,7 +18,8 @@ DEBUG_NO_PADDING = False
 DEBUG_CHECK_ENCODING = False
 # Extra checks for returns kernel elements
 DEBUG_CHECK_KERNEL = False
-
+# Print output vectors after benchmark (SpMV performance may decrease).
+DEBUG_BENCHMARK_OUTPUT = False
 
 logger = logging.getLogger("linalg")
 
@@ -34,6 +34,8 @@ class SpMV:
     To support larger matrices, an index 0xffff can be inserted in sparse rows
     to explain that following indices belong to another block of size 0xffff
     """
+
+    ROWS_PER_WG = 128
 
     def __init__(self, rels: list[set[str]], gpu_idx=0):
         """
@@ -277,6 +279,71 @@ class SpMV:
                     # print(mw)
         logger.debug(f"Skipped {dups} duplicate kernel elements")
         return kers
+
+    def benchmark(self, m: int, iters: int, polyeval: bool):
+        """
+        Runs a given number of iteration of the standard or transposed
+        kernels with random inputs. The random generator seed is fixed
+        to zero to obtain reproducible results.
+        """
+        mgr = self.mgr
+        dim = self.dim
+        N_WG = (dim + self.ROWS_PER_WG - 1) // self.ROWS_PER_WG
+
+        if dim > 500_000:
+            BATCHSIZE = 4
+        elif dim > 200_000:
+            BATCHSIZE = 8
+        else:
+            BATCHSIZE = 16
+        K = (m + 31) // 32
+
+        defines = self.defines | {"M": m, "K": K}
+        if polyeval:
+            defines |= {"POLYEVAL": 1}
+        else:
+            defines |= {"OUTIDX": 0}
+
+        # Random initial vector
+        rng = np.random.default_rng(seed=0)
+        v = np.zeros((2, dim, K), dtype=np.uint32)
+        v[0, :, :] = rng.integers(2**32, size=(dim, K), dtype=np.uint32)
+
+        # Tensors
+        xv = mgr.tensor_t(v.flatten())
+        xiter = mgr.tensor_t(np.zeros(N_WG, dtype=np.uint32))
+
+        if polyeval:
+            vpoly = rng.integers(2**32, size=(iters, m, K), dtype=np.uint32)
+            xpoly = mgr.tensor_t(vpoly.flatten())
+            xout = mgr.tensor_t(np.zeros(dim * K, dtype=np.uint32))
+            tensors = self.tensors + [xv, xiter, xpoly, xout]
+        else:
+            xout = mgr.tensor_t(np.zeros(iters * K * m, dtype=np.uint32))
+            tensors = self.tensors + [xv, xiter, xout]
+
+        t0 = time.monotonic()
+        gpu_ticks = self._run(
+            tensors, defines, iters, BATCHSIZE, N_WG, transpose=polyeval
+        )
+        dt = time.monotonic() - t0
+        gpu_dt = gpu_ticks * stamp_period() * 1e-9
+
+        mgr.sequence().record(kp.OpTensorSyncLocal([xv, xout])).eval()
+
+        if DEBUG_BENCHMARK_OUTPUT:
+            if not polyeval:
+                vv = xv.data().reshape((2, dim, K))
+                print(vv[iters & 1, :, :].flatten())
+                vout = xout.data().reshape((iters, m, K))
+                print(vout.flatten())
+            else:
+                vv = xv.data().reshape((2, dim, K))
+                print(vv[iters & 1, :, :].flatten())
+                vout = xout.data().reshape((dim, K))
+                print(vout.flatten())
+
+        return dt, gpu_dt
 
     def block_wiedemann(
         self, m=32, outidx=0, left=False

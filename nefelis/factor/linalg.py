@@ -13,6 +13,7 @@ import argparse
 import json
 import logging
 import pathlib
+import random
 import time
 
 import flint
@@ -47,9 +48,18 @@ def main():
     argp.add_argument(
         "--blockw", type=int, help="Use Block Wiedemann with size m=ARG n=1"
     )
+    argp.add_argument(
+        "--bench",
+        action="store_true",
+    )
+
     argp.add_argument("WORKDIR")
     args = argp.parse_args()
-    main_impl(args)
+
+    if args.bench:
+        bench(args)
+    else:
+        main_impl(args)
 
 
 def main_impl(args):
@@ -303,6 +313,37 @@ def factor_with_kernels(
                 break
 
     return facs
+
+
+def bench(args):
+    workdir = pathlib.Path(args.WORKDIR)
+    rows = []
+    with open(workdir / "relations.filtered", encoding="ascii") as f:
+        for line in f:
+            r = set(int(x) for x in line.split())
+            rows.append(r)
+    logger.info(f"Loaded existing matrix with {len(rows)} rows")
+
+    import nefelis.backends.kompute.linalg_gf2
+
+    nefelis.backends.kompute.linalg_gf2.DEBUG_NO_SORT_ROWS = True
+    nefelis.backends.kompute.linalg_gf2.DEBUG_NO_PADDING = True
+
+    ITERS = 1000
+
+    logger.info(f"Benchmark with SpMV ({ITERS} iterations)")
+    # make deterministic
+    random.seed(0)
+    t0 = time.monotonic()
+    M = SpMV(rows)
+    logger.info(f"Built matrix in {time.monotonic() - t0:.1f}s")
+    dt1, gpu_dt = M.benchmark(32, ITERS, False)
+    logger.info(f"forward {dt1:.3f}ms/matmul GPU {gpu_dt:.3f}ms/matmul")
+    dt2, gpu_dt = M.benchmark(32, ITERS, True)
+    logger.info(f"backward {dt2:.3f}ms/matmul GPU {gpu_dt:.3f}ms/matmul")
+    logger.info(
+        f"Throughput forward {1000 / dt1:.1f} matmul/s, transpose {1000 / dt2:.1f} matmul/s"
+    )
 
 
 if __name__ == "__main__":
