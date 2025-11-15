@@ -2,11 +2,13 @@
 Automatic selection of polynomial for Special NFS
 """
 
+import itertools
 import logging
 import math
 import time
 
 import flint
+from nefelis import integers
 from nefelis.factor.polyselect import lemma21
 from nefelis import polys
 
@@ -22,7 +24,7 @@ def snfs_select(N, radius):
     base = None
     for n in range(3, 100):
         r = nth_root(N, n)
-        if abs(N - r**n) < N**0.6:
+        if abs(N - r**n) < N**0.75:
             base = r
             logger.info(f"N is very close to {base}^{n}")
 
@@ -42,6 +44,7 @@ def snfs_select(N, radius):
         for numer in range(bound, bound * bound):
             yield numer, 1
 
+    squares = integers.product([x**2 for x in integers.smallprimes(100)])
     for degree in (2, 3, 4, 5):
         if N.bit_length() > 400 and degree == 2:
             continue
@@ -50,11 +53,26 @@ def snfs_select(N, radius):
                 continue
             # check if N = A/B * (b^n + small polynomial)
             r = nth_root((denom * N) // numer, degree)
-            poly = lemma21(denom * N, 1, r, degree, numer)
-            if all(abs(coef) < r**0.4 for coef in poly):
-                assert sum(poly[i] * r**i for i in range(degree + 1)) == denom * N
+            poly_l = []
+            if math.gcd(denom * N - numer * r**degree, squares) > 1000:
+                # if B N - A b^n has square divisors, try them
+                # this is useful for XYYXF numbers
+                for v in sqrt_divisors(denom * N - numer * r**degree):
+                    if math.gcd(r, v) == 1:
+                        poly = lemma21(denom * N, v, r, degree, numer)
+                        if all(abs(coef) < r**0.4 for coef in poly):
+                            poly_l.append((poly, v))
+            else:
+                poly = lemma21(denom * N, 1, r, degree, numer)
+                if all(abs(coef) < r**0.4 for coef in poly):
+                    poly_l.append((poly, 1))
+            for poly, v in poly_l:
+                assert (
+                    sum(poly[i] * r**i * v ** (degree - i) for i in range(degree + 1))
+                    == denom * N
+                )
                 f = poly
-                g = [-r, 1]
+                g = [-r, v]
                 norm = math.log2(math.sqrt(polys.l2norm(f)))
                 normg = math.log2(math.sqrt(polys.l2norm(g)))
                 alpha = polys.alpha(polys.discriminant(f), f)
@@ -81,6 +99,24 @@ def snfs_select(N, radius):
     dt = time.monotonic() - t0
     logger.info(f"SNFS polynomial selection done in {dt:.3f}s")
     return best
+
+
+def sqrt_divisors(n):
+    """
+    Enumerates d with small prime factors such that d^2 divides n.
+    """
+    facs = integers.factor_smooth(n, 10)
+    rfacs = []
+    for _l, _e in facs:
+        if _e > 1:
+            rfacs.append((_l, _e // 2))
+    if not rfacs:
+        yield 1
+        return
+    for es in itertools.product(*[range(_e) for _, _e in rfacs]):
+        v = integers.product([_l**_e for (_l, _), _e in zip(rfacs, es)])
+        assert n % (v * v) == 0
+        yield v
 
 
 def nth_root(x, n):
