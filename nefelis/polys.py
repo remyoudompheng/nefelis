@@ -85,7 +85,7 @@ def estimate_size(f, W, H):
         fval = sum(fi * (x * W / 10.0) ** i * H ** (df - i) for i, fi in enumerate(f))
         logs.append(math.log2(abs(fval)))
     for x in range(-10, 10):
-        fval = sum(fi * W ** i * (x * H / 10.0) ** (df - i) for i, fi in enumerate(f))
+        fval = sum(fi * W**i * (x * H / 10.0) ** (df - i) for i, fi in enumerate(f))
         logs.append(math.log2(abs(fval)))
     return int(sum(logs) / len(logs))
 

@@ -684,7 +684,9 @@ class LineSiever2:
 
                 print(x, y, integers.factor_smooth(gxy, q.bit_length()))
 
-        return np.array([[a, b], [c, d]], dtype=np.int32), np.copy(bout[1:outlen+1, :])
+        return np.array([[a, b], [c, d]], dtype=np.int32), np.copy(
+            bout[1 : outlen + 1, :]
+        )
 
 
 if __name__ == "__main__":
