@@ -8,7 +8,7 @@ import numpy as np
 import numpy.typing as npt
 
 from nefelis import lingen_gf2
-from nefelis.vulkan import shader, stamp_period
+from nefelis.vulkan import shader, stamp_period, gpu_cores
 
 # Avoid row reordering when constructing SpMV matrices.
 DEBUG_NO_SORT_ROWS = False
@@ -308,9 +308,9 @@ class SpMV:
         dim = self.dim
         N_WG = (dim + self.ROWS_PER_WG - 1) // self.ROWS_PER_WG
 
-        if dim > 500_000:
+        if dim > 1000_000:
             BATCHSIZE = 4
-        elif dim > 200_000:
+        elif dim > 400_000:
             BATCHSIZE = 8
         else:
             BATCHSIZE = 16
@@ -384,9 +384,9 @@ class SpMV:
         dim = self.dim
         N_WG = (dim + self.ROWS_PER_WG - 1) // self.ROWS_PER_WG
 
-        if dim > 500_000:
+        if dim > 1000_000:
             BATCHSIZE = 4
-        elif dim > 200_000:
+        elif dim > 400_000:
             BATCHSIZE = 8
         else:
             BATCHSIZE = 16
@@ -548,15 +548,17 @@ class SpMV_COO(SpMV):
             self.dense = dense
             self.sparserows = sparserows
 
-        # We want at least 256 workgroups
+        BM = 128
         # We don't want to use more than 8kB of local memory.
-        if dim >= 65536:
-            BM = 1 << min(11, dim.bit_length() - 9, 32 - dim.bit_length())
-            assert 128 <= BM <= 2048
-            assert dim / BM >= 256
-        else:
-            # BM = 128
-            BM = 256
+        while BM < 2048:
+            # The encoding must fit in 32 bits
+            if dim * 2 * BM > 2**32:
+                break
+            # We want at least 4 workgroups per GPU cores
+            if dim / (2 * BM) < 4 * gpu_cores():
+                break
+            BM *= 2
+        assert 128 <= BM <= 2048
         assert dim <= 2**32 / BM
 
         self.defines = {"N": dim, "DENSE_N": dense_n, "BM": BM}

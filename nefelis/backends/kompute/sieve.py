@@ -10,7 +10,7 @@ import numpy as np
 import kp
 import flint
 
-from nefelis.vulkan import shader, stamp_period
+from nefelis.vulkan import shader, stamp_period, gpu_cores
 
 DEBUG_ROOTS = False
 DEBUG_TIMINGS = False
@@ -41,8 +41,10 @@ class Siever:
         tout = mgr.tensor_t(np.zeros(2 * outsize, dtype=np.int32))
 
         WIDTH = 1 << I
-        WGROWS = 32
-        N_WG = 2 * WIDTH // WGROWS
+        # We want to sieve at least 2M per workgroup (2W LINES > 2M)
+        # We want to have at least 4 workgroups per core
+        WGROWS = min(2 * WIDTH // (4 * gpu_cores()), (1 << 20) // WIDTH) + 1
+        N_WG = 2 * WIDTH // WGROWS + 1
 
         defines = {
             "THRESHOLD": threshold,
@@ -268,7 +270,9 @@ class LineSiever:
 
         assert W % LineSiever.SEGMENT_SIZE == 0
         NSEGS = 2 * W // LineSiever.SEGMENT_SIZE
-        LINES_PER_WG = max(1, int(round(H / 512)))
+        # We want to sieve at least 2M per workgroup (2W LINES > 2M)
+        # We want to have at least 4 workgroups per core
+        LINES_PER_WG = min(H // (4 * gpu_cores()), (1 << 20) // W) + 1
 
         defines = {
             "THRESHOLD": threshold,
@@ -481,7 +485,9 @@ class LineSiever2:
 
         assert W % LineSiever.SEGMENT_SIZE == 0
         NSEGS = 2 * W // LineSiever.SEGMENT_SIZE
-        LINES_PER_WG = max(1, int(round(H / 512)))
+        # We want to sieve at least 2M per workgroup (2W LINES > 2M)
+        # We want to have at least 4 workgroups per core
+        LINES_PER_WG = min(H // (4 * gpu_cores()), (1 << 20) // W) + 1
 
         defines = {
             "THRESHOLD": threshold,
