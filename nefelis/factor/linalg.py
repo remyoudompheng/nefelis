@@ -89,10 +89,52 @@ def main_impl(args):
     chis = chis[:16]
     logger.info(f"Prepared {len(chis)} quadratic characters")
 
+    t0 = time.monotonic()
+    rels, xy_elems, zrels = prune_load(workdir, chis)
+    dt = time.monotonic() - t0
+    logger.info(
+        f"Computed factorizations and characters for {len(rels)} relations in {dt:.1f}s"
+    )
+
+    # FIXME: remove extra conversions
+    rels = [set(map(int, r)) for r in rels]
+    rels = filter.filter(rels, pathlib.Path(workdir))
+    rels = [np.array(list(r), dtype=np.int32) for r in rels]
+
+    M = SpMV(rels)
+    facs = [n]
+    while True:
+        kers = M.left_kernel()
+        logger.info(f"Found {len(kers)} left kernel elements")
+        sqrt_start = time.monotonic()
+        facs = factor_with_kernels(n, f, g, z, xy_elems, zrels, M, kers, facs)
+        sqrt_dt = time.monotonic() - sqrt_start
+        logsqrt.info(f"Sqrt step done in {sqrt_dt:.3f}s")
+        if all(
+            flint.fmpz(_f).is_prime() or _f.bit_length() < n.bit_length() / 2
+            for _f in facs
+        ):
+            break
+
+        logger.info(f"Not enough ({len(kers)}) kernel elements, retrying")
+
+    if any(not flint.fmpz(_f).is_prime() for _f in facs):
+        facprimes = [_f for _f in facs if flint.fmpz(_f).is_prime()]
+        faccomps = [_f for _f in facs if not flint.fmpz(_f).is_prime()]
+        logsqrt.info(f"Found prime factors {facprimes}")
+        logsqrt.info(f"Found composite factors {faccomps}")
+
+
+def prune_load(workdir, chis: list[tuple[str, int, int]]):
+    """
+    Load relations as array of basis indices.
+
+    Each relation contains a unique negative index used to
+    track original relations during Gauss elimination.
+    """
     # When reading relations, we compute exact integer exponents
     # (necessary for the sqrt part?) but the kernel part will be modulo 2.
 
-    dedup_keys = {}
     rels: list[set[int]] = []
     zrels: dict = {}
     seen_xy = set()
@@ -116,7 +158,6 @@ def main_impl(args):
         seen_basis[key] = len(name_basis)
         name_basis.append(key)
 
-    t0 = time.monotonic()
     for x, y, facg, facf in read_relations(workdir / "relations.sieve.pruned"):
         if (x, y) in seen_xy:
             duplicates += 1
@@ -152,43 +193,12 @@ def main_impl(args):
             else:
                 rel.add(idx)
         zrels[(x, -y)] = np.array(facg, dtype=np.uint64)
-        rels.append(rel)
-    del dedup_keys
-    del seen_xy
-    del seen_basis
-
-    dt = time.monotonic() - t0
-    logger.info(
-        f"Computed factorizations and characters for {len(rels)} relations in {dt:.1f}s"
-    )
+        rels.append(np.array(list(rel), dtype=np.int32))
 
     if duplicates:
         logger.info(f"{duplicates} duplicate results in input file, ignored")
 
-    rels2 = filter.filter(rels, pathlib.Path(workdir))
-
-    M = SpMV(rels2)
-    facs = [n]
-    while True:
-        kers = M.left_kernel()
-        logger.info(f"Found {len(kers)} left kernel elements")
-        sqrt_start = time.monotonic()
-        facs = factor_with_kernels(n, f, g, z, xy_elems, zrels, M, kers, facs)
-        sqrt_dt = time.monotonic() - sqrt_start
-        logsqrt.info(f"Sqrt step done in {sqrt_dt:.3f}s")
-        if all(
-            flint.fmpz(_f).is_prime() or _f.bit_length() < n.bit_length() / 2
-            for _f in facs
-        ):
-            break
-
-        logger.info(f"Not enough ({len(kers)}) kernel elements, retrying")
-
-    if any(not flint.fmpz(_f).is_prime() for _f in facs):
-        facprimes = [_f for _f in facs if flint.fmpz(_f).is_prime()]
-        faccomps = [_f for _f in facs if not flint.fmpz(_f).is_prime()]
-        logsqrt.info(f"Found prime factors {facprimes}")
-        logsqrt.info(f"Found composite factors {faccomps}")
+    return rels, xy_elems, zrels
 
 
 def factor_with_kernels(
@@ -320,7 +330,7 @@ def bench(args):
     rows = []
     with open(workdir / "relations.filtered", encoding="ascii") as f:
         for line in f:
-            r = set(int(x) for x in line.split())
+            r = np.array(line.split(), dtype=np.int32)
             rows.append(r)
     logger.info(f"Loaded existing matrix with {len(rows)} rows")
 
