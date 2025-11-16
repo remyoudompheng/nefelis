@@ -1,0 +1,38 @@
+// Sparse matrix-vector transposed multiplication over GF(2)
+//
+// Sets v[0..32 * DENSE_N] to zero before main shader.
+
+#version 450
+
+#define WGSIZE 128
+
+#ifndef N
+#error Matrix dimension undefined
+#endif
+
+#ifndef DENSE_N
+#error Dense width undefined
+#endif
+
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+
+layout(local_size_x = 32 * DENSE_N, local_size_y = 1, local_size_z = 1) in;
+
+// Same buffer indices as spmv_gf2_blockcoo_transpose2
+layout(binding = 3) buffer V { uint[K] v[]; };
+layout(binding = 4) readonly buffer Iter { uint iter[]; };
+
+void main() {
+  // Main shader assumes that v[off1 .. off1 + 32*DENSE_N] is zero.
+  const uint tidx = gl_GlobalInvocationID.x;
+  if (tidx >= 32 * DENSE_N)
+    return;
+
+  uint idx = iter[gl_WorkGroupID.x];
+  // const uint off0 = ((idx & 1) == 0) ? 0 : N;
+  const uint off1 = ((idx & 1) == 0) ? N : 0;
+
+  for (uint k = 0; k < K; k++)
+    v[off1 + tidx][k] = 0;
+}

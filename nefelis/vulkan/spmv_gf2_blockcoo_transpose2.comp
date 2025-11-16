@@ -1,0 +1,182 @@
+// Sparse matrix-vector transposed multiplication over GF(2)
+//
+// This variant uses the BlockCOO format.
+// The matrix is cut into stripes of BM columns (instead of rows).
+// To avoid extremely unbalanced striped, columns should NOT be sorted
+// in natural order but shuffled.
+//
+// Each stripe is stored in COO format (col % BM, row) packed as 32-bit values.
+// The data format is constrained by total dimension < 2^32/BM.
+//
+// Each workgroup processes:
+// - a stripe of BM rows in the dense region
+// - a stripe of BM columns in the sparse region
+//
+// Output is accumulated in registers and local memory.
+//
+// The shader is only used in POLYEVAL mode:
+// a matrix polynomial ak X^k is given, and the computation
+// is:
+//   Sum(ak * V * Mat^k)
+
+#version 450
+
+#define WGSIZE 128
+
+#ifndef N
+#error Matrix dimension undefined
+#endif
+
+#ifndef DENSE_N
+#error Dense width undefined
+#endif
+
+#ifndef K
+#error Block size undefined
+#endif
+
+#if !defined(BM)
+#error Stripe size undefined
+#endif
+
+#if BM % WGSIZE
+#error Stripe size not a multiple of WGSIZE
+#endif
+
+#if DENSE_N * 32 > BM
+#error BM is too small
+#endif
+
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+
+layout(local_size_x = WGSIZE, local_size_y = 1, local_size_z = 1) in;
+
+layout(binding = 0) readonly buffer Dense { uint[DENSE_N] dense[]; };
+layout(binding = 1) readonly buffer Sparse { uint sparse[]; };
+layout(binding = 2) readonly buffer Blocks { uint sidx[]; };
+// Vector of size 2N:
+// even iterations do V[N:2N] = M * V[0:N]
+// odd iterations do V[0:N] = M * V[N:2N]
+layout(binding = 3) buffer V { uint[K] v[]; };
+// Vector of identical values (1 per workgroup) indicating iteration count
+layout(binding = 4) buffer Iter { uint iter[]; };
+// Polynomial sum(ak X^k)
+layout(binding = 5) readonly buffer Poly { uint[M][K] ak[]; };
+// Output sum(M^k V ak)
+layout(binding = 6) coherent buffer Wout { uint[K] wout[]; };
+
+#define UNROLL 16
+
+// Accumulator for both dense and sparse part.
+shared uint sacc[BM][K];
+
+void main() {
+  uint idx = iter[gl_WorkGroupID.x];
+  const uint off0 = ((idx & 1) == 0) ? 0 : N;
+  const uint off1 = ((idx & 1) == 0) ? N : 0;
+
+  // Each workgroup must handle rows BM*wgx..BM*(wgx+1)
+  const uint row0 = gl_WorkGroupID.x * BM;
+  const uint tidx = gl_LocalInvocationID.x;
+  const uint row1 = row0 + tidx;
+
+  for (uint i = 0; i < BM; i += WGSIZE) {
+    for (uint k = 0; k < K; k++)
+      sacc[i + tidx][k] = 0;
+  }
+
+  // Evaluate polynomial for all rows in stripe.
+  for (uint i = 0; i < BM; i += WGSIZE) {
+    const uint row = row1 + i;
+    if (row >= N)
+      break;
+    // wout[row] += ak[idx] * vi
+    uint[K] w = wout[row];
+    for (uint b = 0; b < M; b++) {
+      // bit b is the dot product ak[b] * acc
+      uint wi = 0;
+      for (uint k = 0; k < K; k++)
+        wi ^= bitCount(ak[idx][b][k] & v[off0 + row][k]) & 1;
+      w[b / 32] ^= (wi << (b % 32));
+    }
+    wout[row] = w;
+  }
+  barrier();
+  memoryBarrierShared();
+
+  // Now accumulate out[j] += vi * mij
+  // All rows will accumulate to the same locations (j < DENSE_N*32K)
+  for (uint j = 0; j < DENSE_N; j++) {
+    for (uint i = 0; i < BM; i += WGSIZE) {
+      const uint row = row1 + i;
+      if (row >= N)
+        break;
+      uint dij = dense[row][j];
+      uint[K] vi = v[off0 + row];
+      for (int jj = 0; jj < 32; jj++) {
+        // To avoid bank conflicts, iterate from varying indices.
+        const int jt = (jj + int(tidx)) & 31;
+        if (bitfieldExtract(dij, jt, 1) == 1) {
+          for (uint k = 0; k < K; k++)
+            atomicXor(sacc[32 * j + jt][k], vi[k]);
+        }
+      }
+    }
+  }
+  barrier();
+  memoryBarrierShared();
+
+  // Output dense part to main memory.
+  // Assumption: v[off1 + i] was zero before shader dispatch.
+  for (uint i = tidx; i < DENSE_N * 32; i += WGSIZE) {
+    for (uint k = 0; k < K; k++) {
+      const uint outi = atomicExchange(sacc[i][k], 0);
+      atomicXor(v[off1 + i][k], outi);
+    }
+  }
+  barrier();
+  memoryBarrierShared();
+
+  // Assumption: sacc==0 here.
+
+  // Sparse coefficients (same as spmv_gf2_blockcoo)
+  const uint i0 = sidx[gl_WorkGroupID.x];
+  const uint i1 = sidx[gl_WorkGroupID.x + 1];
+  uint i = i0;
+#ifdef UNROLL
+  // Partial unroll groups of UNROLL indices.
+  for (i = i0; i + WGSIZE * UNROLL < i1; i += WGSIZE * UNROLL) {
+    uint c[UNROLL];
+    uint vi[UNROLL][K];
+    for (uint ii = 0; ii < UNROLL; ii++)
+      c[ii] = sparse[i + ii * WGSIZE + tidx];
+    for (uint ii = 0; ii < UNROLL; ii++) {
+      vi[ii] = v[off0 + c[ii] / BM];
+    }
+    for (uint ii = 0; ii < UNROLL; ii++) {
+      for (uint k = 0; k < K; k++)
+        atomicXor(sacc[c[ii] % BM][k], vi[ii][k]);
+    }
+  }
+#endif
+  for (uint ii = i + tidx; ii < i1; ii += WGSIZE) {
+    const uint c = sparse[ii];
+    for (uint k = 0; k < K; k++)
+      atomicXor(sacc[c % BM][k], v[off0 + c / BM][k]);
+  }
+  barrier();
+  memoryBarrierShared();
+  // Output result to next row
+  for (uint i = 0; i < BM; i += WGSIZE) {
+    const uint row = row1 + i;
+    if (row >= N)
+      break;
+    if (row < 32 * DENSE_N)
+      continue;
+    v[off1 + row] = sacc[i + tidx];
+  }
+  barrier();
+  if (gl_LocalInvocationID.x == 0)
+    iter[gl_WorkGroupID.x] = idx + 1;
+}

@@ -21,7 +21,7 @@ import numpy as np
 
 from nefelis import filter_disk
 from nefelis import filter_gf2 as filter
-from nefelis.linalg_gf2 import SpMV
+from nefelis.linalg_gf2 import SpMV, SpMV_COO, SpMV_COO2
 from nefelis.factor import sqrt_arb
 from nefelis.factor import sqrt_padic
 
@@ -101,7 +101,7 @@ def main_impl(args):
     rels = filter.filter(rels, pathlib.Path(workdir))
     rels = [np.array(list(r), dtype=np.int32) for r in rels]
 
-    M = SpMV(rels)
+    M = SpMV_COO2(rels)
     facs = [n]
     while True:
         kers = M.left_kernel()
@@ -346,6 +346,34 @@ def bench(args):
     random.seed(0)
     t0 = time.monotonic()
     M = SpMV(rows)
+    logger.info(f"Built matrix in {time.monotonic() - t0:.1f}s")
+    dt1, gpu_dt = M.benchmark(32, ITERS, False)
+    logger.info(f"forward {dt1:.3f}ms/matmul GPU {gpu_dt:.3f}ms/matmul")
+    dt2, gpu_dt = M.benchmark(32, ITERS, True)
+    logger.info(f"backward {dt2:.3f}ms/matmul GPU {gpu_dt:.3f}ms/matmul")
+    logger.info(
+        f"Throughput forward {1000 / dt1:.1f} matmul/s, transpose {1000 / dt2:.1f} matmul/s"
+    )
+
+    logger.info(f"Benchmark with SpMV_COO ({ITERS} iterations)")
+    # make deterministic
+    random.seed(0)
+    t0 = time.monotonic()
+    M = SpMV_COO(rows)
+    logger.info(f"Built matrix in {time.monotonic() - t0:.1f}s")
+    dt1, gpu_dt = M.benchmark(32, ITERS, False)
+    logger.info(f"forward {dt1:.3f}ms/matmul GPU {gpu_dt:.3f}ms/matmul")
+    dt2, gpu_dt = M.benchmark(32, ITERS, True)
+    logger.info(f"backward {dt2:.3f}ms/matmul GPU {gpu_dt:.3f}ms/matmul")
+    logger.info(
+        f"Throughput forward {1000 / dt1:.1f} matmul/s, transpose {1000 / dt2:.1f} matmul/s"
+    )
+
+    logger.info(f"Benchmark with SpMV_COO2 ({ITERS} iterations)")
+    # make deterministic
+    random.seed(0)
+    t0 = time.monotonic()
+    M = SpMV_COO2(rows)
     logger.info(f"Built matrix in {time.monotonic() - t0:.1f}s")
     dt1, gpu_dt = M.benchmark(32, ITERS, False)
     logger.info(f"forward {dt1:.3f}ms/matmul GPU {gpu_dt:.3f}ms/matmul")

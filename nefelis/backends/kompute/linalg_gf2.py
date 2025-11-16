@@ -46,7 +46,11 @@ class SpMV:
         """
         weight = sum(len(r) for r in rels)
         basis, rowidx, dense, sparserows = to_sparse_matrix(
-            rels, sort_rows=not DEBUG_NO_SORT_ROWS
+            rels,
+            sort_rows=not DEBUG_NO_SORT_ROWS,
+            # If we check benchmark output, we need to shuffle columns in the same way.
+            # This may degrade performance.
+            shuffle_cols=DEBUG_BENCHMARK_OUTPUT,
         )
         dim, dense_n = dense.shape
         self.defines = {"N": dim, "DENSE_N": dense_n}
@@ -111,6 +115,7 @@ class SpMV:
 
         self.mgr = mgr
         self.tensors = [xd, xplus, xidxp]
+        self.tensors_transposed = self.tensors
         bitsize = 32 * sum(t.size() for t in self.tensors)
         logger.debug(
             f"Matrix format using {bitsize / weight:.1f} bits/coefficient ({bitsize >> 25}MiB)"
@@ -123,9 +128,9 @@ class SpMV:
 
     def shaders(self, defines, transpose: bool):
         if transpose:
-            return [(name, shader(name, defines)) for name in ("spmv_gf2_transpose1",)]
+            return [shader("spmv_gf2_transpose1", defines)]
         else:
-            return [(name, shader(name, defines)) for name in ("spmv_gf2",)]
+            return [shader("spmv_gf2", defines)]
 
     def _run(
         self,
@@ -137,9 +142,9 @@ class SpMV:
         transpose: bool = False,
     ):
         mgr = self.mgr
+        kernels = self.shaders(defines, transpose)
         algos = [
-            (name, mgr.algorithm(tensors, kernel, workgroup=(N_WG, 1, 1)))
-            for name, kernel in self.shaders(defines, transpose)
+            mgr.algorithm(tensors, kernel, workgroup=(N_WG, 1, 1)) for kernel in kernels
         ]
 
         mgr.sequence().record(kp.OpTensorSyncDevice(tensors)).eval()
@@ -151,11 +156,11 @@ class SpMV:
         for i in range(ITERS // BATCHSIZE + 1):
             if i * BATCHSIZE >= ITERS:
                 break
-            algo_idx = 0  # FIXME
 
             seq = mgr.sequence(total_timestamps=2 * BATCHSIZE)
             for _ in range(min(BATCHSIZE, ITERS - i * BATCHSIZE)):
-                seq.record(kp.OpAlgoDispatch(algos[algo_idx][1]))
+                for a in algos:
+                    seq.record(kp.OpAlgoDispatch(a))
                 count += 1
             seq.eval()
 
@@ -214,9 +219,15 @@ class SpMV:
         # poly1 = [poly1[0] * 0] + poly1
         # assert self.polyeval(poly1, v, m) == 0
 
+    def _is_valid_outidx(self, m: int, outidx: int):
+        # No constraint on outidx
+        return True
+
     def left_kernel(self):
-        if self.dim < 16384:
+        if self.dim < 131072:
             m = 16
+        elif self.dim < 1048576:
+            m = 24
         else:
             m = 32
         # If sum(ak X^k) is a matrix generator of the sequence W0 M^k V0
@@ -225,6 +236,8 @@ class SpMV:
         # W0 is not random and is always a zero-padded identity matrix.
         # W0 is shifted by a random amount of columns.
         outidx = random.randrange(0, self.dim - m)
+        while not self._is_valid_outidx(m, outidx):
+            outidx = random.randrange(0, self.dim - m)
         poly, v = self.block_wiedemann(m, outidx=outidx, left=True)
         # FIXME: assumes m <= 32
         w0 = np.zeros((self.dim, (m + 31) // 32), dtype=np.uint32)
@@ -322,7 +335,7 @@ class SpMV:
             vpoly = rng.integers(2**32, size=(iters, m, K), dtype=np.uint32)
             xpoly = mgr.tensor_t(vpoly.flatten())
             xout = mgr.tensor_t(np.zeros(dim * K, dtype=np.uint32))
-            tensors = self.tensors + [xv, xiter, xpoly, xout]
+            tensors = self.tensors_transposed + [xv, xiter, xpoly, xout]
         else:
             xout = mgr.tensor_t(np.zeros(iters * K * m, dtype=np.uint32))
             tensors = self.tensors + [xv, xiter, xout]
@@ -453,7 +466,12 @@ class SpMV:
         dim = self.dim
         N_WG = (dim + self.ROWS_PER_WG - 1) // self.ROWS_PER_WG
 
-        BATCHSIZE = 16
+        if dim > 1000_000:
+            BATCHSIZE = 4
+        elif dim > 400_000:
+            BATCHSIZE = 8
+        else:
+            BATCHSIZE = 16
         K = (m + 31) // 32
 
         defines = self.defines | {"M": m, "K": K, "POLYEVAL": 1}
@@ -474,7 +492,10 @@ class SpMV:
         vout = np.zeros((dim, K), dtype=np.uint32)
         xout = mgr.tensor_t(vout.flatten())
 
-        tensors = self.tensors + [xv, xiter, xpoly, xout]
+        if transpose:
+            tensors = self.tensors_transposed + [xv, xiter, xpoly, xout]
+        else:
+            tensors = self.tensors + [xv, xiter, xpoly, xout]
 
         t0 = time.monotonic()
         gpu_ticks = self._run(tensors, defines, len(poly), BATCHSIZE, N_WG, transpose)
@@ -491,6 +512,170 @@ class SpMV:
             f"Polyeval completed in {dt:.3f}s (GPU {gpu_dt:.3}s, {flops / 1e9:.2f} GFLOPS, {speed:.1f} SpMV/s)"
         )
         return vout
+
+
+class SpMV_COO(SpMV):
+    """
+    A block-COO encoded matrix where each sparse coefficient is encoded
+    as a packed tuple of (b,32-b) bit coordinates.
+
+    The matrix is split into stripes of 2^b rows and must have
+    at most 2^(32-b) columns.
+
+    The shaders take input vectors/polynomials in the same descriptors as the SpMV
+    class so most methods can be reused identically.
+    """
+
+    # True for SpMV_COO2 (initializer is shared)
+    NEED_COL_STRIPES = False
+
+    def __init__(self, rels: list[npt.NDArray[np.int32]], gpu_idx=0):
+        """
+        Build internal representation of a sparse matrix where
+        input rows are given as dictionaries.
+
+        Dictionary keys are opaque labels corresponding to matrix columns.
+        """
+        weight = sum(len(r) for r in rels)
+        basis, rowidx, dense, sparserows = to_sparse_matrix(
+            rels, sort_rows=False, shuffle_cols=True
+        )
+        dim, dense_n = dense.shape
+
+        self.rels = rels
+        # For debugging
+        if DEBUG_CHECK_ENCODING:
+            self.dense = dense
+            self.sparserows = sparserows
+
+        # We want at least 256 workgroups
+        # We don't want to use more than 8kB of local memory.
+        if dim >= 65536:
+            BM = 1 << min(11, dim.bit_length() - 9, 32 - dim.bit_length())
+            assert 128 <= BM <= 2048
+            assert dim / BM >= 256
+        else:
+            # BM = 128
+            BM = 256
+        assert dim <= 2**32 / BM
+
+        self.defines = {"N": dim, "DENSE_N": dense_n, "BM": BM}
+
+        self.ROWS_PER_WG = BM
+        self.basis = basis
+        self.rowidx = rowidx
+        self.dim = dim
+
+        # Prepare tensors
+        mgr = kp.Manager(gpu_idx)
+        if dense.size == 0:
+            dense = np.zeros(1, dtype=np.uint32)
+        xd = mgr.tensor_t(dense.flatten().view(np.uint32))
+
+        # Encode rows
+        def encode_stripe(rows):
+            "Encode row when dimension is large"
+            chunks = []
+            for i, row in enumerate(rows):
+                row = row.astype(np.uint32)
+                row = row * BM + (i % BM)
+                chunks.append(row)
+            enc = np.concatenate(chunks)
+            enc.sort()
+            return enc
+
+        enc = [encode_stripe(sparserows[i : i + BM]) for i in range(0, dim, BM)]
+
+        rowlen = [len(l) for l in enc]
+        # logger.debug(f"Stripe sizes {rowlen}")
+        # logger.debug(f"Stripe cols sizes {[len(c) for c in enc_cols]}")
+        aidx = np.cumsum(np.array([0] + rowlen, dtype=np.uint32), dtype=np.uint32)
+        arows = np.zeros(sum(rowlen), dtype=np.uint32)
+        for i, l in enumerate(enc):
+            arows[aidx[i] : aidx[i + 1]] = l
+        xrows = mgr.tensor_t(arows)
+        xidx = mgr.tensor_t(aidx)
+
+        if self.NEED_COL_STRIPES:
+            # Encode columns
+            # For this we build a large array with all coefficients
+            all_cols = []
+            for i, row in enumerate(sparserows):
+                lo = (row & (BM - 1)).astype(np.uint64)
+                hi = (row // BM).astype(np.uint64)
+                all_cols.append(lo + (i * BM) + (hi << 32))
+            all_cols = np.concatenate(all_cols)
+            all_cols.sort()
+
+            idxc = np.searchsorted(
+                all_cols, np.arange(0, (dim // BM + 2) << 32, 1 << 32, dtype=np.uint64)
+            )
+            for j, jidx in zip(range(dim // BM + 2), idxc):
+                if j == 0:
+                    assert jidx == 0
+                elif jidx == len(all_cols):
+                    assert (int(all_cols[-1]) >> 32) < j
+                else:
+                    assert (int(all_cols[jidx]) >> 32) >= j
+                    assert (int(all_cols[jidx - 1]) >> 32) < j
+            assert idxc[-1] == len(all_cols)
+
+            aidxc = np.array(idxc, dtype=np.uint32)
+            # Truncate to low 32 bits.
+            acols = all_cols.astype(np.uint32)
+            xcols = mgr.tensor_t(acols)
+            xidxc = mgr.tensor_t(aidxc)
+            self.tensors_columns = [xd, xcols, xidxc]
+
+        self.mgr = mgr
+        self.tensors = [xd, xrows, xidx]
+        self.tensors_transposed = self.tensors
+        bitsize = 32 * sum(t.size() for t in self.tensors)
+        logger.debug(
+            f"Matrix format using {bitsize / weight:.1f} bits/coefficient ({bitsize >> 25}MiB)"
+        )
+        if self.NEED_COL_STRIPES:
+            bitsize = 32 * sum(t.size() for t in self.tensors_columns)
+            logger.debug(
+                f"Transposed matrix format using {bitsize / weight:.1f} bits/coefficient ({bitsize >> 25}MiB)"
+            )
+
+        self.flops = dim * dense_n * 32 + sum(rowlen)
+        self.weight = weight
+        logger.debug(
+            f"{self.flops} bit ops per matrix multiplication (original weight {weight})"
+        )
+
+    def shaders(self, defines, transpose: bool):
+        if transpose:
+            return [shader("spmv_gf2_blockcoo_transpose", defines)]
+        else:
+            return [shader("spmv_gf2_blockcoo", defines)]
+
+    def _is_valid_outidx(self, m: int, outidx: int):
+        return outidx % self.ROWS_PER_WG < self.ROWS_PER_WG - m
+
+
+class SpMV_COO2(SpMV_COO):
+    """
+    Variant of SpMV_COO where the transposed matrix is encoded
+    as stripes of columns.
+    """
+
+    NEED_COL_STRIPES = True
+
+    def __init__(self, *args, **kwargs):
+        super(SpMV_COO2, self).__init__(*args, **kwargs)
+        self.tensors_transposed = self.tensors_columns
+
+    def shaders(self, defines, transpose: bool):
+        if transpose:
+            return [
+                shader("spmv_gf2_blockcoo_clear2", defines),
+                shader("spmv_gf2_blockcoo_transpose2", defines),
+            ]
+        else:
+            return [shader("spmv_gf2_blockcoo", defines)]
 
 
 DENSE_ALIGN = 32
