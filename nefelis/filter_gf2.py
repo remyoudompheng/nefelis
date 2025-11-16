@@ -13,322 +13,25 @@ import logging
 import pathlib
 import time
 
-from networkx import Graph, connected_components
+import numpy as np
 
 logger = logging.getLogger("filter")
 
-
-def prune(
-    rawrels: list[dict], datadir: pathlib.Path | None = None
-) -> tuple[list[set[str]], int]:
-    """
-    Variant with both singleton and clique removal.
-    """
-    rels: list[set[str] | None] = []
-    dedup = set()
-    duplicates = 0
-    for rel in rawrels:
-        line = " ".join(str(l) for l, e in sorted(rel.items()) if e & 1)
-        if line in dedup:
-            duplicates += 1
-            rels.append(None)
-            continue
-        dedup.add(line)
-        rabs = set(_l for _l, _e in rel.items() if _e & 1)
-        rels.append(rabs)
-    if duplicates:
-        logger.warn(f"Found {duplicates} duplicate relations before pruning")
-
-    # Prune relations in place: a removed relation is replaced by None.
-    # We are only interested in coefficients ±1, exponent sign is ignored
-    stats: dict[str, list[int] | None] = {}
-    for ridx, r in enumerate(rels):
-        if r is None:
-            continue
-        for p in r:
-            if p < 0:
-                continue
-            stats_p = stats.setdefault(p, [])
-            if stats_p is None:
-                continue
-            stats_p.append(ridx)
-            if len(stats_p) > 20:
-                stats[p] = None
-
-    excess = len(rels) - len(stats)
-    logger.info(f"[prune] {len(stats)} primes appear in relations")
-
-    def prune(ridx):
-        r = rels[ridx]
-        if r is None:
-            return
-        for p in r:
-            sp = stats.get(p)
-            if sp is not None:
-                sp.remove(ridx)
-                if len(sp) == 0:
-                    del stats[p]
-        rels[ridx] = None
-
-    def score(clique):
-        s = 0
-        for ridx in clique:
-            # Score is weight of relation
-            # + bonus point is some primes have low weight.
-            r = rels[ridx]
-            s += len(r)
-            for p in r:
-                if (sp := stats.get(p)) is not None and len(sp) < 5:
-                    s += 1
-        return s
-
-    while excess < 0:
-        m1 = [p for p, rs in stats.items() if rs is not None and len(rs) == 1]
-        singles = 0
-        for p in m1:
-            if stats_p := stats.get(p):
-                prune(stats_p[0])
-                singles += 1
-        if singles:
-            logger.info(f"[prune] pruned {singles} singletons")
-            nr = sum(1 for r in rels if r is not None)
-            excess = nr - len(stats)
-            logger.info(f"[prune] {len(stats)} primes appear in relations")
-        else:
-            break
-
-    removed = 0
-    remove_passes = 0
-    # Keep 50000 excess or at least half original excess + 100
-    max_removed = max((excess - 200) // 2, excess - 50000)
-    while removed < max_removed:
-        m1 = [p for p, rs in stats.items() if rs is not None and len(rs) == 1]
-        singles = 0
-        for p in m1:
-            if stats_p := stats.get(p):
-                prune(stats_p[0])
-                singles += 1
-        if singles:
-            logger.info(f"[prune] pruned {singles} singletons")
-
-        if remove_passes >= 2:
-            # Only 2 passes
-            break
-        remove_passes += 1
-        m2 = [(p, rs) for p, rs in stats.items() if rs is not None and len(rs) == 2]
-        g = Graph()
-        for p, rs in m2:
-            g.add_edge(*rs)
-        # They are not cliques at all but the term is used in literature.
-        cliques = list(connected_components(g))
-        cliques.sort(key=score)
-        to_remove = max(100, max_removed // 2)
-        to_remove = min(max_removed - removed, to_remove)
-        if to_remove > 0:
-            cliques_removed = cliques[-to_remove:]
-        else:
-            cliques_removed = []
-        size = sum(len(c) for c in cliques_removed)
-        if size:
-            logger.info(
-                f"[prune] pruning {len(cliques_removed)} cliques of {size} relations"
-            )
-        for c in cliques_removed:
-            for ridx in c:
-                prune(ridx)
-        removed += len(cliques_removed)
-        if not singles and not size:
-            break
-
-    assert len(rels) == len(rawrels)
-
-    cols = set()
-    pruned: list[set[str]] = [r for r in rels if r is not None]
-    for r in pruned:
-        cols.update([_p for _p in r if not _p.startswith("K_")])
-    logger.info(
-        f"[prune] After pruning: {len(pruned)} relations with {len(cols)} primes"
-    )
-
-    if datadir is not None:
-        with open(datadir / "relations.pruned", "w") as wp:
-            for row in pruned:
-                line = " ".join(f"{l}" for l in sorted(row))
-                print(line, file=wp)
-
-    return pruned, len(pruned) - len(cols)
+DEBUG_MERGE = False
 
 
-def filter(rels, datadir: pathlib.Path | None):
-    t0 = time.time()
-    D = 2**250
-    dense_limit = 100
+def filter(rels: list, datadir: pathlib.Path | None):
+    dim = max(np.max(r) for r in rels)
+    logger.info(f"Max column index {dim}")
 
-    t = time.time()
-    stats = {}
-    dense_cols = set()
-    for ridx, r in enumerate(rels):
-        for p in r:
-            if p < 0:
-                continue
-            pset = stats.get(p)
-            if pset is None:
-                stats[p] = {ridx}
-            elif len(pset) < dense_limit:
-                pset.add(ridx)
-                if len(pset) == dense_limit:
-                    dense_cols.add(p)
-
-    def delstat(ridx, r):
-        for p in r:
-            if p < 0 or p in dense_cols:
-                continue
-            stats[p].remove(ridx)
-
-    def weight(row):
-        return sum(1 for _p in row if p >= 0)
-
-    excess = len(rels) - len(stats)
-    logger.info(f"{len(stats)} primes appear in relations")
-    logger.info(f"{excess} relations can be removed")
-
-    # prime p = product(l^e)
-
+    t0 = time.monotonic()
     Ds = [2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 20]
-    removed = 0
     for d in Ds:
-        remaining = [_r for _r in rels if _r is not None]
-        avgw = sum(weight(r) for r in remaining) / len(remaining)
-        nc, nr = len(stats), len(remaining)
-        assert nr > nc
-        logger.info(
-            f"Starting {d}-merge: {nc} columns {nr} rows excess={nr - nc} weight={avgw:.3f} elapsed={time.time() - t:.1f}s"
-        )
-
-        if d > nc // 3:
-            # Matrix is too small
+        rels = merge(rels, d, dim + 1)
+        if sum(len(r) for r in rels) > len(rels) * 100:
             break
-
-        # Modulo p^k we have probabikity 1/p of missing a generator
-        # for each excess relation
-        MIN_EXCESS = 64 + D.bit_length()
-
-        # d-merges
-        md = [k for k in stats if len(stats[k]) <= d and k not in dense_cols]
-        if not md:
-            break
-        logger.debug(f"{len(md)} {d}-merges candidates {min(md)}..{max(md)}")
-        merged = 0
-        for p in md:
-            rs = stats.get(p)
-            if not rs or len(rs) > d:
-                # prime already eliminated or weight has grown
-                continue
-            # Pivot has fewest coefficients and pivot value is ±1
-            # assert all(p in rels[ridx] for ridx in stats[p])
-            rs = sorted(rs, key=lambda ridx: weight(rels[ridx]))
-            pividx = rs[0]
-            piv = rels[pividx]
-            for ridx in rs[1:]:
-                rp = rels[ridx].symmetric_difference(piv)
-                # If relation becomes empty, remove it
-                rels[ridx] = rp if len(rp) > 0 else None
-            # For each element of piv, ridx will be toggled from stats[l]
-            for l in piv:
-                if l >= 0:
-                    stats[l].symmetric_difference_update(rs)
-            rels[pividx] = None
-            removed += 1
-            merged += 1
-        logger.debug(f"{merged} pivots done")
-
-        remaining = [_r for _r in rels if _r is not None]
-        pivoted = [p for p, ps in stats.items() if not ps]
-        for p in pivoted:
-            stats.pop(p)
-        nr, nc = len(remaining), len(stats)
-        avgw = sum(len(r) for r in remaining) / nr
-
-        def score_sparse(rel, stats):
-            t = max(2 * d, nr // 10)
-            return sum(1 for l in rel if l in stats and len(stats[l]) < t)
-
-        stop = avgw > dense_limit
-        # Remove most annoying relations
-        excess = nr - nc
-        if stop:
-            break
-        if excess > MIN_EXCESS:
-            to_remove = (excess - MIN_EXCESS) // (len(Ds) // 2)
-            if d < 10:
-                # Still actively merging
-                to_remove = 0
-            if to_remove:
-                scores = []
-                for ridx, r in enumerate(rels):
-                    if r is None:
-                        continue
-                    scores.append((score_sparse(r, stats), ridx))
-                scores.sort()
-                worst = scores[-to_remove:]
-                logger.debug(
-                    f"Worst rows ({len(worst)}) have score {worst[0][0]:.3f}..{worst[-1][0]:.3f}"
-                )
-                for _, ridx in worst:
-                    # Not a pivot, no need to save.
-                    delstat(ridx, rels[ridx])
-                    rels[ridx] = None
-
-    # For the last step, we just want to minimize sparse weight
-    # We ignore dense columns when scoring
-    nr = len([_r for _r in rels if _r is not None])
-    nc = len([_ for _, _s in stats.items() if _s])
-    excess = nr - nc
-    dense = set([p for p, _rels in stats.items() if len(_rels) > nr // 3])
-    logger.debug(f"Ignoring {len(dense)} dense columns to eliminate worst rows")
-
-    def score_final(r):
-        return sum(1 for p in r if p not in dense)
-
-    # Deduplicate before final step
-    dedup = set()
-    duplicates = 0
-    for ridx, r in enumerate(rels):
-        if r is None:
-            continue
-        line = " ".join(f"{l}" for l in sorted(r))
-        if line in dedup:
-            duplicates += 1
-            rels[ridx] = None
-        dedup.add(line)
-    if duplicates:
-        logger.warn(f"Found {duplicates} duplicate relations after filtering")
-
-    excess -= duplicates
-    if excess > MIN_EXCESS:
-        # scores = [(len(r), ridx) for ridx, r in enumerate(rels) if r is not None]
-        scores = [
-            (score_final(r), ridx) for ridx, r in enumerate(rels) if r is not None
-        ]
-        scores.sort()
-        to_remove = excess - MIN_EXCESS
-        worst = scores[-to_remove:]
-        logger.info(
-            f"Worst rows ({len(worst)}) have score {worst[0][0]:.3f}..{worst[-1][0]:.3f}"
-        )
-        for _, ridx in worst:
-            rels[ridx] = None
-
-    cols = set()
-    rels = [_r for _r in rels if _r is not None]
-    for _r in rels:
-        cols.update(l for l in _r if l >= 0)
-    nr, nc = len(rels), len(cols)
-    avgw = sum(len(r) for r in rels) / len(rels)
-    dt = time.time() - t0
-    logger.info(
-        f"Final: {nc} columns {nr} rows excess={nr - nc} weight={avgw:.3f} elapsed={dt:.1f}s"
-    )
+    rels = clear_excess(rels, dim + 1)
+    logger.info(f"Filtering/merge done in {time.monotonic() - t0:.1f}s")
 
     if datadir is not None:
         with open(datadir / "relations.filtered", "w") as w:
@@ -339,3 +42,111 @@ def filter(rels, datadir: pathlib.Path | None):
             logger.info(f"{len(rels)} relations written to {w.name}")
 
     return rels
+
+
+def merge(rels, d, imax: int):
+    dense_limit = 100
+
+    t0 = time.monotonic()
+
+    # Compute stats
+    counts = np.zeros(imax, dtype=np.uint32)
+    for r in rels:
+        counts[r[r >= 0]] += 1
+
+    # Find mergeable primes
+    md = ((0 < counts) & (counts <= d)).nonzero()[0]
+    sets = [None] * imax
+    for i in md:
+        sets[i] = []
+    for ridx, r in enumerate(rels):
+        rpos = r[r >= 0]
+        pivots = rpos[counts[rpos] <= d]
+        for p in pivots:
+            sets[p].append(ridx)
+
+    if DEBUG_MERGE:
+        for i in range(len(md)):
+            assert counts[md[i]] == len(sets[i]), (md[i], counts[md[i]], sets[i])
+
+    if len(md) == 0:
+        return
+
+    nr = len(rels)
+    nc = np.count_nonzero(counts)
+    avgw = np.sum(counts) / len(rels)
+    assert nr > nc
+
+    def weight(r):
+        return np.count_nonzero(counts[r[r >= 0]] < dense_limit)
+
+    pivots = 0
+    # Track modified relations, we skip a pivot if any row is modified.
+    pivotedp = np.zeros(imax + 1, dtype=np.uint8)
+    md = sorted(md, key=lambda i: counts[i])
+    for p in md:
+        # Beware: relations are modified during iteration
+        # We must skip p if it may appear in a relation outside sets[p]
+        # This happens if p appears in a relation used as a pivot.
+        if pivotedp[p]:
+            continue
+        rs = sets[p]
+        rs = [ridx for ridx in rs if rels[ridx] is not None]
+        if not rs:
+            continue
+        rs.sort(key=lambda ridx: weight(rels[ridx]))
+        pividx = rs[0]
+        piv = rels[pividx]
+        assert np.isin(p, piv)
+        rels[pividx] = None
+        for ridx in rs[1:]:
+            r = rels[ridx]
+            if r is None:
+                continue
+            rp = np.setxor1d(r, piv, assume_unique=True)
+            # If relation becomes empty, remove it
+            rels[ridx] = rp if len(rp) > 0 else None
+        pivotedp[piv[piv >= 0]] = 1
+        pivots += 1
+
+    dt = time.monotonic() - t0
+    logger.info(
+        f"{d}-merge: {nc} columns {nr} rows excess={nr - nc} weight={avgw:.3f} pivots={pivots}/{len(md)} dt={dt:.1f}s"
+    )
+
+    rels = [_r for _r in rels if _r is not None]
+    return rels
+
+
+def clear_excess(rels, imax: int):
+    # Compute stats
+    counts = np.zeros(imax, dtype=np.uint32)
+    for r in rels:
+        counts[r[r >= 0]] += 1
+
+    nr = len(rels)
+    nc = np.count_nonzero(counts)
+    assert nr > nc
+
+    MIN_EXCESS = 512
+    excess = nr - nc
+    if excess <= MIN_EXCESS:
+        return rels
+
+    # Remove heavy-weighted relations first
+    scores = []
+    for ridx, r in enumerate(rels):
+        rpos = r[r >= 0]
+        score = np.count_nonzero(counts[rpos] < 100)
+        scores.append((score, ridx))
+    scores.sort(reverse=True)
+
+    to_remove = excess - MIN_EXCESS
+    to_purge = scores[:to_remove]
+    for _, ridx in to_purge:
+        rels[ridx] = None
+
+    logger.info(
+        f"Purged {to_remove} relations with score {to_purge[-1][0]}..{to_purge[0][0]}"
+    )
+    return [r for r in rels if r is not None]

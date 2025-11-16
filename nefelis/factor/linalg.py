@@ -96,10 +96,7 @@ def main_impl(args):
         f"Computed factorizations and characters for {len(rels)} relations in {dt:.1f}s"
     )
 
-    # FIXME: remove extra conversions
-    rels = [set(map(int, r)) for r in rels]
     rels = filter.filter(rels, pathlib.Path(workdir))
-    rels = [np.array(list(r), dtype=np.int32) for r in rels]
 
     M = SpMV_COO2(rels)
     facs = [n]
