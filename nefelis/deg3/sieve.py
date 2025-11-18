@@ -25,7 +25,7 @@ import time
 import flint
 
 from nefelis.polys import estimate_size
-from nefelis.sieve import Siever
+from nefelis.sieve import Siever, gen_specialq
 from nefelis.integers import factor_smooth, smallprimes
 from nefelis.deg3.polyselect import polyselect, polyselect_g
 
@@ -257,11 +257,7 @@ def main_impl(args):
         for _r, _ in _rs:
             ls.append(_l)
             rs.append(_r)
-    qs = []
-    for _q in smallprimes(10 * qmin):
-        if _q >= qmin and A % _q != 0:
-            for _r, _ in flint.nmod_poly(g, _q).roots():
-                qs.append((int(_q), int(_r)))
+
 
     # We sieve g(x) which has size log2(N)/3 + 2 log2(x) but has a known factor q
     radius = math.sqrt(qmin) * 2**I
@@ -311,7 +307,7 @@ def main_impl(args):
     seenf = set()
     seeng = set()
 
-    sieve_args: Iterator[tuple[int, int]] = iter(qs)
+    sieve_args: Iterator[tuple[int, int]] = gen_specialq(qmin, g)
     MAX_SIEVE_QUEUE = 64
     with sievepool, factorpool:
         sieve_jobs = []

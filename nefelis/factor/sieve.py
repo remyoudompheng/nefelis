@@ -21,7 +21,7 @@ import flint
 import numpy as np
 
 from nefelis.skewpoly import skewness
-from nefelis.sieve import eta as sieve_eta, LineSiever2
+from nefelis.sieve import eta as sieve_eta, gen_specialq, LineSiever2
 from nefelis.integers import factor_smooth, smallprimes
 
 from nefelis.factor.polyselect import polyselect
@@ -298,12 +298,6 @@ def main_impl(args):
             ls2.append(_l)
             rs2.append(_l)
 
-    qs, qrs = [], []
-    for _l, _r in zip(ls, rs):
-        if qmin <= _l <= 30 * qmin:
-            qs.append(_l)
-            qrs.append(_r)
-
     # Choose rectangle size for area 2 ^ (2I + 1)
     if args.snfs:
         skew2 = skew
@@ -372,7 +366,7 @@ def main_impl(args):
     orphanQ = {}
 
     excess1, excess2 = -9999, -9999
-    sieve_args: Iterator[tuple[int, int]] = zip(qs, qrs)
+    sieve_args: Iterator[tuple[int, int]] = gen_specialq(qmin, f)
     # Full sieve statistics
     sieve_stats1 = []
     # Sieve statistics without orphans

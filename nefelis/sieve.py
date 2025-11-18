@@ -1,7 +1,25 @@
+from typing import Iterator
 import math
+
+import flint
 import numpy as np
 
 from .backends.kompute.sieve import Siever, LineSiever, LineSiever2
+from .integers import smallprimes
+
+DEBUG_ESTIMATOR = False
+
+
+def gen_specialq(qmin: int, poly: list) -> Iterator[tuple[int, int]]:
+    A = poly[-1]
+    qlo = qmin
+    while True:
+        qs = [q for q in smallprimes(2 * qlo) if q >= qlo and A % q != 0]
+        for q in qs:
+            for r, _ in flint.nmod_poly(poly, q).roots():
+                yield int(q), int(r)
+        qlo *= 2
+
 
 """
 Estimators for progress of the sieve.
@@ -20,8 +38,6 @@ where F has the same order of magnitude as FB and α is an exponent between 0.5 
 
 Usually each sieve side will have its own exponent α.
 """
-
-DEBUG_ESTIMATOR = False
 
 
 def eta(
