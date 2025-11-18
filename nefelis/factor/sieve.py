@@ -12,6 +12,7 @@ from concurrent.futures import ProcessPoolExecutor
 import json
 import logging
 import math
+from multiprocessing import current_process
 import os
 import pathlib
 import time
@@ -95,9 +96,14 @@ def factorer_task(args):
 SIEVER = None
 
 
-def worker_init(*args):
+def worker_init(gpu_ids: list[int] | None, *args):
     global SIEVER
-    SIEVER = LineSiever2(*args)
+    if gpu_ids is None:
+        gpu_idx = 0
+    else:
+        proc = current_process()
+        gpu_idx = gpu_ids[proc._identity[-1] % len(gpu_ids)]
+    SIEVER = LineSiever2(*args, gpu_idx=gpu_idx)
 
 
 def worker_task(args):
@@ -184,6 +190,11 @@ def main():
     argp.add_argument(
         "--parambias", type=int, default=0, help="Use params from x bits larger numbers"
     )
+
+    def gpu_id(s: str) -> list[int]:
+        return [int(x) for x in s.split(",")]
+
+    argp.add_argument("--gpu", type=gpu_id, help="List of GPU devices to be used")
     argp.add_argument("--ncpu", type=int, help="CPU threads for factoring")
     argp.add_argument(
         "--nogpufactor", action="store_true", help="Don't perform trial division on GPU"
@@ -315,10 +326,23 @@ def main_impl(args):
 
     reduce_q = True if args.snfs else False
     sievepool = ProcessPoolExecutor(
-        1,
+        1 if args.gpu is None else len(args.gpu),
         initializer=worker_init,
         # Parameters for LineSiever
-        initargs=(f, g, ls, rs, THRESHOLD, ls2, rs2, THRESHOLD2, W, H, reduce_q),
+        initargs=(
+            args.gpu,
+            f,
+            g,
+            ls,
+            rs,
+            THRESHOLD,
+            ls2,
+            rs2,
+            THRESHOLD2,
+            W,
+            H,
+            reduce_q,
+        ),
     )
     factorpool = ProcessPoolExecutor(
         args.ncpu or os.cpu_count(),

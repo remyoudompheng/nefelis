@@ -20,7 +20,11 @@ def main():
         help="Choose simple polynomials to avoid Schirokauer maps",
     )
 
+    def gpu_id(s: str) -> list[int]:
+        return [int(x) for x in s.split(",")]
+
     sieve_args = argp.add_argument_group("Sieve options")
+    sieve_args.add_argument("--gpu", type=gpu_id, help="List of GPU devices to be used")
     sieve_args.add_argument("--ncpu", type=int, help="CPU threads for factoring")
     sieve_args.add_argument(
         "--nogpufactor", action="store_true", help="Don't perform trial division on GPU"

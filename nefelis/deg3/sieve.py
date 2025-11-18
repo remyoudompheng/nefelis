@@ -17,6 +17,7 @@ from concurrent.futures import ProcessPoolExecutor
 import json
 import logging
 import math
+from multiprocessing import current_process
 import os
 import pathlib
 import time
@@ -89,9 +90,16 @@ def factorer_task(args):
 SIEVER = None
 
 
-def worker_init(g, ls, rs, threshold, I, f, ls2, rs2, threshold2):
+def worker_init(
+    gpu_ids: list[int] | None, g, ls, rs, threshold, I, f, ls2, rs2, threshold2
+):
     global SIEVER
-    SIEVER = Siever(g, ls, rs, threshold, I, f, ls2, rs2, threshold2)
+    if gpu_ids is None:
+        gpu_idx = 0
+    else:
+        proc = current_process()
+        gpu_idx = gpu_ids[proc._identity[-1] % len(gpu_ids)]
+    SIEVER = Siever(g, ls, rs, threshold, I, f, ls2, rs2, threshold2, gpu_idx=gpu_idx)
 
 
 def worker_task(args):
@@ -190,6 +198,11 @@ def main():
     argp.add_argument(
         "--nogpufactor", action="store_true", help="Don't perform trial division on GPU"
     )
+
+    def gpu_id(s: str) -> list[int]:
+        return [int(x) for x in s.split(",")]
+
+    argp.add_argument("--gpu", type=gpu_id, help="List of GPU devices to be used")
     argp.add_argument("--ncpu", type=int, help="CPU threads for factoring")
     argp.add_argument("N", type=int)
     argp.add_argument("WORKDIR")
@@ -265,9 +278,9 @@ def main_impl(args):
                 rs2.append(_r)
 
     sievepool = ProcessPoolExecutor(
-        1,
+        1 if args.gpu is None else len(args.gpu),
         initializer=worker_init,
-        initargs=(g, ls, rs, THRESHOLD, I, f, ls2, rs2, thr2),
+        initargs=(args.gpu, g, ls, rs, THRESHOLD, I, f, ls2, rs2, thr2),
     )
     factorpool = ProcessPoolExecutor(
         args.ncpu or os.cpu_count(),

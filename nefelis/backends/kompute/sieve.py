@@ -31,9 +31,10 @@ class Siever:
         roots2=None,
         threshold2=None,
         /,
+        gpu_idx=0,
         outsize=256 * 1024,
     ):
-        mgr = kp.Manager()
+        mgr = kp.Manager(gpu_idx)
         tprimes = mgr.tensor_t(np.array(primes, dtype=np.uint32))
         troots = mgr.tensor_t(np.array(roots, dtype=np.uint32))
         tqroots = mgr.tensor_t(np.array(roots, dtype=np.uint32))
@@ -472,11 +473,12 @@ class LineSiever2:
         H: int,
         reduce_q: bool,
         /,
+        gpu_idx=0,
         outsize=256 * 1024,
     ):
         self.reduce_q = reduce_q
 
-        mgr = kp.Manager()
+        mgr = kp.Manager(gpu_idx)
         tprimes = mgr.tensor_t(np.array(primes, dtype=np.uint32))
         troots = mgr.tensor_t(np.array(roots, dtype=np.uint32))
         tqroots = mgr.tensor_t(np.array(roots, dtype=np.uint32))
