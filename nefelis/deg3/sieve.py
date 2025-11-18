@@ -25,7 +25,7 @@ import time
 import flint
 
 from nefelis.polys import estimate_size
-from nefelis.sieve import Siever, gen_specialq
+from nefelis.sieve import Siever, gen_specialq, eta as sieve_eta
 from nefelis.integers import factor_smooth, smallprimes
 from nefelis.deg3.polyselect import polyselect, polyselect_g
 
@@ -280,6 +280,7 @@ def main_impl(args):
     seeng = set()
 
     sieve_args: Iterator[tuple[int, int]] = gen_specialq(qmin, g)
+    sieve_stats: list[tuple[int, int, int]] = []
     MAX_SIEVE_QUEUE = 64
     with sievepool, factorpool:
         sieve_jobs = []
@@ -344,8 +345,17 @@ def main_impl(args):
                     last_log = elapsed
                     logger.info(
                         f"Sieved q={q} r={qr:<8} area {total_area / 1e9:.0f}G in {dt:.3f}s (speed {total_area / elapsed / 1e9:.3f}G/s): "
-                        f"{nrels}/{len(reports)} relations, {gcount}/{fcount} Kg/Kf primes, total {total}"
+                        f"{nrels}/{nreports} relations, {gcount}/{fcount} Kg/Kf primes, total {total}"
                     )
+
+                    sieve_stats.append((total, gcount, fcount))
+                    if total and len(sieve_stats) % 30 == 10:
+                        boundg = max(seeng) >> 32
+                        boundf = max(seenf) >> 32
+                        eta = sieve_eta(boundg, boundf, total // 10, sieve_stats)
+                        logger.info(
+                            f"Requiring {int(eta * total)} relations ({100 / eta:.1f}% done)"
+                        )
 
                 if total > 1.1 * (fcount + gcount):
                     break
