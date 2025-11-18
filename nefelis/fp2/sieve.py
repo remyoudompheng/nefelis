@@ -11,13 +11,15 @@ F = (x^2 + A x + B)(x^2 + Ā x + B) where A, Ā are conjugate albegraic numbers
 G = x^2 + A x + B
 """
 
+from typing import Iterator
+
 import argparse
-import itertools
+import concurrent.futures
+from concurrent.futures import ProcessPoolExecutor
 import json
 import logging
 import math
-import multiprocessing
-import multiprocessing.dummy
+from multiprocessing import current_process
 import os
 import pathlib
 import time
@@ -57,13 +59,13 @@ class Factorer:
             vg = abs(A * x * x + B * x * y + C * y * y) // q
 
             facf = []
-            for _l, _e in integers.factor(vf):
+            for _l, _e in integers.factor_smooth(vf, self.B2f):
                 facf += _e * [int(_l)]
             if any(_f.bit_length() > self.B2f for _f in facf):
                 continue
 
             facg = [q]
-            for _l, _e in integers.factor(vg):
+            for _l, _e in integers.factor_smooth(vg, self.B2g):
                 facg += _e * [int(_l)]
 
             if any(_l.bit_length() > self.B2g for _l in facg):
@@ -92,9 +94,14 @@ def factorer_task(args):
 SIEVER = None
 
 
-def worker_init(g, ls, rs, threshold, I, f, ls2, rs2, threshold2):
+def worker_init(gpu_ids: list[int] | None, *args):
     global SIEVER
-    SIEVER = Siever(g, ls, rs, threshold, I, f, ls2, rs2, threshold2)
+    if gpu_ids is None:
+        gpu_idx = 0
+    else:
+        proc = current_process()
+        gpu_idx = gpu_ids[proc._identity[-1] % len(gpu_ids)]
+    SIEVER = Siever(*args, gpu_idx=gpu_idx)
 
 
 def worker_task(args):
@@ -180,6 +187,11 @@ def main():
     argp.add_argument(
         "--nogpufactor", action="store_true", help="Don't perform trial division on GPU"
     )
+
+    def gpu_id(s: str) -> list[int]:
+        return [int(x) for x in s.split(",")]
+
+    argp.add_argument("--gpu", type=gpu_id, help="List of GPU devices to be used")
     argp.add_argument("--ncpu", type=int, help="CPU threads for factoring")
     argp.add_argument("N", type=int)
     argp.add_argument("WORKDIR")
@@ -263,12 +275,12 @@ def main_impl(args):
                 ls2.append(_l)
                 rs2.append(_r)
 
-    sievepool = multiprocessing.Pool(
-        1,
+    sievepool = ProcessPoolExecutor(
+        1 if args.gpu is None else len(args.gpu),
         initializer=worker_init,
-        initargs=(g, ls, rs, THRESHOLD, I, f, ls2, rs2, thr2),
+        initargs=(args.gpu, g, ls, rs, THRESHOLD, I, f, ls2, rs2, thr2),
     )
-    factorpool = multiprocessing.Pool(
+    factorpool = ProcessPoolExecutor(
         args.ncpu or os.cpu_count(),
         initializer=factorer_init,
         initargs=(f, g, B2f, B2g),
@@ -305,14 +317,52 @@ def main_impl(args):
     seenf = set()
     seeng = set()
 
+    sieve_args: Iterator[tuple[int, int]] = iter(qs)
+    MAX_SIEVE_QUEUE = 64
+    enough_rels = False
     with sievepool, factorpool:
-        for q, qr, dt, reports in sievepool.imap(worker_task, qs):
-            nrels = 0
-            print(f"# q={q} r={qr}", file=relf)
+        sieve_jobs = []
+        factor_jobs = []
+        while not enough_rels:
+            while len(sieve_jobs) < MAX_SIEVE_QUEUE:
+                sieve_jobs.append(sievepool.submit(worker_task, next(sieve_args)))
+            # Always wait for at least 1 sieve
+            concurrent.futures.wait(
+                sieve_jobs, return_when=concurrent.futures.FIRST_COMPLETED
+            )
+            sieve_pending = []
+            for sfut in sieve_jobs:
+                if not sfut.done():
+                    sieve_pending.append(sfut)
+                    continue
+                q, qr, dt, reports = sfut.result()
+                fut = factorpool.submit(factorer_task, (q, reports))
+                factor_jobs.append((q, qr, dt, len(reports), fut))
+            sieve_jobs = sieve_pending
 
-            batchsize = 64
-            chunks = ((q, chunk) for chunk in itertools.batched(reports, batchsize))
-            for reschunk in factorpool.imap_unordered(factorer_task, chunks):
+            # Throttle if factoring is late
+            factor_pending = [t[-1] for t in factor_jobs]
+            if len(factor_pending) > MAX_SIEVE_QUEUE:
+                _c = len(factor_pending)
+                for _ in concurrent.futures.as_completed(factor_pending):
+                    _c -= 1
+                    if _c < MAX_SIEVE_QUEUE:
+                        break
+            else:
+                concurrent.futures.wait(
+                    factor_pending, return_when=concurrent.futures.FIRST_COMPLETED
+                )
+
+            remaining = []
+            for item in factor_jobs:
+                q, qr, dt, nreports, fut = item
+                if not fut.done():
+                    remaining.append(item)
+                    continue
+                nrels = 0
+                reschunk = fut.result()
+                print(f"# q={q} r={qr}", file=relf)
+
                 for x, y, facf, facg, idealf, idealg in reschunk:
                     # Normalize sign
                     if y < 0:
@@ -329,31 +379,36 @@ def main_impl(args):
                     seen.add(xy)
                     relf.write(f"{x},{y}:{str_facg}:{str_facf}\n")
                     nrels += 1
-            if nrels:
-                seeng.add(q)
-            print(f"# Found {nrels} relations for {q=} (time {dt:.3f}s)", file=relf)
-            total_q += 1
-            total += nrels
-            total_area += AREA
-            elapsed = time.monotonic() - t0
-            gcount = len(seeng)
-            fcount = len(seenf)
-            if elapsed < 2 or elapsed > last_log + 1:
-                # Don't log too often.
-                last_log = elapsed
-                logger.info(
-                    f"Sieved q={q} r={qr:<8} area {total_area / 1e9:.0f}G in {dt:.3f}s (speed {total_area / elapsed / 1e9:.3f}G/s): "
-                    f"{nrels}/{len(reports)} relations, {gcount}/{fcount} Kg/Kf primes, total {total}"
-                )
-            # Correct fcount because there are 4/3 primes per norm on average
-            if DEBUG_IGNORE_CONJUGATES:
-                if total > 1.2 * (2.66 * fcount + 2 * gcount):
-                    logging.info("Enough relations")
-                    break
-            else:
-                if total > 1.7 * (1.33 * fcount + gcount):
-                    logging.info("Enough relations")
-                    break
+                if nrels:
+                    seeng.add(q)
+                print(f"# Found {nrels} relations for {q=} (time {dt:.3f}s)", file=relf)
+                total_q += 1
+                total += nrels
+                total_area += AREA
+                elapsed = time.monotonic() - t0
+                gcount = len(seeng)
+                fcount = len(seenf)
+                if total_q < 10 or elapsed > last_log + 1:
+                    # Don't log too often.
+                    last_log = elapsed
+                    logger.info(
+                        f"Sieved q={q} r={qr:<8} area {total_area / 1e9:.0f}G in {dt:.3f}s (speed {total_area / elapsed / 1e9:.3f}G/s): "
+                        f"{nrels}/{nreports} relations, {gcount}/{fcount} Kg/Kf primes, total {total}"
+                    )
+                # Correct fcount because there are 4/3 primes per norm on average
+                if DEBUG_IGNORE_CONJUGATES:
+                    if total > 1.2 * (2.66 * fcount + 2 * gcount):
+                        enough_rels = True
+                        break
+                else:
+                    if total > 1.7 * (1.33 * fcount + gcount):
+                        enough_rels = True
+                        break
+            factor_jobs = remaining
+
+        logger.info("Enough relations")
+        [j.cancel() for j in sieve_jobs]
+        [tup[-1].cancel() for tup in factor_jobs]
 
     # CADO-NFS requires that the relation file ends with \n
     # Print statistics in CADO-compatible format
