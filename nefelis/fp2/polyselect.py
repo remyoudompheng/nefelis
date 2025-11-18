@@ -10,6 +10,8 @@ from nefelis import polys
 
 logger = logging.getLogger("poly")
 
+# FIXME: make it parallel
+
 
 def polyselect(N, bound=None) -> tuple[list, list, int, list[list]]:
     """
@@ -20,10 +22,7 @@ def polyselect(N, bound=None) -> tuple[list, list, int, list[list]]:
       gj: a polynomial over Z[sqrt(D)] represented as a list of pairs
     """
     if bound is None:
-        if N.bit_length() <= 150:
-            bound = 2
-        else:
-            bound = 3
+        bound = max(3, int(0.6 * 2 ** (N.bit_length() / 40)))
 
     # First, select a real quadratic field where N splits.
     # We also want ell to split (for large factors ell of (N-1))
@@ -39,7 +38,7 @@ def polyselect(N, bound=None) -> tuple[list, list, int, list[list]]:
         raise ArithmeticError("N has a no square root for any small -p")
 
     # Iterate over small polynomials
-    logger.info(f"Selecting quadratic field K=Q(sqrt(-{D}))")
+    logger.info(f"Selecting quadratic field K=Q(sqrt(-{D})) and bound {bound}")
 
     j = int(flint.fmpz_mod(D, flint.fmpz_mod_ctx(N)).sqrt())
 
@@ -94,31 +93,43 @@ def polyselect(N, bound=None) -> tuple[list, list, int, list[list]]:
             if Dg >= 0:
                 continue
             ag = polys.alpha2(Dg, g2, g1, g0)
-            gsize = (3 * (g0 * g0 + g2 * g2) + 2 * g0 * g2 + g1 * g1) / 6
+            gsize = polys.l2norm([g0, g1, g2])
             gbits = math.log2(gsize) / 2
             if gbits < N.bit_length() / 3:
                 # Most probably f is not irreducible
                 continue
-            score = gbits + ag
+
+            f1 = flint.fmpz_poly(list(xs))
+            f2 = flint.fmpz_poly(list(ys))
+            ff = f1**2 - D * f2**2
+            if ff[4] < 0:
+                ff = -ff  # normalize sign
+            roots_f = flint.fmpz_poly(ff).complex_roots()
+            if any(_r.imag == 0 for _r, _ in roots_f):
+                # logger.warning(f"Ignoring good polynomial {ff} with a real root")
+                continue
+            ff_l = [int(fi) for fi in list(ff)]
+            if bads := polys.bad_ideals(ff_l):
+                # logger.warning(
+                #    f"Skipping interesting polynomial {ff} with bad primes {bads}"
+                # )
+                continue
+            fsize = polys.l2norm(ff_l)
+            Df = polys.discriminant(ff_l)
+            af = polys.alpha4(Df, ff_l)
+            fbits = math.log2(fsize) / 2
+            score = gbits + ag + fbits + af
             if score < best:
-                f1 = flint.fmpz_poly(list(xs))
-                f2 = flint.fmpz_poly(list(ys))
-                ff = f1**2 - D * f2**2
-                if ff[4] < 0:
-                    ff = -ff  # normalize sign
-                roots_f = flint.fmpz_poly(ff).complex_roots()
-                if any(_r.imag == 0 for _r, _ in roots_f):
-                    logger.warning(f"Ignoring good polynomial {ff} with a real root")
-                    continue
-                logger.info(f"GOOD! {f} g {gbits:.2f} score {score:.2f}")
+                logger.info(
+                    f"GOOD! {ff} |f|={fbits:.2f} α(f)={af:.2f} |g|={gbits:.2f} α(g)={ag:.2f} score {score:.2f}"
+                )
                 best = score
-                f = ff
+                f = ff_l
                 if g2 < 0:
                     g0, g1, g2 = -g0, -g1, -g2
                 g = [g0, g1, g2]
                 gj = list(zip(xs, ys))
 
-    f = [int(fi) for fi in f]
     # Check that g divides f modulo N
     ZnX = flint.fmpz_mod_poly_ctx(N)
     print(f, g)
