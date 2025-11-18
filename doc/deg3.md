@@ -95,3 +95,23 @@ actual relation matrix.
 After computation, we obtain the virtual logarithm map:
 
 $$ \log: K^\times_p \to \mathcal I_p \times (\mathbb Z / \ell \mathbb Z)^r \to \mathbb Z / \ell \mathbb Z $$
+
+The variant without Schirokauer maps proceeds as follows: consider again the following exact
+sequence of abelian groups
+
+$$ 0 \to U \to K^\times \to \mathcal P \to 0 $$
+
+and define an (arbitrary) lift $G: \mathcal P \to K^\times$.
+This can be done by selecting a basis for the group of principal
+ideals which is almost triangular (for each large prime ideal,
+select an element of small norm, for small ideals, use lattice
+reduction to find a basis).
+
+Then for every element $x$ of $K^\times$, $u(x) = x / G([x])$ is a unit
+and $u$ is a group morphism. The mapping to integers can be determined
+by computing the logarithms of real/complex embeddings.
+
+Since we are only interested in $\log |u(x)|$ it is not necessary
+to store the full definition of $G$, but only $\log |G(p)|$
+for each prime ideal (since $\log |G|: \mathcal P \to \mathbb R$
+can be uniquely extended to a morphism $\mathcal I \to \mathbb R$).

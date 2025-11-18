@@ -157,31 +157,8 @@ PARAMS2 = [
 ]
 
 
-# In no-SM mode polynomial is less optimal and linear algebra is faster
-# so we can enlarge the factor base.
-PARAMS_NOSM = [
-    # bitsize, B1g, B2g, B2f, cofactor bits, I=logwidth, qmin
-    (120, 10000, 16, 14, 16, 12, 20),
-    (140, 30_000, 17, 16, 17, 13, 30),
-    (160, 50_000, 18, 17, 18, 14, 100),
-    (180, 70_000, 19, 17, 19, 14, 500),
-    (200, 100_000, 19, 18, 20, 14, 3000),
-    (220, 150_000, 20, 18, 20, 14, 6000),
-    (240, 200_000, 20, 19, 25, 14, 10000),
-    (260, 300_000, 20, 19, 25, 14, 20000),
-    (280, 500_000, 21, 20, 30, 14, 40000),
-    (300, 600_000, 22, 20, 30, 14, 70000),
-    (320, 1_000_000, 23, 21, 30, 14, 150000),
-    (340, 2_000_000, 23, 22, 35, 14, 300000),
-    (360, 3_000_000, 24, 22, 37, 14, 600000),
-    (380, 4_000_000, 24, 23, 45, 14, 900_000),
-]
-
-
-def get_params(N, nosm=False):
-    return min(
-        PARAMS_NOSM if nosm else PARAMS, key=lambda p: abs(p[0] - N.bit_length())
-    )[1:]
+def get_params(N):
+    return min(PARAMS, key=lambda p: abs(p[0] - N.bit_length()))[1:]
 
 
 def get_params2(N):
@@ -190,11 +167,6 @@ def get_params2(N):
 
 def main():
     argp = argparse.ArgumentParser()
-    argp.add_argument(
-        "--nosm",
-        action="store_true",
-        help="Choose simple polynomials to avoid Schirokauer maps",
-    )
     argp.add_argument(
         "--nogpufactor", action="store_true", help="Don't perform trial division on GPU"
     )
@@ -223,7 +195,7 @@ def main_impl(args):
     assert flint.fmpz(N).is_prime()
     assert flint.fmpz(ell).is_prime()
 
-    B1g, B2g, B2f, COFACTOR_BITS, I, qmin = get_params(N, nosm=args.nosm)
+    B1g, B2g, B2f, COFACTOR_BITS, I, qmin = get_params(N)
     B1f, thr2 = 0, 0
     if not args.nogpufactor:
         B1f, thr2 = get_params2(N)
@@ -231,7 +203,8 @@ def main_impl(args):
         f"Sieving with B1={B1g / 1000:.0f}k,{B1f / 1000:.0f}k log(B2)={B2g},{B2f} q={qmin}.. {COFACTOR_BITS} cofactor bits"
     )
 
-    if args.nosm:
+    if False:
+        # Old hardcoded polynomial for nosm=True
         r = pow(2, (2 * N - 1) // 3, N)
         assert (r**3 - 2) % N == 0
         f = [-2, 0, 0, 1]
@@ -257,7 +230,6 @@ def main_impl(args):
         for _r, _ in _rs:
             ls.append(_l)
             rs.append(_r)
-
 
     # We sieve g(x) which has size log2(N)/3 + 2 log2(x) but has a known factor q
     radius = math.sqrt(qmin) * 2**I

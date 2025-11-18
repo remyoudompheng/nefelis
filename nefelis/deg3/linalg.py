@@ -131,32 +131,19 @@ def main_impl(args):
 
         # z = factor(f(z), Kf) = factor(g(z), Kg) / leading(g)
         rel = {"CONSTANT": 1}
+        for _l in facf:
+            _r = x * pow(y, -1, _l) % _l if y % _l else _l
+            key = f"f_{_l}_{_r}"
+            rel[key] = rel.get(key, 0) + 1
+        for _l in facg:
+            _r = x * pow(y, -1, _l) % _l if y % _l else _l
+            key = f"g_{_l}_{_r}"
+            rel[key] = rel.get(key, 0) - 1
         if sm_root is None:
-            # Without Schirokauer map: factor into a basis of principal ideals.
-            relf = {}
-            for _l in facf:
-                relf[_l] = relf.get(_l, 0) + 1
-            for (_l, _r), _e in Kf.factor(-x, y, list(relf.items())):
-                if _l == -1:
-                    # FIXME: why is it broken?
-                    continue
-                rel[f"f_{_l}_{_r}"] = _e
-            for _l in facg:
-                _r = x * pow(y, -1, _l) % _l if y % _l else _l
-                key = f"g_{_l}_{_r}"
-                rel.setdefault(key, 0)
-                rel[key] = rel.get(key, 0) - 1
+            # Without Schirokauer map: determine directly unit exponent
+            rel["f_1_0"] = Kf.unit_exponent(x, y)
         else:
-            # With Schirokauer map: factor into prime ideals
-            # and augment with SM value.
-            for _l in facf:
-                _r = x * pow(y, -1, _l) % _l if y % _l else _l
-                key = f"f_{_l}_{_r}"
-                rel[key] = rel.get(key, 0) + 1
-            for _l in facg:
-                _r = x * pow(y, -1, _l) % _l if y % _l else _l
-                key = f"g_{_l}_{_r}"
-                rel[key] = rel.get(key, 0) - 1
+            # With Schirokauer map: augment prime ideals with SM value
             # Corresponding algebraic integer is x-yω
             v_sm = schirokauer_map(x, -y, sm_root, ell)
             rel["SM"] = v_sm
@@ -266,13 +253,11 @@ def main_impl(args):
             # Beware l is not just the product of 3 primes.
             roots = flint.nmod_poly(f, l).roots()
             if sm_root is None:
+                # FIXME: implement check for new CubicField
                 assert len(roots) == 3
-                z = l
-                for r, _ in roots:
-                    rx, ry, rz = Kf.idealgen(l, int(r))
-                    z /= rx + ry * Kf.j + rz * Kf.j**2
-                e = int(round(math.log(z) / math.log(Kf.u)))
-                dlog_f = sum(dlog[k] for k in f_primes[l]) + e * dlog["f_1_0"]
+                continue
+                # e = Kf.unit_exponent(l, 0)
+                # dlog_f = sum(dlog[k] for k in f_primes[l]) + e * dlog["f_1_0"]
             else:
                 assert len(roots) == 3 or (len(roots) == 2 and f[3] % l == 0)
                 l_sm = schirokauer_map(l, 0, sm_root, ell)
