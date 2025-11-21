@@ -236,11 +236,11 @@ void main() {
   uint poffsets[(HUGE_PRIME - N_SMALL) / gl_WorkGroupSize.x + 1];
   uint poffsets2[(HUGE_PRIME2 - N_SMALL) / gl_WorkGroupSize.x + 1];
 
-  const uint nsegs = yeven ? N_SEGMENTS / 2 : N_SEGMENTS;
   for (int y = y0; y < y0 + LINES_PER_WG; y++) {
     if (y > H)
       break;
     yeven = (y & 1) == 0;
+    const uint nsegs = yeven ? (N_SEGMENTS / 2) : N_SEGMENTS;
     for (int xseg = 0; xseg < nsegs; xseg++) {
       float sizeratio =
           max(abs(float(xseg * SEGMENT_SIZE + SEGMENT_SIZE / 2) / W - 1),
