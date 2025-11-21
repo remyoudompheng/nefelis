@@ -524,7 +524,7 @@ class LineSiever2:
                 "BUCKET_SIZE": bucket,
             }
             thuge = mgr.tensor_t(
-                np.zeros(H * bucket * NSEGS, dtype=np.uint16).view(np.uint32)
+                np.zeros((H + 2 * LINES_PER_WG) * bucket * NSEGS, dtype=np.uint16).view(np.uint32)
             )
 
             memhuge = thuge.size() * 4
@@ -558,7 +558,7 @@ class LineSiever2:
                 "BUCKET_SIZE2": bucket,
             }
             thuge2 = mgr.tensor_t(
-                np.zeros(H * bucket * NSEGS, dtype=np.uint16).view(np.uint32)
+                np.zeros((H + 2 * LINES_PER_WG) * bucket * NSEGS, dtype=np.uint16).view(np.uint32)
             )
 
             memhuge = thuge2.size() * 4
@@ -590,7 +590,7 @@ class LineSiever2:
         algo2 = mgr.algorithm(
             [tprimes, tqroots, tprimes2, tqroots2, tq, tout, thuge, thuge2],
             shader2,
-            (H // LINES_PER_WG + 1, 1, 1),
+            (H // (2 * LINES_PER_WG) + 1, 2, 1),
         )
 
         # Send constants

@@ -4,6 +4,9 @@
 // This is a variant of the one-sided sieve where each segment is processed
 // in 2 passes (one for each side). After the main side, counters are cleared
 // and sieve reports receive a placeholder value (REPORT_MARKER)
+//
+// Workgroups (i,0) process odd rows
+// Workgroups (i,1) process even rows (with only odd x).
 
 #version 450
 
@@ -34,6 +37,7 @@
 #define REPORT_MARKER 64
 
 const int SEGMENT_SIZE = 16384;
+const int LOG_SEGMENT_SIZE = 14;
 // To fit a sieve hit in a 16-bit integer, we store
 // the 14-bit segment offset and a 2-bit value:
 // we can represent 4 values LOGHUGE, LOGHUGE+2 .. LOGHUGE+6=23
@@ -57,15 +61,17 @@ layout(binding = 7) coherent buffer Huge2 { uint16_t huges2[]; };
 shared uint row[SEGMENT_SIZE / 4];
 
 uint tidx = gl_LocalInvocationID.x;
-int y0 = int(gl_WorkGroupID.x) * LINES_PER_WG + 1;
-bool yeven = (y0 & 1) == 0;
+// Start at line 1/2 with a stride of 2n (ONLY_PARITY is 1 or 2)
+int y0 = int(gl_WorkGroupID.x) * 2 * LINES_PER_WG + int(gl_WorkGroupID.y + 1);
+bool yeven = gl_WorkGroupID.y == 1; // constant
 
 // Start of huge buffers
-uint huge_off = int(gl_WorkGroupID.x) * LINES_PER_WG * N_SEGMENTS * BUCKET_SIZE;
+uint huge_off =
+    int(2 * gl_WorkGroupID.x + 1) * LINES_PER_WG * N_SEGMENTS * BUCKET_SIZE;
 shared uint hugelen[LINES_PER_WG][N_SEGMENTS];
 
 uint huge_off2 =
-    int(gl_WorkGroupID.x) * LINES_PER_WG * N_SEGMENTS * BUCKET_SIZE2;
+    int(2 * gl_WorkGroupID.x + 1) * LINES_PER_WG * N_SEGMENTS * BUCKET_SIZE2;
 shared uint hugelen2[LINES_PER_WG][N_SEGMENTS];
 
 #include <arith.comp>
@@ -88,6 +94,7 @@ uint doprime(uint p, uint qr, int y, int xseg, bool small) {
   } else {
     x_ += W - xseg * SEGMENT_SIZE;
   }
+
   uint x = modp_float(x_, p, pinv);
   if (yeven) {
     // If y is even, divide by 2 (start is -W + 2(xseg * SEGMENT + x) + 1)
@@ -134,8 +141,7 @@ void prepare_huge(uint p, uint qr, bool side2) {
   // to obtained an unbiased approximation (logp = log2(p)+0.1±1)
   const uint logp = findMSB(p) + 1;
   // We store logp/2 in the upper bits of the huge buffer.
-  const uint logp_bits =
-      clamp((logp - LOGHUGE) / 2, 0, 65536 / SEGMENT_SIZE);
+  const uint logp_bits = clamp((logp - LOGHUGE) / 2, 0, 65536 / SEGMENT_SIZE);
   const float pinv = 1.0 / float(p);
 
   if (qr == p)
@@ -143,17 +149,117 @@ void prepare_huge(uint p, uint qr, bool side2) {
 
   int64_t x0_ = int64_t(qr) * int64_t(y0) + W;
   uint x0 = modp_float(x0_, p, pinv);
-  for (uint dy = 0; dy < LINES_PER_WG; dy++) {
-    bool yeven = ((y0 + dy) & 1) == 0;
-    // If y is even, divide by 2 (start is -W + 2x + 1 = qr * y)
+  // At index dy, the starting point is:
+  // - in odd mode: (x0 + 2 * dy * qr) mod p
+  // - in even mode: (x0 + 2 * dy * qr)/2 mod p
+  const uint xmax = yeven ? W : (2 * W);
+  if (!yeven) {
+    // In odd mode, every 2 lines, the root has +2qr
+    qr *= 2;
+    if (qr >= p)
+      qr -= p;
+  } else {
+    // In even mode, we divide x by 2, so add only +qr for 2 lines
+    x0 -= 1;
+    if ((x0 & 1) == 1)
+      x0 += p;
+    x0 /= 2;
+  }
+
+  uint hoff = side2 ? huge_off2 : huge_off;
+  uint hoff_stride =
+      side2 ? (N_SEGMENTS * BUCKET_SIZE2) : (N_SEGMENTS * BUCKET_SIZE);
+
+  if (LINES_PER_WG == 1) {
+    // No need to loop on lines.
     uint x = x0;
-    if (yeven) {
-      x -= 1;
-      if ((x & 1) == 1)
-        x = (x + p) / 2;
-      else
-        x = x / 2;
+    while (x < xmax) {
+      const uint j = x / SEGMENT_SIZE;
+      uint val =
+          bitfieldInsert(x, logp_bits, LOG_SEGMENT_SIZE, 32 - LOG_SEGMENT_SIZE);
+      if (side2) {
+        const uint hidx = atomicAdd(hugelen2[0][j], 1);
+        huges2[hoff + j * BUCKET_SIZE2 + hidx] = uint16_t(val);
+      } else {
+        const uint hidx = atomicAdd(hugelen[0][j], 1);
+        huges[hoff + j * BUCKET_SIZE + hidx] = uint16_t(val);
+      }
+      x += p;
     }
+    return;
+  }
+
+  if (p > xmax) {
+    // Each line has at most one hit.
+    uint x = x0;
+    // Simplified loop for very large primes (<= 1 hit per line)
+    [[unroll]]
+    for (uint dy = 0; dy < LINES_PER_WG; dy++) {
+      if (dy == 0 && x < SEGMENT_SIZE) {
+        atomicAdd(row[x / 4], logp << (8 * (x % 4)));
+      } else if (x < xmax) {
+        const uint j = x / SEGMENT_SIZE;
+        uint val = bitfieldInsert(x, logp_bits, LOG_SEGMENT_SIZE,
+                                  32 - LOG_SEGMENT_SIZE);
+        if (side2) {
+          const uint hidx = atomicAdd(hugelen2[dy][j], 1);
+          huges2[hoff + j * BUCKET_SIZE2 + hidx] = uint16_t(val);
+        } else {
+          const uint hidx = atomicAdd(hugelen[dy][j], 1);
+          huges[hoff + j * BUCKET_SIZE + hidx] = uint16_t(val);
+        }
+      }
+      hoff += hoff_stride;
+      x += qr;
+      if (x >= p)
+        x -= p;
+    }
+    return;
+  }
+
+  if (2 * p > xmax) {
+    // Each line has at most one hit.
+    uint x = x0;
+    // Simplified loop for very large primes (1-2 hits per line)
+    [[unroll]]
+    for (uint dy = 0; dy < LINES_PER_WG; dy++) {
+      if (dy == 0 && x < SEGMENT_SIZE) {
+        atomicAdd(row[x / 4], logp << (8 * (x % 4)));
+      } else if (x < xmax) {
+        const uint j = x / SEGMENT_SIZE;
+        uint val = bitfieldInsert(x, logp_bits, LOG_SEGMENT_SIZE,
+                                  32 - LOG_SEGMENT_SIZE);
+        if (side2) {
+          const uint hidx = atomicAdd(hugelen2[dy][j], 1);
+          huges2[hoff + j * BUCKET_SIZE2 + hidx] = uint16_t(val);
+        } else {
+          const uint hidx = atomicAdd(hugelen[dy][j], 1);
+          huges[hoff + j * BUCKET_SIZE + hidx] = uint16_t(val);
+        }
+      }
+      uint xp = x + p;
+      if (xp < xmax) {
+        const uint j = xp / SEGMENT_SIZE;
+        uint val = bitfieldInsert(xp, logp_bits, LOG_SEGMENT_SIZE,
+                                  32 - LOG_SEGMENT_SIZE);
+        if (side2) {
+          const uint hidx = atomicAdd(hugelen2[dy][j], 1);
+          huges2[hoff + j * BUCKET_SIZE2 + hidx] = uint16_t(val);
+        } else {
+          const uint hidx = atomicAdd(hugelen[dy][j], 1);
+          huges[hoff + j * BUCKET_SIZE + hidx] = uint16_t(val);
+        }
+      }
+      hoff += hoff_stride;
+      x += qr;
+      if (x >= p)
+        x -= p;
+    }
+    return;
+  }
+
+  for (uint dy = 0; dy < LINES_PER_WG; dy++) {
+    uint x = x0;
     // Increment for next row
     x0 += qr;
     if (x0 >= p)
@@ -165,27 +271,27 @@ void prepare_huge(uint p, uint qr, bool side2) {
       x += p;
     }
 
-    const uint xmax = yeven ? W : 2 * W;
     // Now x >= SEGMENT_SIZE
     while (x < xmax) {
       const uint j = x / SEGMENT_SIZE;
+      uint val =
+          bitfieldInsert(x, logp_bits, LOG_SEGMENT_SIZE, 32 - LOG_SEGMENT_SIZE);
       if (side2) {
         const uint hidx = atomicAdd(hugelen2[dy][j], 1);
-        huges2[huge_off2 + (dy * N_SEGMENTS + j) * BUCKET_SIZE2 + hidx] =
-            uint16_t(x % SEGMENT_SIZE + SEGMENT_SIZE * logp_bits);
+        huges2[hoff + j * BUCKET_SIZE2 + hidx] = uint16_t(val);
       } else {
         const uint hidx = atomicAdd(hugelen[dy][j], 1);
-        huges[huge_off + (dy * N_SEGMENTS + j) * BUCKET_SIZE + hidx] =
-            uint16_t(x % SEGMENT_SIZE + SEGMENT_SIZE * logp_bits);
+        huges[hoff + j * BUCKET_SIZE + hidx] = uint16_t(val);
       }
       x += p;
     }
+    hoff += hoff_stride;
   }
 }
 
-void dohuge(int y, int xseg) {
-  const uint bidx0 = huge_off + ((y - y0) * N_SEGMENTS + xseg) * BUCKET_SIZE;
-  const uint blen = hugelen[y - y0][xseg];
+void dohuge(int dy, int xseg) {
+  const uint bidx0 = huge_off + (dy * N_SEGMENTS + xseg) * BUCKET_SIZE;
+  const uint blen = hugelen[dy][xseg];
   for (uint i = 0; i < blen; i += gl_WorkGroupSize.x) {
     if (i + tidx < blen) {
       uint x = huges[bidx0 + i + tidx];
@@ -196,9 +302,9 @@ void dohuge(int y, int xseg) {
   }
 }
 
-void dohuge2(int y, int xseg) {
-  const uint bidx0 = huge_off2 + ((y - y0) * N_SEGMENTS + xseg) * BUCKET_SIZE2;
-  const uint blen = hugelen2[y - y0][xseg];
+void dohuge2(int dy, int xseg) {
+  const uint bidx0 = huge_off2 + (dy * N_SEGMENTS + xseg) * BUCKET_SIZE2;
+  const uint blen = hugelen2[dy][xseg];
   for (uint i = 0; i < blen; i += gl_WorkGroupSize.x) {
     if (i + tidx < blen) {
       uint x = huges2[bidx0 + i + tidx];
@@ -236,15 +342,17 @@ void main() {
   uint poffsets[(HUGE_PRIME - N_SMALL) / gl_WorkGroupSize.x + 1];
   uint poffsets2[(HUGE_PRIME2 - N_SMALL) / gl_WorkGroupSize.x + 1];
 
-  for (int y = y0; y < y0 + LINES_PER_WG; y++) {
+  const uint nsegs = yeven ? (N_SEGMENTS + 1) / 2 : N_SEGMENTS;
+  for (int dy = 0; dy < LINES_PER_WG; dy++) {
+    int y = y0 + 2 * dy;
     if (y > H)
       break;
-    yeven = (y & 1) == 0;
-    const uint nsegs = yeven ? (N_SEGMENTS / 2) : N_SEGMENTS;
     for (int xseg = 0; xseg < nsegs; xseg++) {
-      float sizeratio =
-          max(abs(float(xseg * SEGMENT_SIZE + SEGMENT_SIZE / 2) / W - 1),
-              float(y) / H);
+      float sizeratio = max(
+          abs(float(xseg * (yeven ? 2 : 1) * SEGMENT_SIZE + SEGMENT_SIZE / 2) /
+                  W -
+              1),
+          float(y) / H);
       float logsizeratio = clamp(-log2(sizeratio), 0.0, 5.0);
       // Invariant: row is zeroed at each iteration.
       for (uint pidx = N_TINY + gl_SubgroupID; pidx < N_SMALL;
@@ -273,7 +381,7 @@ void main() {
         barrier();
         memoryBarrier();
       } else {
-        dohuge(y, xseg);
+        dohuge(dy, xseg);
       }
 #endif
       barrier();
@@ -324,7 +432,7 @@ void main() {
         barrier();
         memoryBarrier();
       } else {
-        dohuge2(y, xseg);
+        dohuge2(dy, xseg);
       }
 #endif
       barrier();
