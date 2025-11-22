@@ -1,0 +1,30 @@
+name = snfs600
+
+# Factorization of 2^599-1 using the Special number field sieve
+N = 2074757784440496479256203931845580575506223116121218449997828664845326405706454073199853524473551897144098943305650394591197575537705887653943437417056981843530590901700754761842687
+
+# Skip polyselect
+tasks.polyselect.admin = 0
+tasks.polyselect.admax = 0
+tasks.polyselect.adrange = 0
+tasks.polyselect.import = snfs600.poly
+
+tasks.lim0 = 5000000
+tasks.lim1 = 4000000
+tasks.lpb0 = 29
+tasks.lpb1 = 28
+tasks.sieve.rels_wanted = 20000000
+
+tasks.sieve.mfb0 = 55
+tasks.sieve.mfb1 = 54
+tasks.sieve.lambda0 = 2.1
+tasks.sieve.lambda1 = 2.2
+tasks.I = 14
+tasks.qmin = 500000
+tasks.sieve.qrange = 1000
+tasks.sieve.sqside = 0
+
+# linear algebra
+tasks.linalg.m = 64
+tasks.linalg.n = 64
+tasks.linalg.characters.nchar = 24

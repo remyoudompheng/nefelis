@@ -1,0 +1,30 @@
+name = snfs400
+
+# Factorization of 2^401-1 using the Special number field sieve
+N = 5164499756173817179311838344006023748659411585658447025661318713081295244033682389259290706560275662871806343945494986751
+
+# Skip polyselect
+tasks.polyselect.admin = 0
+tasks.polyselect.admax = 0
+tasks.polyselect.adrange = 0
+tasks.polyselect.import = snfs400.poly
+
+tasks.lim0 = 1000000
+tasks.lim1 = 500000
+tasks.lpb0 = 24
+tasks.lpb1 = 23
+tasks.sieve.rels_wanted = 1000000
+
+tasks.sieve.mfb0 = 45
+tasks.sieve.mfb1 = 44
+tasks.sieve.lambda0 = 2.1
+tasks.sieve.lambda1 = 2.2
+tasks.I = 13
+tasks.qmin = 5000
+tasks.sieve.qrange = 100
+tasks.sieve.sqside = 0
+
+# linear algebra
+tasks.linalg.m = 64
+tasks.linalg.n = 64
+tasks.linalg.characters.nchar = 24

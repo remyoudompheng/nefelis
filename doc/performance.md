@@ -3,7 +3,7 @@
 Benchmark results on standardized inputs: note that performance
 is extremely sensitive to parameter choice and hardware throttling.
 
-| Task          | Number   | Ryzen 7840HS (Cado-NFS) | Radeon 780M iGPU |
+| Task          | Number   | Ryzen 7840HS (Cado-NFS) | Radeon 780M iGPU (commit 620a7e37) |
 | ------------- | -------- | ----------------------- | ---------------- |
 | factor (GNFS) | 10^90+187   | 133s | 131s  |
 | factor (GNFS) | RSA-110     | 965s | 1087s |
@@ -24,7 +24,8 @@ is extremely sensitive to parameter choice and hardware throttling.
 Cado-NFS is using commit d84ae397 (25 Sep 2025) with default parameters.
 The label `dlog (GNFS)` refers to polynomial selection using skewed base-m
 polynomials (same as factoring). For SNFS, polynomial and configuration
-must be supplied manually.
+must be supplied manually (see [examples/cado](./examples/cado) for more
+details).
 
 Discrete logarithm time only includes sieving and linear algebra.
 
