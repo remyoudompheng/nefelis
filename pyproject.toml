@@ -22,6 +22,11 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest"]
+dev = [
+  "mypy",
+  "types-networkx",
+  "types-tqdm"
+]
 
 [project.scripts]
 nefelis = "nefelis.__main__:main"
