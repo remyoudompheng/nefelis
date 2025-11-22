@@ -218,7 +218,7 @@ def main_impl(args):
         if bias > 0:
             Nparams <<= bias
         else:
-            Nparams >>= bias
+            Nparams >>= -bias
     degree, B1f, B1g, B2f, B2g, COFACTOR_BITS, COFACTOR_BITS2, logA, qmin = get_params(
         Nparams, snfs=args.snfs
     )
