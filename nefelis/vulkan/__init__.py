@@ -39,7 +39,7 @@ class GPUInfo:
         self.loaded = True
         try:
             self.vulkaninfo()
-            logger.info("Loaded information from libvulkan")
+            logger.debug("Loaded information from libvulkan")
         except Exception:
             pass
 
@@ -108,7 +108,7 @@ class GPUInfo:
             vk.VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU: "vGPU",
             vk.VK_PHYSICAL_DEVICE_TYPE_CPU: "CPU",
         }
-        logger.debug(
+        logger.info(
             f"Vulkan device {self.devname} ({devtype_str[self.devtype]}) with {self.gpu_cores} cores"
         )
         logger.debug(
