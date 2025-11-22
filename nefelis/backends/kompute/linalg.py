@@ -202,7 +202,7 @@ class SpMV:
         assert count == ITERS
         return gpu_ticks
 
-    def wiedemann_big(self, l: int, blockm=1) -> list[int]:
+    def wiedemann_big(self, l: int, blockm=None) -> list[int]:
         """
         Perform Wiedemann algorithm for a single big modulus
 
@@ -213,6 +213,12 @@ class SpMV:
         mgr = self.mgr
         dim = self.dim
         N_WG = (dim + WGSIZE - 1) // WGSIZE
+
+        if blockm is None:
+            # Enable m=2 for large dimension to save matmul iterations
+            # lingen will be 2x-3x slower but it should give a speedup
+            # even with a slow CPU.
+            blockm = 2 if dim > 65536 else 1
 
         BATCHSIZE = 32
 

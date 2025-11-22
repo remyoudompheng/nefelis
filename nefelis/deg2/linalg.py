@@ -172,7 +172,7 @@ def main_impl(args):
     M = SpMV(rels3, ell)
     basis = M.basis
     dim = M.dim
-    poly = M.wiedemann_big(ell, blockm=args.blockw or 1)
+    poly = M.wiedemann_big(ell, blockm=args.blockw)
     logger.info(f"Computed characteristic poly {poly[:3]}...{poly[-3:]}")
 
     poly = [ai * pow(poly[-1], -1, ell) % ell for ai in poly]
