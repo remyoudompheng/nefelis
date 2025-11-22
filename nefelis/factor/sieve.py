@@ -20,9 +20,10 @@ import time
 import flint
 import numpy as np
 
+from nefelis.polys import estimate_size
 from nefelis.skewpoly import skewness
-from nefelis.sieve import eta as sieve_eta, gen_specialq, LineSiever2
-from nefelis.integers import factor_smooth, smallprimes
+from nefelis.sieve import eta as sieve_eta, factor_base, gen_specialq, LineSiever2
+from nefelis.integers import factor_smooth
 
 from nefelis.factor.polyselect import polyselect
 from nefelis.factor.polyselect_snfs import snfs_select
@@ -207,15 +208,6 @@ def main():
     main_impl(args)
 
 
-def estimate_size(f, W, H):
-    logs = []
-    df = len(f) - 1
-    for x in range(-10, 11):
-        fval = sum(fi * (x * W / 10.0) ** i * H ** (df - i) for i, fi in enumerate(f))
-        logs.append(math.log2(abs(fval)))
-    return int(sum(logs) / len(logs))
-
-
 def main_impl(args):
     N = args.N
     datadir = pathlib.Path(args.WORKDIR)
@@ -278,25 +270,8 @@ def main_impl(args):
             logger.info("Using special-q with polynomial g")
 
     # Now polynomial f is using special-q
-    ls, rs = [], []
-    for _l in smallprimes(B1f):
-        _rs = flint.nmod_poly(f, _l).roots()
-        for _r, _ in _rs:
-            ls.append(_l)
-            rs.append(int(_r))
-        if f[-1] % _l == 0:
-            ls.append(_l)
-            rs.append(_l)
-
-    ls2, rs2 = [], []
-    for _l in smallprimes(B1g):
-        _rs = flint.nmod_poly(g, _l).roots()
-        for _r, _ in _rs:
-            ls2.append(_l)
-            rs2.append(int(_r))
-        if g[-1] % _l == 0:
-            ls2.append(_l)
-            rs2.append(_l)
+    ls, rs = factor_base(f, B1f)
+    ls2, rs2 = factor_base(g, B1g)
 
     # Choose rectangle size for area 2 ^ (2I + 1)
     if args.snfs:

@@ -25,9 +25,9 @@ import time
 import flint
 
 from nefelis.polys import estimate_size
-from nefelis.sieve import Siever, gen_specialq, eta as sieve_eta
-from nefelis.integers import factor_smooth, smallprimes
-from nefelis.deg3.polyselect import polyselect, polyselect_g
+from nefelis.sieve import Siever, factor_base, gen_specialq, eta as sieve_eta
+from nefelis.integers import factor_smooth
+from nefelis.deg3.polyselect import polyselect
 
 logger = logging.getLogger("sieve")
 
@@ -203,20 +203,19 @@ def main_impl(args):
         f"Sieving with B1={B1g / 1000:.0f}k,{B1f / 1000:.0f}k log(B2)={B2g},{B2f} q={qmin}.. {COFACTOR_BITS} cofactor bits"
     )
 
-    if False:
-        # Old hardcoded polynomial for nosm=True
-        r = pow(2, (2 * N - 1) // 3, N)
-        assert (r**3 - 2) % N == 0
-        f = [-2, 0, 0, 1]
-        g = polyselect_g(N, f, r)
-    else:
-        f, g = polyselect(N)
-        C, B, A = g
-        for r, _ in flint.fmpz_mod_poly(f, flint.fmpz_mod_poly_ctx(N)).roots():
-            if A * r * r + B * r + C == 0:
-                break
-        assert A * r * r + B * r + C == 0
-        r = int(r)
+    # Old hardcoded polynomial for nosm=True
+    # r = pow(2, (2 * N - 1) // 3, N)
+    # assert (r**3 - 2) % N == 0
+    # f = [-2, 0, 0, 1]
+    # g = polyselect_g(N, f, r)
+
+    f, g = polyselect(N)
+    C, B, A = g
+    for r, _ in flint.fmpz_mod_poly(f, flint.fmpz_mod_poly_ctx(N)).roots():
+        if A * r * r + B * r + C == 0:
+            break
+    assert A * r * r + B * r + C == 0
+    r = int(r)
 
     logger.info(f"f = {f[3]}*x^3+{f[2]}*x^2+{f[1]}*x+{f[0]}")
     C, B, A = g
@@ -224,12 +223,7 @@ def main_impl(args):
     logger.info(f"g = {A} x² + {B} x + {C}")
     logger.info(f"Root r = {r}")
 
-    ls, rs = [], []
-    for _l in smallprimes(B1g):
-        _rs = flint.nmod_poly(g, _l).roots()
-        for _r, _ in _rs:
-            ls.append(_l)
-            rs.append(_r)
+    ls, rs = factor_base(g, B1g)
 
     # We sieve g(x) which has size log2(N)/3 + 2 log2(x) but has a known factor q
     radius = math.sqrt(qmin) * 2**I
@@ -238,12 +232,7 @@ def main_impl(args):
 
     ls2, rs2 = None, None
     if B1f > 0:
-        ls2, rs2 = [], []
-        for _l in smallprimes(B1f):
-            _rs = flint.nmod_poly(f, _l).roots()
-            for _r, _ in _rs:
-                ls2.append(_l)
-                rs2.append(_r)
+        ls2, rs2 = factor_base(f, B1f)
 
     sievepool = ProcessPoolExecutor(
         1 if args.gpu is None else len(args.gpu),

@@ -197,8 +197,7 @@ def main_impl(args):
     logger.info(f"{u = } size {u.bit_length()}")
     logger.info(f"{v = } size {v.bit_length()}")
 
-    ls = smallprimes(B1g)
-    rs = [(-v * pow(u, -1, l)) % l if u % l else l for l in ls]
+    ls, rs = sieve.factor_base(g, B1g)
     qs = [_q for _q in smallprimes(10 * qmin) if _q >= qmin and u % _q != 0]
     qrs = [-v * pow(u, -1, q) % q for q in qs]
 
@@ -206,15 +205,7 @@ def main_impl(args):
     g = [int(v), int(u)]
     ls2, rs2 = None, None
     if B1f:
-        ls2, rs2 = [], []
-        for _l in smallprimes(B1f):
-            _rs = flint.nmod_poly(f, _l).roots()
-            for _r, _ in _rs:
-                ls2.append(_l)
-                rs2.append(_r)
-            if f[2] % _l == 0:
-                ls2.append(_l)
-                rs2.append(_r)
+        ls2, rs2 = sieve.factor_base(f, B1f)
 
     LOGAREA = qs[-1].bit_length() + 2 * I
     THRESHOLD = N.bit_length() // 2 + LOGAREA // 2 - qs[-1].bit_length() - COFACTOR_BITS

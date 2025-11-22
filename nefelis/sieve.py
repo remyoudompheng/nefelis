@@ -10,6 +10,27 @@ from .integers import smallprimes
 DEBUG_ESTIMATOR = False
 
 
+def factor_base(poly: list[int], B1: int) -> tuple[list, list]:
+    if len(poly) == 2:
+        # degree 1 polynomial
+        v, u = poly
+        ls = smallprimes(B1)
+        rs = [(-v * pow(u, -1, l)) % l if u % l else l for l in ls]
+        return ls, rs
+
+    lc = poly[-1]
+    ls, rs = [], []
+    for l in smallprimes(B1):
+        roots = flint.nmod_poly(poly, l).roots()
+        for r, _ in roots:
+            ls.append(l)
+            rs.append(int(r))
+        if lc % l == 0:
+            ls.append(l)
+            rs.append(l)
+    return ls, rs
+
+
 def gen_specialq(qmin: int, poly: list) -> Iterator[tuple[int, int]]:
     A = poly[-1]
     qlo = qmin
