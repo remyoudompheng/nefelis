@@ -26,7 +26,7 @@ import flint
 
 from nefelis.polys import estimate_size
 from nefelis.sieve import Siever, factor_base, gen_specialq, eta as sieve_eta
-from nefelis.integers import factor_smooth
+from nefelis.integers import factor, factor_smooth
 from nefelis.deg3.polyselect import polyselect
 
 logger = logging.getLogger("sieve")
@@ -170,6 +170,11 @@ def main():
     argp.add_argument(
         "--nogpufactor", action="store_true", help="Don't perform trial division on GPU"
     )
+    argp.add_argument(
+        "--nosm",
+        action="store_true",
+        help="Do not use Schirokauer maps (no constraint on polynomial roots)",
+    )
 
     def gpu_id(s: str) -> list[int]:
         return [int(x) for x in s.split(",")]
@@ -205,7 +210,21 @@ def main_impl(args):
     # f = [-2, 0, 0, 1]
     # g = polyselect_g(N, f, r)
 
-    f, g = polyselect(N)
+    if args.nosm:
+        ell = factor_smooth(N - 1, 16)[-1][0]
+        if not flint.fmpz(ell).is_probable_prime():
+            logger.info(f"Computing dlog modulo composite factor {ell}")
+        else:
+            logger.info(f"Computing dlog modulo prime factor {ell}")
+        f, g = polyselect(N)
+    else:
+        # When using Schirokauer maps, we must know the modulus ell
+        ell = factor(N - 1)[-1][0]
+        assert flint.fmpz(ell).is_probable_prime()
+        # FIXME: process all large factors of N-1
+        logger.info(f"Computing dlog modulo {ell}")
+        f, g = polyselect(N, ell=ell)
+
     C, B, A = g
     for r, _ in flint.fmpz_mod_poly(f, flint.fmpz_mod_poly_ctx(N)).roots():
         if A * r * r + B * r + C == 0:
@@ -247,6 +266,7 @@ def main_impl(args):
                 "n": N,
                 "f": f,
                 "g": g,
+                "ell": ell,
                 "z": int(r),
             },
             w,

@@ -131,9 +131,11 @@ class Descent:
         self.g = g
         self.discg = flint.fmpz(g[1] ** 2 - 4 * g[0] * g[2])
         self.ell = ell
-        self.sm_place = sm
         if sm is None:
             self.Kf = CubicField(f)
+            self.sm_place = None
+        else:
+            self.sm_place = flint.fmpz_mod(sm, flint.fmpz_mod_ctx(ell**2))
 
         nbits = n.bit_length()
         _, ratio, self.MAX_QBITS, COFACTOR_BITS = min(

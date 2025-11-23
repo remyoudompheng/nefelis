@@ -30,7 +30,7 @@ import time
 
 import flint
 
-from nefelis import filter, integers
+from nefelis import filter
 from nefelis.deg3.cubic import CubicField
 from nefelis.linalg import SpMV
 
@@ -51,7 +51,7 @@ def read_relations(filepath: str | pathlib.Path):
             yield int(x), int(y), facg, facf
 
 
-def schirokauer_place(f, ell):
+def schirokauer_place(f, ell) -> flint.fmpz_mod:
     """
     Returns the root of f modulo l^2
     """
@@ -104,32 +104,22 @@ def main_impl(args):
         z = doc["z"]
         f = doc["f"]
         g = doc["g"]
+        ell = doc["ell"]
         # Check polynomials
         assert sum(fi * z**i for i, fi in enumerate(f)) % n == 0
         assert sum(gi * z**i for i, gi in enumerate(g)) % n == 0
-
-    if args.nosm:
-        ell = integers.factor_smooth(n - 1, 16)[-1][0]
-        if not flint.fmpz(ell).is_probable_prime():
-            logger.info(f"Computing dlog modulo composite factor {ell}")
-        else:
-            logger.info(f"Computing dlog modulo prime factor {ell}")
-    else:
-        ell = integers.factor(n - 1)[-1][0]
-        assert flint.fmpz(ell).is_probable_prime()
-        # FIXME: process all large factors of N-1
-        logger.info(f"Computing dlog modulo {ell}")
 
     sm_root = None
     if args.nosm:
         Kf = CubicField(f)
     else:
+        assert flint.fmpz(ell).is_probable_prime()
         Kf = None
         sm_root = schirokauer_place(f, ell)
         logger.info(f"Schirokauer map will use root {sm_root} mod l^2")
 
     with open(workdir / "args.json", "w") as fd:
-        json.dump(doc | {"ell": ell, "sm": sm_root}, fd)
+        json.dump(doc | {"sm": int(sm_root) if sm_root else None}, fd)
 
     rels = []
     seen_xy = set()

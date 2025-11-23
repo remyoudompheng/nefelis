@@ -34,7 +34,7 @@ class Polyselect:
         self.best = math.log2(N) / 3.0
         self.Zmod = flint.fmpz_mod_ctx(N)
         self.N = N
-        self.l = l
+        # self.l = l
 
     def process(self, D: int, a: int, b: int, c: int, d: int, global_best: float = 1e9):
         """
@@ -128,18 +128,21 @@ def worker_do(args):
     return WORKER.process(*args)
 
 
-def polyselect(N: int, bound: int | None = None):
+def polyselect(N: int, bound: int | None = None, ell: int | None = None):
     """
     Select a good cubic polynomial for discrete logarithm modulo N,
     with coefficient smaller than given bound.
+
+    If ell is provided, ell must be a prime number and selected
+    polynomials will have roots modulo ell.
     """
     if bound is None:
         # Empirical formula to have a small cost compared to sieve/linalg
         bound = max(3, int(2.5 * 2 ** (0.01 * N.bit_length())))
 
-    assert N % 3 == 2
+    if ell is not None:
+        assert flint.fmpz(ell).is_probable_prime()
 
-    l = N // 2
     counter = 0
     best = 1e9
     best_fg = None
@@ -166,10 +169,11 @@ def polyselect(N: int, bound: int | None = None):
                         # We want only 1 real root to keep the group of units small
                         if D >= 0:
                             continue
-                        # We want a root modulo l, the easiest way is to
-                        # have jacobi(D, l)==-1
-                        if flint.fmpz(D).jacobi(l) != -1:
-                            continue
+                        if ell is not None:
+                            # We want a root modulo l, the easiest way is to
+                            # have jacobi(D, l)==-1
+                            if flint.fmpz(D).jacobi(ell) != -1:
+                                continue
                         # We want a root modulo N, they are easier to compute
                         # if D is not a square
                         if flint.fmpz(D).jacobi(N) != -1:
@@ -184,7 +188,7 @@ def polyselect(N: int, bound: int | None = None):
     logging.info(f"Starting polynomial selection with degree 3 and bound {bound}")
     logging.info(f"Base score {N.bit_length() // 3}")
 
-    pool = Pool(initializer=worker_init, initargs=(N, l))
+    pool = Pool(initializer=worker_init, initargs=(N, ell))
 
     t0 = time.monotonic()
     for item in pool.imap_unordered(worker_do, irreducibles(), chunksize=32):
