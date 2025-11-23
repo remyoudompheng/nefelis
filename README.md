@@ -19,14 +19,14 @@ use of additional assumptions to help readability.
 Planned variants are described in the following table. Several
 parts of the implementation are suboptimal or broken.
 
-| Identifier | Purpose | Description | Status | Comments |
-| ---------- | ------- | ----------- | ------ | -------- |
-| `deg2` | Discrete logarithm in GF(p) | Gaussian integer method | ✅ | Polynomial selection inspired by Joux-Lercier |
-| `deg3` | Discrete logarithm in GF(p) | Joux-Lercier method with degree 3/2 polynomials | ✅ | Tries to avoid Schirokauer maps |
-| `fp2`  | Discrete logarithm in GF(p²)| Conjugation method with degree 4/2 polynomials  | ⚠️ | Basic (broken) implementation |
-| `fp3`  | Discrete logarithm in GF(p³)| TBD | ❌ | |
-| `factor`  | Integer factorization    | General NFS for factoring | ✅ | Only degree 3/4 polynomials |
-|`factor --snfs`| Integer factorization| Special NFS for factoring | ✅ | Tries to find polynomial automatically |
+| Identifier | Purpose | Best range | Description | Status | Comments |
+| ---------- | ------- | ---------- | ----------- | ------ | -------- |
+| `deg2` | Discrete logarithm in GF(p) |  60-200b | Gaussian integer method | ✅ | Polynomial selection inspired by Joux-Lercier |
+| `deg3` | Discrete logarithm in GF(p) | 200-500b | Joux-Lercier method with degree 3/2 polynomials | ✅ | Tries to avoid Schirokauer maps |
+| `fp2`  | Discrete logarithm in GF(p²)|  40-300b | Conjugation method with degree 4/2 polynomials  | ⚠️ | Basic (broken) implementation |
+| `fp3`  | Discrete logarithm in GF(p³)|          | TBD | ❌ | |
+| `factor`  | Integer factorization    | 300-450b | General NFS for factoring | ✅ | Only degree 3/4 polynomials |
+|`factor --snfs`| Integer factorization| 250-750b | Special NFS for factoring | ✅ | Tries to find polynomial automatically |
 
 The project is not currently open to external contributions.
 
