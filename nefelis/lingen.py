@@ -44,7 +44,7 @@ def lingen(sequences, N: int, l: int):
     l: the (prime) modulus
     """
     m = len(sequences)
-    if m == 1:
+    if m == 1 and flint.fmpz(l).is_probable_prime():
         seq = sequences[0]
         assert len(seq) > 2 * N + 1
         ctx = flint.fmpz_mod_poly_ctx(l)

@@ -108,13 +108,17 @@ def main_impl(args):
         assert sum(fi * z**i for i, fi in enumerate(f)) % n == 0
         assert sum(gi * z**i for i, gi in enumerate(g)) % n == 0
 
-    ell = integers.factor(n - 1)[-1][0]
-    assert flint.fmpz(ell).is_probable_prime()
-    with open(workdir / "args.json", "w") as fd:
-        json.dump(doc | {"ell": ell}, fd)
-
-    # FIXME: process all large factors of N-1
-    logger.info(f"Computing dlog modulo {ell}")
+    if args.nosm:
+        ell = integers.factor_smooth(n - 1, 16)[-1][0]
+        if not flint.fmpz(ell).is_probable_prime():
+            logger.info(f"Computing dlog modulo composite factor {ell}")
+        else:
+            logger.info(f"Computing dlog modulo prime factor {ell}")
+    else:
+        ell = integers.factor(n - 1)[-1][0]
+        assert flint.fmpz(ell).is_probable_prime()
+        # FIXME: process all large factors of N-1
+        logger.info(f"Computing dlog modulo {ell}")
 
     sm_root = None
     if args.nosm:
