@@ -354,13 +354,13 @@ class Descent:
             assert self.splits(_l) and _l not in self.zlogs
             # We have to sieve both prime ideals above l in K(g)
             lroots = flint.nmod_poly(self.g, _l).roots()
-            assert len(lroots) == 2, _l
+            assert len(lroots) == 2 or lroots[0][1] == 2, _l
             z = 0
-            for lr, _ in lroots:
+            for lr, mult in lroots:
                 logger.info(f"Recurse into small prime {_l},{lr}")
                 llog = self.smalllog(_l, int(lr))
-                z += llog
-                log += _e * llog
+                z += mult * llog
+                log += _e * mult * llog
             # z should be log(l)
             logger.info(f"recursive log({_l}) = {z}")
             assert pow(_l, coell, self.n) == pow(self.logbase, z * coell, self.n)
