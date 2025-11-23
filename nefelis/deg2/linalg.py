@@ -29,7 +29,7 @@ import random
 
 import flint
 
-from nefelis import filter
+from nefelis import filter, integers
 from nefelis.linalg import SpMV
 
 logger = logging.getLogger("linalg")
@@ -168,7 +168,16 @@ def main_impl(args):
     dim = len(set(key for r in rels3 for key in r))
     rels3 = rels3[:dim]
 
-    ell = n // 2  # FIXME
+    ell = integers.factor(n - 1)[-1][0]
+    assert flint.fmpz(ell).is_probable_prime()
+    with open(workdir / "args.json") as _f:
+        doc = json.load(_f)
+    with open(workdir / "args.json", "w") as _f:
+        json.dump(doc | {"ell": ell}, _f)
+
+    # FIXME: process all large factors of N-1
+    logger.info(f"Computing dlog modulo {ell}")
+
     M = SpMV(rels3, ell)
     basis = M.basis
     dim = M.dim

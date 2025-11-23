@@ -50,9 +50,7 @@ def main_impl(args):
         n = doc["n"]
         f = doc["f"]
         g = doc["g"]
-
-    # FIXME
-    ell = n // 2
+        ell = doc["ell"]
 
     dlogs = {}
     zlogs = {}

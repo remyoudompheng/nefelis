@@ -173,10 +173,7 @@ def main_impl(args):
     datadir = pathlib.Path(args.WORKDIR)
     datadir.mkdir(exist_ok=True)
 
-    ell = N // 2  # FIXME: support user ell
-
-    assert flint.fmpz(N).is_prime()
-    assert flint.fmpz(ell).is_prime()
+    assert flint.fmpz(N).is_probable_prime()
 
     B1g, B2g, B2f, COFACTOR_BITS, I, qmin = get_params(N)
     B1f, thr2 = 0, 0

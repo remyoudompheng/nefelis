@@ -24,14 +24,13 @@ the Schirokauer map.
 import argparse
 import json
 import logging
-import math
 import pathlib
 import random
 import time
 
 import flint
 
-from nefelis import filter
+from nefelis import filter, integers
 from nefelis.deg3.cubic import CubicField
 from nefelis.linalg import SpMV
 
@@ -99,8 +98,8 @@ def main():
 def main_impl(args):
     workdir = pathlib.Path(args.WORKDIR)
 
-    with open(workdir / "args.json") as f:
-        doc = json.load(f)
+    with open(workdir / "args.json") as fd:
+        doc = json.load(fd)
         n = doc["n"]
         z = doc["z"]
         f = doc["f"]
@@ -109,7 +108,14 @@ def main_impl(args):
         assert sum(fi * z**i for i, fi in enumerate(f)) % n == 0
         assert sum(gi * z**i for i, gi in enumerate(g)) % n == 0
 
-    ell = n // 2
+    ell = integers.factor(n - 1)[-1][0]
+    assert flint.fmpz(ell).is_probable_prime()
+    with open(workdir / "args.json", "w") as fd:
+        json.dump(doc | {"ell": ell}, fd)
+
+    # FIXME: process all large factors of N-1
+    logger.info(f"Computing dlog modulo {ell}")
+
     sm_root = None
     if args.nosm:
         Kf = CubicField(f)
@@ -166,7 +172,6 @@ def main_impl(args):
     dim = len(set(key for r in rels3 for key in r))
     rels3 = rels3[:dim]
 
-    ell = n // 2  # FIXME
     M = SpMV(rels3, ell)
     basis = M.basis
     dim = M.dim
@@ -282,11 +287,12 @@ def main_impl(args):
 
     # Check rational primes
     checked = 0
-    grat = int(gen[2:])
+    coell = (n - 1) // ell
+    grat = pow(int(gen[2:]), coell, n)
     for k in dlog:
         if k.startswith("Z"):
             krat = int(k[2:])
-            if pow(grat, dlog[k], n) not in (krat, n - krat):
+            if pow(grat, dlog[k], n) != pow(krat, coell, n):
                 logger.error(f"WRONG VALUE dlog({k}) = {dlog[k]}")
                 dlog[k] = None
                 continue
