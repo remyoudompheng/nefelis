@@ -124,6 +124,9 @@ def main_impl(args):
         sm_root = schirokauer_place(f, ell)
         logger.info(f"Schirokauer map will use root {sm_root} mod l^2")
 
+    with open(workdir / "args.json", "w") as fd:
+        json.dump(doc | {"ell": ell, "sm": sm_root}, fd)
+
     rels = []
     seen_xy = set()
     duplicates = 0

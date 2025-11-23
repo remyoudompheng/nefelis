@@ -19,6 +19,7 @@ import flint
 from nefelis import integers
 from nefelis.sieve import Siever
 from nefelis.deg3 import linalg
+from nefelis.deg3.cubic import CubicField
 
 logger = logging.getLogger("dlog")
 
@@ -51,6 +52,7 @@ def main_impl(args):
         f = doc["f"]
         g = doc["g"]
         ell = doc["ell"]
+        sm = doc["sm"]
 
     dlogs = {}
     zlogs = {}
@@ -73,7 +75,7 @@ def main_impl(args):
     logger.info(f"Read {len(dlogs) - len(zlogs)} logarithms of small algebraic primes")
     logger.info(f"Logarithm base is {logbase}")
 
-    D = Descent(dlogs, zlogs, logbase, n, f, g, ell)
+    D = Descent(dlogs, zlogs, logbase, n, f, g, ell, sm)
 
     for arg in args.ARGS:
         arg = int(arg)
@@ -110,7 +112,7 @@ PARAMS = [
 
 
 class Descent:
-    def __init__(self, dlogs, zlogs, logbase, n, f, g, ell):
+    def __init__(self, dlogs, zlogs, logbase, n, f, g, ell, sm):
         self.dlogs = dlogs
         self.zlogs = zlogs
 
@@ -129,7 +131,9 @@ class Descent:
         self.g = g
         self.discg = flint.fmpz(g[1] ** 2 - 4 * g[0] * g[2])
         self.ell = ell
-        self.sm_place = linalg.schirokauer_place(f, ell)
+        self.sm_place = sm
+        if sm is None:
+            self.Kf = CubicField(f)
 
         nbits = n.bit_length()
         _, ratio, self.MAX_QBITS, COFACTOR_BITS = min(
@@ -224,6 +228,7 @@ class Descent:
         return l in self.zlogs or self.discg.jacobi(l) != -1
 
     def sm(self, x, y):
+        assert self.sm_place is not None
         return linalg.schirokauer_map(x, y, self.sm_place, self.ell)
 
     def smooth_candidates(self, x0):
@@ -401,7 +406,9 @@ class Descent:
 
             good = True
             facs = [
-                ("SM", self.sm(x, -y)),
+                ("SM", self.sm(x, -y))
+                if self.sm_place
+                else ("f_1_0", self.Kf.unit_exponent(x, y)),
                 # The CONSTANT accounts for leading coefficients of f and g
                 ("CONSTANT", 1),
             ]
