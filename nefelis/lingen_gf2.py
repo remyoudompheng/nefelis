@@ -16,15 +16,21 @@ ISSAC '01: Proceedings of the 2001 international symposium on Symbolic and algeb
 https://inria.hal.science/inria-00517999
 """
 
-import numpy
-import numpy.typing as npt
+import logging
 import random
+import time
 
 import flint
+import numpy
+import numpy.typing as npt
 
 DEBUG_LINGEN = False
 
 DEBUG_CHECK_LINGEN = False
+
+DEBUG_TIMINGS = True
+
+logger = logging.getLogger("lingen")
 
 
 def lingen(sequences, N: int):
@@ -131,11 +137,14 @@ def lingen_mat(mats, N: int):
     assert all(len(s) > N // m + N // n + 16 for row in mats for s in row)
 
     M = numpy.zeros((m, n), dtype=object)
+    tm0 = time.monotonic()
     for i in range(m):
         for j in range(n):
             seq = mats[i][j]
             M[i, j] = sum(1 << i for i, b in enumerate(seq) if b)
+    dt0 = time.monotonic() - tm0
 
+    tm1 = time.monotonic()
     for t0 in range(m, m + 4):
         for _ in range(10):
             # To obtain a nonsingular matrix, choose a larger number of columns
@@ -186,6 +195,8 @@ def lingen_mat(mats, N: int):
         if not sing:
             break
 
+    dt1 = time.monotonic() - tm1
+
     assert not sing
     # print("Selected t0 =", t0)
     # Constraint (Thomé, section 2.3.2)
@@ -198,7 +209,9 @@ def lingen_mat(mats, N: int):
         for i, j in numpy.ndindex(*E.shape):
             print(f"before E[{i},{j}]", hex(E[i, j]))
 
+    tm2 = time.monotonic()
     P = mslgdc(E, delta, N // m + N // n + EXTRA_ITERS)
+    dt2 = time.monotonic() - tm2
     if DEBUG_LINGEN:
         for i, j in numpy.ndindex(*E.shape):
             print(f"after E[{i},{j}]", hex(E[i, j]))
@@ -207,6 +220,8 @@ def lingen_mat(mats, N: int):
         print(P)
         print(delta)
 
+    tm3 = time.monotonic()
+    # Compute (F @ P)
     FP = numpy.zeros((n, n + m), dtype=object)
     degree = 0
     for i in range(m):
@@ -217,6 +232,7 @@ def lingen_mat(mats, N: int):
             if j < n:
                 degree = max(degree, fij.bit_length())
             FP[i, j] = fij
+    dt3 = time.monotonic() - tm3
 
     if DEBUG_CHECK_LINGEN:
         b = N // m + N // n + 1
@@ -233,6 +249,7 @@ def lingen_mat(mats, N: int):
                     print(f"MD[{i},{j}] length {mij_trunc.bit_length()}")
                 assert mij_trunc.bit_length() < N // m + 64, mij_trunc.bit_length()
 
+    tm4 = time.monotonic()
     poly = [numpy.zeros((m, n), dtype=numpy.uint8) for _ in range(degree)]
     for i in range(m):
         for j in range(n):
@@ -240,6 +257,12 @@ def lingen_mat(mats, N: int):
             assert fpij.bit_length() <= degree
             for k in range(degree):
                 poly[k][i, j] = (fpij >> k) & 1
+    dt4 = time.monotonic() - tm4
+
+    if DEBUG_TIMINGS:
+        logger.debug(
+            f"lingen: import {dt0:.3f}s, init {dt1:.3f}s, mslgdc {dt2:.3f}s, fp {dt3:.3f}s, fini {dt4:.3f}s"
+        )
     return poly
 
 
@@ -286,14 +309,21 @@ def clmul(x: int, y: int, karatsuba=10000, block=True) -> int:
 
 def mslgdc(E, delta, b):
     P = None
+    timings = None
+    if DEBUG_TIMINGS:
+        timings = [0.0, 0.0, 0.0]
     for _ in range(b):
-        P, delta = lingen_step(E, delta, P=P)
+        P, delta = lingen_step(E, delta, P=P, timings=timings)
         # print(delta)
+    if DEBUG_TIMINGS:
+        logger.debug(
+            f"mslgdc: sort {timings[0]:.3f}s elim {timings[1]:.3f}s shift {timings[2]:.3f}s"
+        )
     return P
 
 
 def lingen_step(
-    E: npt.NDArray, delta: list[int], P=None
+    E: npt.NDArray, delta: list[int], P=None, timings=None
 ) -> tuple[npt.NDArray, list[int]]:
     # Advance by 1 degree using Gauss elimination (ALGO1 in [Thomé])
     # E is modified in place and divided by X
@@ -305,6 +335,7 @@ def lingen_step(
             dtype=object,
         )
     # Sort columns
+    t0 = time.monotonic()
     for i in range(mn):
         argmin = min(range(i, mn), key=lambda idx: (delta[idx], idx))
         if i < argmin:
@@ -313,7 +344,11 @@ def lingen_step(
                 P[j, i], P[j, argmin] = P[j, argmin], P[j, i]
             for j in range(m):
                 E[j, i], E[j, argmin] = E[j, argmin], E[j, i]
+    if timings:
+        timings[0] += time.monotonic() - t0
+
     # Eliminate without increasing degree (col[j] is cancelled using col[j0<j])
+    t1 = time.monotonic()
     nonzero = set()
     for i in range(m):
         # Find first nonzero element of row i
@@ -330,11 +365,14 @@ def lingen_step(
                     E[h, j] ^= E[h, j0]
                 for h in range(mn):
                     P[h, j] ^= P[h, j0]
+    if timings:
+        timings[1] += time.monotonic() - t1
     if DEBUG_LINGEN:
         for i, j in numpy.ndindex(*E.shape):
             if E[i, j] & 1:
                 assert j in nonzero
     # Now each row has 1 nonzero coefficient
+    t2 = time.monotonic()
     for j in nonzero:
         delta[j] += 1
         for i in range(mn):
@@ -345,6 +383,8 @@ def lingen_step(
             for i in range(m):
                 assert E[i, j] & 1 == 0
                 E[i, j] >>= 1
+    if timings:
+        timings[2] += time.monotonic() - t2
     # debug("P", P)
     return P, delta
 
@@ -441,4 +481,6 @@ def benchmark_mn():
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG)
+    logging.getLogger().setLevel(level=logging.DEBUG)
     benchmark_mn()
