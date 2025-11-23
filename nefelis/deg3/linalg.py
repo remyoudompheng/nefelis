@@ -255,11 +255,9 @@ def main_impl(args):
             # Beware l is not just the product of 3 primes.
             roots = flint.nmod_poly(f, l).roots()
             if sm_root is None:
-                # FIXME: implement check for new CubicField
-                assert len(roots) == 3
-                continue
-                # e = Kf.unit_exponent(l, 0)
-                # dlog_f = sum(dlog[k] for k in f_primes[l]) + e * dlog["f_1_0"]
+                assert len(roots) == 3 or (len(roots) == 2 and f[-1] % l == 0)
+                e = Kf.unit_exponent_split_prime(l)
+                dlog_f = sum(dlog[k] for k in f_primes[l]) + e * dlog["f_1_0"]
             else:
                 assert len(roots) == 3 or (len(roots) == 2 and f[3] % l == 0)
                 l_sm = schirokauer_map(l, 0, sm_root, ell)

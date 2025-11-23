@@ -311,6 +311,23 @@ class CubicField:
         assert exponent is not None
         return int(exponent)
 
+    def unit_exponent_split_prime(self, l) -> int:
+        """
+        Returns e such that l = u^e product(l_i)
+        where l_i are the primes above l.
+        """
+        z = flint.arb(l).log()
+        # l = product(l_i) without a denominator: don't subtract self.logs[(1, 0)]
+        roots = flint.nmod_poly(self.f, l).roots()
+        for r, e in roots:
+            z -= e * self.logs[(l, int(r))]
+        if self.f[-1] % l == 0:
+            z -= self.logs[(l, int(l))]
+        e = z / self.fundamental_log
+        exponent = e.unique_fmpz()
+        assert exponent is not None
+        return int(exponent)
+
 
 class CubicFieldUFD:
     """
