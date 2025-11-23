@@ -256,26 +256,36 @@ class CubicField:
         else:
             lbasis = [[int(r), 1], [l, 0]]
         m = flint.fmpz_mat(lbasis).lll()
-        for s in smallvectors:
-            x, y = (flint.fmpz_mat([s]) * m).entries()
-            fxy = sum(f[i] * x**i * y ** (3 - i) for i in range(4))
-            assert fxy % l == 0
-            facs = factor(abs(fxy) // l)
-            rel = []
-            for _l, _e in facs:
-                if y % _l == 0:
-                    _r = _l
+        for _ in range(2):
+            missing = []
+            for s in smallvectors:
+                x, y = (flint.fmpz_mat([s]) * m).entries()
+                fxy = sum(f[i] * x**i * y ** (3 - i) for i in range(4))
+                assert fxy % l == 0
+                facs = factor(abs(fxy) // l)
+                rel = []
+                for _l, _e in facs:
+                    if y % _l == 0:
+                        _r = _l
+                    else:
+                        _r = x * pow(y, -1, _l) % _l
+                    rel += _e * [(_l, _r)]
+                if all(key in self.logs for key in rel):
+                    # Found a good relation
+                    z = abs(x - alpha * y).log()
+                    z -= self.logs[(1, 0)]  # constant for denominator
+                    for key in rel:
+                        z -= self.logs[key]
+                    self.logs[(l, r)] = z
+                    return z
                 else:
-                    _r = x * pow(y, -1, _l) % _l
-                rel += _e * [(_l, _r)]
-            if all(key in self.logs for key in rel):
-                # Found a good relation
-                z = abs(x - alpha * y).log()
-                z -= self.logs[(1, 0)]  # constant for denominator
-                for key in rel:
-                    z -= self.logs[key]
-                self.logs[(l, r)] = z
-                return z
+                    missing.extend(key for key in rel if key not in self.logs)
+            # None of the small vectors could be factored, add a few missing
+            # ideals and try again.
+            missing = sorted(set(missing))
+            for _l, _r in missing[:16]:
+                self.ideal_log(_l, _r)
+            # logger.debug(f"Added missing logs for {missing[:16]}")
 
         raise ValueError(f"unable to compute logarithm for ideal {l},{r}")
 
