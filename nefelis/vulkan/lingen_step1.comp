@@ -1,0 +1,137 @@
+// Matrix generator for GF(2) sequence
+//
+// Step 1: prepare transformation matrix
+//
+// Sort delta and compute permutation matrix P
+// Apply elimination on matrix E[0] (multiply right by upper triangular T)
+// Return matrix PT and list of shifts, update delta
+//
+// This shader is single-threaded and operates with a single workgroup.
+
+#version 460
+
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+
+layout(constant_id = 0) const uint M = 0x10000;
+layout(constant_id = 1) const uint MN = 0x10000;
+layout(constant_id = 2) const uint B = 0;
+
+layout(binding = 0) coherent buffer Delta {
+  uint delta[MN + 1];
+  // iter should be a separate field
+  // uint iter;
+};
+// An array of size MN x MN x B
+layout(binding = 1) readonly buffer P { uint p[]; };
+// An array of size M x MN x B
+layout(binding = 2) readonly buffer E { uint e[]; };
+layout(binding = 3) coherent buffer PT { uint8_t pt[MN * MN]; };
+layout(binding = 4) coherent buffer S { uint shifts[MN]; };
+
+// Workgroup size is MN
+layout(local_size_x_id = 1) in;
+
+// Matrix in column major order (index P0[col][row])
+shared uint8_t P0[MN][MN];
+shared uint8_t E0[MN][M];
+shared uint nonzero[MN];
+shared uint jmin;
+uint iter = delta[MN];
+
+void main() {
+  const uint tidx = gl_LocalInvocationID.x;
+  const uint srcoffE = (iter & 1) * M * MN * B; // FIXME
+
+  nonzero[tidx] = 0;
+  for (uint i = 0; i < MN; i++) {
+    P0[i][tidx] = uint8_t((tidx == i) ? 1 : 0);
+  }
+  for (uint i = 0; i < M; i++) {
+    E0[tidx][i] = uint8_t(e[srcoffE + (i * MN + tidx) * B] & 1);
+  }
+
+  barrier();
+  memoryBarrier();
+  memoryBarrierShared();
+
+  // Sort: it is enough to iterate once on the array.
+  // The worst case is: delta=[i+1, ..., i+1, i ... i]
+  uint i = 0;
+  uint idiff = 1;
+  while (idiff < MN) {
+    // Invariant:
+    // delta[:i] is sorted and delta[:i] < delta[i]
+    // delta[i] == delta[j] for i <= j < idiff
+    // i+idiff increases at each iteration.
+    if (delta[idiff] == delta[i]) {
+      idiff++;
+    } else if (delta[idiff] < delta[i]) {
+      // Need to swap
+      if (tidx == 0) {
+        uint di = delta[i];
+        uint di1 = delta[idiff];
+        delta[i] = di1;
+        delta[idiff] = di;
+      }
+      uint8_t pij = P0[i][tidx];
+      P0[i][tidx] = P0[idiff][tidx];
+      P0[idiff][tidx] = pij;
+      if (tidx < M) {
+        uint8_t eij = E0[i][tidx];
+        E0[i][tidx] = E0[idiff][tidx];
+        E0[idiff][tidx] = eij;
+      }
+      // Values i..idiff move to i+1..=idiff
+      i++;
+      idiff++;
+    } else {
+      // delta[idiff] = delta[i]+1
+      // So delta[j] > delta[i] for j >= idiff
+      i = idiff;
+      idiff++;
+    }
+    barrier();
+    memoryBarrier();
+    memoryBarrierShared();
+  }
+
+  // For each row, eliminate columns after first 1
+  for (uint i = 0; i < M; i++) {
+    // argmin_j(E0[i, j] == 1)
+    jmin = MN;
+    barrier();
+    memoryBarrierShared();
+    if (E0[tidx][i] == 1 && nonzero[tidx] == 0) {
+      atomicMin(jmin, tidx);
+    }
+    barrier();
+    memoryBarrierShared();
+    if (jmin == MN)
+      continue;
+
+    if (tidx == 0) {
+      nonzero[jmin] = 1;
+    }
+    for (uint j = jmin + 1; j < MN; j++) {
+      bool elim = (E0[j][i] == 1);
+      barrier();
+      if (elim) {
+        P0[j][tidx] ^= P0[jmin][tidx];
+        if (tidx < M)
+          E0[j][tidx] ^= E0[jmin][tidx];
+      }
+      barrier();
+      memoryBarrierShared();
+    }
+  }
+
+  for (uint i = 0; i < MN; i++) {
+    pt[tidx * MN + i] = P0[i][tidx];
+  }
+  // Increment delta and counter
+  const uint shift = nonzero[tidx];
+  shifts[tidx] = shift;
+  delta[tidx] += shift;
+  if (tidx == 0)
+    delta[MN] = iter + 1;
+}

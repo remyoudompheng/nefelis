@@ -1,0 +1,163 @@
+// Matrix generator for GF(2) sequence
+//
+// Step 2: apply transformation matrix
+//
+// Multiply P,E by PT
+// Shift P<<1 if shift=1
+// Shift E>>1 if shift=0
+//
+// A workgroup will manage 1 row, 4k columns (k = number of waves)
+// So that source data is common to the entire workgroup.
+// Each subgroup manages 4 destinations i, 4j..4j+3
+
+#version 460
+
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_ballot : require
+#extension GL_KHR_shader_subgroup_shuffle_relative : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+
+layout(constant_id = 0) const uint M = 0x10000;
+layout(constant_id = 1) const uint MN = 0x10000;
+layout(constant_id = 2) const uint B = 0;
+
+layout(binding = 0) readonly buffer Delta {
+  uint delta[MN + 1];
+  // iter should be a separate field
+  // uint iter;
+};
+// An array of size MN x MN x B
+layout(binding = 1) coherent buffer P { uint p[]; };
+// An array of size M x MN x B
+layout(binding = 2) coherent buffer E { uint e[]; };
+layout(binding = 3) readonly buffer PT { uint8_t pt[MN * MN]; };
+layout(binding = 4) readonly buffer S { uint shifts[MN]; };
+
+layout(local_size_x = 256) in;
+
+// Must divide M and MN
+const uint ROWBATCH = (M < 8) ? M : 8;
+// Must divide MN
+const uint COLBATCH = (MN < 16) ? MN : 16;
+
+// uint i = gl_WorkGroupID.x * gl_NumSubgroups + gl_SubgroupID;
+// uint j = 4 * gl_WorkGroupID.y;
+uint i = gl_WorkGroupID.x;
+uint j = COLBATCH * (gl_WorkGroupID.y * gl_NumSubgroups + gl_SubgroupID);
+uint iter = delta[MN];
+uint srcoffE = ((iter & 1) ^ 1) * M * MN * B;
+uint srcoffP = ((iter & 1) ^ 1) * MN * MN * B;
+uint dstoffE = (iter & 1) * M * MN * B;
+uint dstoffP = (iter & 1) * MN * MN * B;
+
+void mulmatP(uint i, uint j) {
+  const uint tidx = gl_SubgroupInvocationID;
+  for (uint b = 0; b + tidx < B; b += gl_SubgroupSize) {
+    uint res[COLBATCH];
+    for (uint z = 0; z < COLBATCH; z++)
+      res[z] = 0;
+    for (uint k = 0; k < MN; k += ROWBATCH) {
+      // Preload 4 elements
+      uint pik[ROWBATCH];
+      for (uint kk = 0; kk < ROWBATCH; kk++)
+        pik[kk] = p[srcoffP + (i * MN + k + kk) * B + b + tidx];
+      for (uint kk = 0; kk < ROWBATCH; kk++) {
+        for (uint jj = 0; jj < COLBATCH; jj++) {
+          if (pt[(k + kk) * MN + j + jj] == 1)
+            res[jj] ^= pik[kk];
+        }
+      }
+    }
+    for (uint jj = 0; jj < COLBATCH; jj++) {
+      const uint dstoff = dstoffP + (i * MN + j + jj) * B;
+      p[dstoff + b + tidx] = res[jj];
+    }
+  }
+}
+
+void mulmatE(uint i, uint j) {
+  const uint tidx = gl_SubgroupInvocationID;
+  for (uint b = 0; b + tidx < B; b += gl_SubgroupSize) {
+    uint res[COLBATCH];
+    for (uint z = 0; z < COLBATCH; z++)
+      res[z] = 0;
+    for (uint k = 0; k < MN; k += ROWBATCH) {
+      // Preload 4 elements
+      uint eik[ROWBATCH];
+      for (uint kk = 0; kk < ROWBATCH; kk++)
+        eik[kk] = e[srcoffE + (i * MN + k + kk) * B + b + tidx];
+      for (uint kk = 0; kk < ROWBATCH; kk++) {
+        for (uint jj = 0; jj < COLBATCH; jj++) {
+          if (pt[(k + kk) * MN + j + jj] == 1)
+            res[jj] ^= eik[kk];
+        }
+      }
+    }
+    for (uint jj = 0; jj < COLBATCH; jj++) {
+      const uint dstoff = dstoffE + (i * MN + j + jj) * B;
+      e[dstoff + b + tidx] = res[jj];
+    }
+  }
+}
+
+// Apply P[i, j] <<= 1
+void shiftP(uint i, uint j) {
+  const uint tidx = gl_SubgroupInvocationID;
+  uint carry = 0;
+  // FIXME: Use COLBATCH columns
+  for (uint b = 0; b < B; b += gl_SubgroupSize) {
+    uint pij = 0;
+    if (b + tidx < B) {
+      pij = p[dstoffP + (i * MN + j) * B + b + tidx];
+    }
+    uint shifted = pij << 1;
+    uint msb = subgroupShuffleUp(pij >> 31, 1);
+    shifted |= tidx == 0 ? carry : msb;
+    carry = subgroupBroadcast(pij >> 31, gl_SubgroupSize - 1);
+    if (b + tidx < B) {
+      p[dstoffP + (i * MN + j) * B + b + tidx] = shifted;
+    }
+  }
+}
+
+// Apply E[i, j] >>= 1
+void shiftE(uint i, uint j) {
+  const uint tidx = gl_SubgroupInvocationID;
+  uint borrow = 0;
+  // FIXME: Use COLBATCH columns
+  for (int b = int((B / gl_SubgroupSize) * gl_SubgroupSize); b >= 0;
+       b -= int(gl_SubgroupSize)) {
+    uint pij = 0;
+    if (b + tidx < B) {
+      pij = e[dstoffE + (i * MN + j) * B + b + tidx];
+    }
+    uint shifted = pij >> 1;
+    uint lsb = subgroupShuffleDown(pij << 31, 1);
+    shifted |= tidx == (gl_SubgroupSize - 1) ? borrow : lsb;
+    borrow = subgroupBroadcast(pij << 31, 0);
+    if (b + tidx < B) {
+      e[dstoffE + (i * MN + j) * B + b + tidx] = shifted;
+    }
+  }
+}
+
+void main() {
+  if (i >= MN)
+    return;
+  if (j >= MN)
+    return;
+
+  uint l = 0;
+  const uint tidx = gl_LocalInvocationID.x;
+
+  mulmatP(i, j);
+  if (i < M)
+    mulmatE(i, j);
+
+  for (uint jj = 0; jj < COLBATCH; jj++) {
+    if (shifts[j + jj] == 1)
+      shiftP(i, j + jj);
+    else if (i < M)
+      shiftE(i, j + jj);
+  }
+}
