@@ -224,10 +224,8 @@ class SpMV:
         return True
 
     def left_kernel(self):
-        if self.dim < 131072:
+        if self.dim < 16384:
             m = 16
-        elif self.dim < 1048576:
-            m = 24
         else:
             m = 32
         # If sum(ak X^k) is a matrix generator of the sequence W0 M^k V0

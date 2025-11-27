@@ -44,12 +44,26 @@ def mslgdc(E, delta, b):
     )
 
     mgr.sequence().record(kp.OpTensorSyncDevice(alg.get_tensors())).eval()
+    seq4 = (
+        # 4 batched iterations to reduce CPU overhead
+        mgr.sequence(total_timestamps=10)
+        .record(kp.OpAlgoDispatch(alg))
+        .record(kp.OpAlgoDispatch(alg2))
+        .record(kp.OpAlgoDispatch(alg))
+        .record(kp.OpAlgoDispatch(alg2))
+        .record(kp.OpAlgoDispatch(alg))
+        .record(kp.OpAlgoDispatch(alg2))
+        .record(kp.OpAlgoDispatch(alg))
+        .record(kp.OpAlgoDispatch(alg2))
+    )
     seq = (
         mgr.sequence(total_timestamps=10)
         .record(kp.OpAlgoDispatch(alg))
         .record(kp.OpAlgoDispatch(alg2))
     )
-    for _ in range(b):
+    for _ in range(b // 4):
+        seq4.eval()
+    for _ in range(b % 4):
         seq.eval()
 
     mgr.sequence().record(kp.OpTensorSyncLocal(alg.get_tensors())).eval()
@@ -217,7 +231,6 @@ def test_shader():
     )
     t0 = time.monotonic()
     for _ in range(1000):
-        break
         seq.eval()
     dt = time.monotonic() - t0
     print("1000 iters in", dt)

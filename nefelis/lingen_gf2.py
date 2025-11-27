@@ -24,6 +24,8 @@ import flint
 import numpy
 import numpy.typing as npt
 
+from nefelis.backends.kompute.lingen_gf2 import mslgdc as mslgdc_gpu
+
 DEBUG_LINGEN = False
 
 DEBUG_CHECK_LINGEN = False
@@ -210,7 +212,7 @@ def lingen_mat(mats, N: int):
             print(f"before E[{i},{j}]", hex(E[i, j]))
 
     tm2 = time.monotonic()
-    P = mslgdc(E, delta, N // m + N // n + EXTRA_ITERS)
+    P = mslgdc_gpu(E, delta, N // m + N // n + EXTRA_ITERS)
     dt2 = time.monotonic() - tm2
     if DEBUG_LINGEN:
         for i, j in numpy.ndindex(*E.shape):
