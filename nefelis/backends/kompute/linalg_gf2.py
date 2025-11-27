@@ -419,8 +419,10 @@ class SpMV:
 
         dt = time.monotonic() - t0
         gpu_dt = gpu_ticks * stamp_period() * 1e-9
-        flops = self.flops * ITERS * m / gpu_dt
-        speed = ITERS * m / gpu_dt
+        speed = ITERS / dt
+        logger.info(
+            f"Krylov completed in {dt:.3f}s (GPU {gpu_dt:.3f}s, {ITERS} iterations, {speed:.3f} iter/s)"
+        )
 
         # vout[i, j, :] is the j-th row of M^i V
         mats = [[] for _ in range(m)]
@@ -449,9 +451,6 @@ class SpMV:
         dt = time.monotonic() - t0
         lingen_dt = time.monotonic() - t1
         logger.info(f"Lingen completed in {lingen_dt:.3f}s (N={dim} m=n={m})")
-        logger.info(
-            f"Wiedemann completed in {dt:.3f}s (GPU {gpu_dt:.3}s, {flops / 1e9:.2f} GOPS, {speed:.1f} SpMV/s)"
-        )
 
         return poly, v[0, :, :]
 
@@ -509,7 +508,7 @@ class SpMV:
         vout = xout.data().reshape((dim, K))
         dt = time.monotonic() - t0
         logger.info(
-            f"Polyeval completed in {dt:.3f}s (GPU {gpu_dt:.3}s, {flops / 1e9:.2f} GFLOPS, {speed:.1f} SpMV/s)"
+            f"Polyeval completed in {dt:.3f}s (GPU {gpu_dt:.3f}s, {flops / 1e9:.2f} GFLOPS, {speed:.1f} SpMV/s)"
         )
         return vout
 

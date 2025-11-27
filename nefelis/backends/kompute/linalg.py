@@ -260,17 +260,16 @@ class SpMV:
         gpu_dt = gpu_ticks * stamp_period() * 1e-9
         flops = self.flops * ITERS / gpu_dt
         speed = ITERS / gpu_dt
+        logger.info(
+            f"Krylov completed in {dt:.3f}s (GPU {gpu_dt:.3f}s, {flops / 1e9:.2f} GFLOPS, {speed:.1f} SpMV/s)"
+        )
 
         t1 = time.monotonic()
         poly = lingen.lingen(sequences, dim, l)
         assert len(poly) <= dim + 1, len(poly)
 
-        dt = time.monotonic() - t0
         lingen_dt = time.monotonic() - t1
         logger.info(f"Lingen completed in {lingen_dt:.3f}s (N={dim} m={blockm} n=1)")
-        logger.info(
-            f"Wiedemann completed in {dt:.3f}s (GPU {gpu_dt:.3}s, {flops / 1e9:.2f} GFLOPS, {speed:.1f} SpMV/s)"
-        )
 
         return [int(ai) for ai in list(poly)]
 
@@ -319,7 +318,7 @@ class SpMV:
         vout = xout.data().reshape((dim, ALEN))
         dt = time.monotonic() - t0
         logger.info(
-            f"Polyeval completed in {dt:.3f}s (GPU {gpu_dt:.3}s, {flops / 1e9:.2f} GFLOPS, {speed:.1f} SpMV/s)"
+            f"Polyeval completed in {dt:.3f}s (GPU {gpu_dt:.3f}s, {flops / 1e9:.2f} GFLOPS, {speed:.1f} SpMV/s)"
         )
         return [from_uvec(vout[i, :]) % l for i in range(dim)]
 
