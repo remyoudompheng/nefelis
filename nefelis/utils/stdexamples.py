@@ -8,8 +8,7 @@ import random
 
 import flint
 import numpy as np
-from nefelis.integers import smallprimes
-from pymqs import factor, factor_smooth
+from nefelis.integers import smallprimes, factor, factor_smooth
 
 
 def main():
@@ -121,7 +120,7 @@ def generate(typ: str, start: int) -> int:
             n = start + int(idx)
             if flint.fmpz(n).is_probable_prime():
                 continue
-            facs = factor_smooth(n, n.bit_length() // 10)
+            facs = factor_smooth(n, min(32, n.bit_length() // 10))
             if len(facs) > 1:
                 continue
 
@@ -130,9 +129,9 @@ def generate(typ: str, start: int) -> int:
             else:
                 # Any number which looks hard to factor
                 facs = factor_smooth(n, min(63, n.bit_length() // 4))
-            if len(facs) == 2 and all(f**3 > n for f in facs):
+            if len(facs) == 2 and all(f**3 > n for f, _ in facs):
                 # Good semiprimes are accepted immediately
-                if all(flint.fmpz(f).is_probable_prime() for f in facs):
+                if all(flint.fmpz(f).is_probable_prime() for f, _ in facs):
                     return n
             if len(facs) > 1:
                 continue
