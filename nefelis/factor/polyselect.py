@@ -123,7 +123,7 @@ PARAMS5 = [
 ]
 
 
-def polyselect(N: int, deg: int) -> tuple[list[int], list[int]]:
+def polyselect(N: int, deg: int, lowcpu: bool = False) -> tuple[list[int], list[int]]:
     best = Value("d", 1e9)
     bestsize = Value("d", 1e9)
 
@@ -136,6 +136,8 @@ def polyselect(N: int, deg: int) -> tuple[list[int], list[int]]:
     _, admin, admax, adstride, pmax = min(
         PARAMS, key=lambda t: abs(t[0] - N.bit_length())
     )
+    if lowcpu:
+        admax = (admin + admax + adstride) // 2
     logger.info(
         f"Start polynomial selection for ad=[{admin}:{admax}:{adstride}] and {pmax=}"
     )

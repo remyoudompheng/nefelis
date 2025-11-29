@@ -28,9 +28,14 @@ def main():
     sieve_args.add_argument("--gpu", type=gpu_id, help="List of GPU devices to be used")
     sieve_args.add_argument("--ncpu", type=int, help="CPU threads for factoring")
     sieve_args.add_argument(
+        "--lowcpu", action="store_true", help="Choose parameters reducing CPU usage"
+    )
+    sieve_args.add_argument(
         "--nogpufactor", action="store_true", help="Don't perform trial division on GPU"
     )
-    sieve_args.add_argument("--poly", help="Use a custom polynomial (Cado-NFS .poly format)")
+    sieve_args.add_argument(
+        "--poly", help="Use a custom polynomial (Cado-NFS .poly format)"
+    )
 
     linalg_args = argp.add_argument_group("Linear algebra options")
     linalg_args.add_argument(

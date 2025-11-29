@@ -154,6 +154,33 @@ PARAMS = [
     # (420, 5, 8000_000, 4000_000, 29, 27, 55, 35, 29, 200000),
 ]
 
+# Parameters for low CPU/high GPU (gpu.cores/cpu.cores > 4)
+PARAMS_LOWCPU = [
+    (60, 3, 2000, 1000, 12, 11, 5, 5, 23, 20),
+    (80, 3, 2000, 1000, 12, 11, 5, 5, 24, 20),
+    (100, 3, 3000, 3000, 13, 12, 5, 5, 24, 50),
+    (120, 3, 4000, 4000, 13, 13, 5, 5, 25, 50),
+    (140, 3, 8000, 5000, 15, 14, 5, 5, 26, 200),
+    (160, 3, 20000, 20000, 15, 15, 5, 5, 26, 500),
+    (180, 3, 50000, 40000, 17, 17, 5, 5, 26, 1000),
+    (200, 3, 80000, 80000, 18, 18, 5, 5, 26, 2000),
+    # deg 4
+    (220, 4, 150_000, 80_000, 19, 18, 19, 18, 26, 3000),
+    (240, 4, 200_000, 120_000, 19, 18, 19, 18, 27, 5000),
+    (260, 4, 300_000, 200_000, 19, 19, 19, 19, 27, 7000),
+    (260, 4, 500_000, 400_000, 19, 19, 20, 19, 27, 10000),
+    (280, 4, 1000_000, 600_000, 20, 20, 20, 20, 27, 20000),
+    (300, 4, 1500_000, 800_000, 22, 21, 22, 21, 28, 20000),
+    (320, 4, 2500_000, 1500_000, 23, 22, 23, 22, 28, 40000),
+    (340, 4, 4000_000, 2500_000, 24, 23, 24, 23, 28, 100000),
+    (360, 4, 6000_000, 3500_000, 26, 25, 28, 27, 28, 200000),
+    (380, 4, 7000_000, 4000_000, 27, 26, 29, 28, 28, 300000),
+    (400, 4, 8000_000, 6000_000, 28, 27, 31, 30, 29, 250000),
+    (420, 4, 10000_000, 8000_000, 29, 28, 33, 32, 29, 400000),
+    # 2 large primes
+    (440, 5, 7000_000, 7000_000, 29, 28, 52, 28, 29, 800000),
+]
+
 # These parameters are optimized for "Cunningham" numbers
 # (rational multiples of b^n+a for small a,b).
 # They may need adjustments for other SNFS-compatible numbers (e.g. fibonacci(a)+b)
@@ -178,12 +205,19 @@ PARAMS_SNFS = [
     # FIXME: implement degree 6 for sizes above 750 bits
 ]
 
+PARAMS_SNFS_LOWCPU = [
+    (400, 4, 1000_000, 600_000, 22, 21, 22, 21, 27, 20000),
+    (500, 5, 4000_000, 3000_000, 26, 25, 26, 25, 28, 200000),
+    (600, 5, 12000_000, 9000_000, 29, 28, 33, 32, 29, 200000),
+]
 
-def get_params(N, snfs=False):
-    if snfs:
-        return min(PARAMS_SNFS, key=lambda p: abs(p[0] - N.bit_length()))[1:]
+
+def get_params(N, lowcpu=False, snfs=False):
+    if lowcpu:
+        params = PARAMS_SNFS_LOWCPU if snfs else PARAMS_LOWCPU
     else:
-        return min(PARAMS, key=lambda p: abs(p[0] - N.bit_length()))[1:]
+        params = PARAMS_SNFS if snfs else PARAMS
+    return min(params, key=lambda p: abs(p[0] - N.bit_length()))[1:]
 
 
 def main():
@@ -201,6 +235,9 @@ def main():
     argp.add_argument("--ncpu", type=int, help="CPU threads for factoring")
     argp.add_argument(
         "--nogpufactor", action="store_true", help="Don't perform trial division on GPU"
+    )
+    argp.add_argument(
+        "--lowcpu", action="store_true", help="Use parameters for low CPU/GPU ratio"
     )
     argp.add_argument("N", type=int)
     argp.add_argument("WORKDIR")
@@ -221,7 +258,7 @@ def main_impl(args):
         skew = skewness(f)
         if skew < 10.0:
             skew = 1.0  # FIXME: learn how to handle small skews
-            args.snfs = True # FIXME: use better variable
+            args.snfs = True  # FIXME: use better variable
             logger.info("Non skewed polynomial, assuming SNFS")
 
     Nparams = N
@@ -231,7 +268,7 @@ def main_impl(args):
         else:
             Nparams >>= -bias
     degree, B1f, B1g, B2f, B2g, COFACTOR_BITS, COFACTOR_BITS2, logA, qmin = get_params(
-        Nparams, snfs=args.snfs
+        Nparams, lowcpu=args.lowcpu, snfs=args.snfs
     )
     logger.info(
         f"Sieving with B1={B1f / 1000:.0f}k,{B1g / 1000:.0f}k log(B2)={B2f},{B2g} q={qmin}.. A={logA} {COFACTOR_BITS}/{COFACTOR_BITS2} cofactor bits"
@@ -244,7 +281,7 @@ def main_impl(args):
             degree = len(f) - 1
             skew = 1.0  # skewness(f)
         else:
-            f, g = polyselect(N, degree)
+            f, g = polyselect(N, degree, lowcpu=args.lowcpu)
             skew = skewness(f)
 
     v, u = g
