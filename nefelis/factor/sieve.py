@@ -20,6 +20,7 @@ import time
 import flint
 import numpy as np
 
+from nefelis import cadocompat
 from nefelis.polys import estimate_size
 from nefelis.skewpoly import skewness
 from nefelis.sieve import eta as sieve_eta, factor_base, gen_specialq, LineSiever2
@@ -188,6 +189,7 @@ def get_params(N, snfs=False):
 def main():
     argp = argparse.ArgumentParser()
     argp.add_argument("--snfs", action="store_true", help="Use Special NFS")
+    argp.add_argument("--poly", help="Use a custom polynomial (Cado-NFS .poly format)")
     argp.add_argument(
         "--parambias", type=int, default=0, help="Use params from x bits larger numbers"
     )
@@ -213,6 +215,16 @@ def main_impl(args):
     datadir = pathlib.Path(args.WORKDIR)
     datadir.mkdir(exist_ok=True)
 
+    if args.poly:
+        with open(args.poly) as fd:
+            poly_n, f, g = cadocompat.import_polys(fd)
+        assert N == poly_n, f"polynomial file has N={poly_n}"
+        skew = skewness(f)
+        if skew < 10.0:
+            skew = 1.0  # FIXME: learn how to handle small skews
+            args.snfs = True # FIXME: use better variable
+            logger.info("Non skewed polynomial, assuming SNFS")
+
     Nparams = N
     if bias := args.parambias:
         if bias > 0:
@@ -226,14 +238,15 @@ def main_impl(args):
         f"Sieving with B1={B1f / 1000:.0f}k,{B1g / 1000:.0f}k log(B2)={B2f},{B2g} q={qmin}.. A={logA} {COFACTOR_BITS}/{COFACTOR_BITS2} cofactor bits"
     )
 
-    if args.snfs:
-        radius = 0.5 * (qmin.bit_length() + 1 + logA)
-        f, g = snfs_select(N, radius)
-        degree = len(f) - 1
-        skew = 1.0  # skewness(f)
-    else:
-        f, g = polyselect(N, degree)
-        skew = skewness(f)
+    if not args.poly:
+        if args.snfs:
+            radius = 0.5 * (qmin.bit_length() + 1 + logA)
+            f, g = snfs_select(N, radius)
+            degree = len(f) - 1
+            skew = 1.0  # skewness(f)
+        else:
+            f, g = polyselect(N, degree)
+            skew = skewness(f)
 
     v, u = g
     r = v * pow(-u, -1, N) % N
@@ -255,6 +268,9 @@ def main_impl(args):
             },
             w,
         )
+    if not args.poly:
+        with open(datadir / "nefelis.poly", "w") as w:
+            cadocompat.export_polys(w, N, skew, f, g)
 
     # For factoring, we sieve using f-primes (g-primes for SNFS)
     # The rational polynomial is LARGER when using SNFS
