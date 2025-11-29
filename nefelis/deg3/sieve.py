@@ -185,7 +185,6 @@ def main():
     argp.add_argument("WORKDIR")
     args = argp.parse_args()
 
-    logging.getLogger().setLevel(level=logging.DEBUG)
     main_impl(args)
 
 
@@ -389,4 +388,7 @@ def main_impl(args):
 
 
 if __name__ == "__main__":
+    import nefelis.logging
+
+    nefelis.logging.setup(logging.DEBUG)
     main()

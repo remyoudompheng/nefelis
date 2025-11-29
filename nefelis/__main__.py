@@ -6,6 +6,7 @@ from nefelis import deg2
 from nefelis import deg3
 from nefelis import fp2
 from nefelis import factor
+import nefelis.logging
 
 
 def main():
@@ -53,18 +54,7 @@ def main():
 
     # Logger names should have length <= 6 (poly, sieve, linalg, dlog)
     level = logging.DEBUG if args.verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        force=True,
-        style="{",
-        format="{relativeCreatedSecs: >9.3f}s {levelname[0]} {name:<6s} {message}",
-    )
-
-    def add_relative_seconds(record):
-        record.relativeCreatedSecs = record.relativeCreated / 1000.0
-        return True
-
-    logging.getLogger().handlers[0].addFilter(add_relative_seconds)
+    nefelis.logging.setup(level)
 
     if args.WORKDIR is None:
         with tempfile.TemporaryDirectory(prefix="nefelis") as tmpdir:
