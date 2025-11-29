@@ -36,10 +36,10 @@ The most notable project dependencies are:
 
 * [Kompute](https://github.com/KomputeProject/kompute) for Python bindings to Vulkan
 * [python-flint](https://python-flint.readthedocs.io) for computer algebra
+* [yamaquasi](https://github.com/remyoudompheng/yamaquasi) for fast small number factorization
 
-The program can use [yamaquasi](https://github.com/remyoudompheng/yamaquasi)
-as an optional dependency (version 0.2.2 or later). Without `yamaquasi`
-cofactorization will be handled by FLINT but is usually noticeably slower.
+Note that Kompute 0.9 may require manual compilation and it depends
+on `numpy==1.26.4` which is not packaged for Python 3.13 and above.
 
 ## Bibliography
 
