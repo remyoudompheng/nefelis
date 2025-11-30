@@ -188,7 +188,6 @@ def filter(rels, datadir: pathlib.Path | None):
     saved_pivots = []
 
     Ds = [2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 20]
-    Ds += [25, 30, 35, 40, 45, 50, 60, 70, 80, 90, 100]
     t = time.time()
     removed = 0
     for d in Ds:
