@@ -35,13 +35,42 @@ class Polyselect:
         self.Zmod = flint.fmpz_mod_ctx(N)
         self.N = N
         # self.l = l
+        self.Nmod3 = N % 3
+        if self.Nmod3 == 1:
+            # We need a generator of 3-torsion for cubic root.
+            self.n3 = N - 1
+            while self.n3 % 3 == 0:
+                self.n3 //= 3
+            # Inverse of 3 modulo n3
+            self.ninv3 = (
+                (self.n3 - self.n3 // 3) if self.n3 % 3 == 1 else (self.n3 + 1) // 3
+            )
+            assert (self.ninv3 * 3) % self.n3 == 1
+            g3 = next(g for g in range(2, N) if pow(g, (N - 1) // 3, N) != 1)
+            self.g3 = pow(g3, self.n3, N)
+            self.j3 = pow(g3, (N - 1) // 3, N)
+            assert pow(self.g3, (N - 1) // self.n3, N) == 1
+
+    def _cbrt(self, x: flint.fmpz_mod) -> [flint.fmpz_mod]:
+        """
+        Cubic roots modulo N
+        """
+        N = self.N
+        if self.Nmod3 == 2:
+            return [x ** ((2 * N - 1) // 3)]
+        if x ** ((N - 1) // 3) != 1:
+            return []  # not a cube
+        y = x**self.ninv3
+        while y**3 != x:
+            y *= self.g3
+        return [y, y * self.j3, y * self.j3 * self.j3]
 
     def process(self, D: int, a: int, b: int, c: int, d: int, global_best: float = 1e9):
         """
         Tries pairs of polynomials with f=ax³+bx²+cx+d.
         """
         N = self.N
-        # We assume that D is not a square mod N and -3D is a square
+        # We assume that -3D is a square
         # Roots are computed by Cardano formula:
         #   r = -1/3a (b + C + Δ0/C)
         # where Δ1 = 2b³-9abc+27a²d
@@ -56,22 +85,26 @@ class Polyselect:
         if C3 == 0:
             # d1 == (d1 - 3 * a * rD) / 2
             C3 = flint.fmpz_mod(d1, self.Zmod)
-        C = C3 ** ((2 * N - 1) // 3)
-        # assert C**3 == C3 and C != 0
-        r = (b + C + d0 / C) / (-3 * a)
-        # print(a, b, c, d, r)
-        assert a * r**3 + b * r**2 + c * r + d == 0, (a, b, c, d, int(r))
+
+        def allg():
+            for C in self._cbrt(C3):
+                # assert C**3 == C3 and C != 0
+                r = (b + C + d0 / C) / (-3 * a)
+                # print(a, b, c, d, r)
+                assert a * r**3 + b * r**2 + c * r + d == 0, (a, b, c, d, int(r))
+                m = flint.fmpz_mat([[N, 0, 0], [int(r), -1, 0], [0, int(r), -1]]).lll()
+                for s in smallvectors:
+                    w, v, u = (flint.fmpz_mat([s]) * m).entries()
+                    w, v, u = int(w), int(v), int(u)
+                    yield r, w, v, u
 
         f = [a, b, c, d]
+        g = None
         # Norm for degree 3 polynomials
         fsize = float(5 * (a * a + d * d) + 2 * (a * c + b * d) + b * b + c * c) / 8.0
         fbits = math.log2(fsize) / 2
         af = polys.alpha3(D, a, b, c, d)
-        m = flint.fmpz_mat([[N, 0, 0], [int(r), -1, 0], [0, int(r), -1]]).lll()
-        g = None
-        for s in smallvectors:
-            w, v, u = (flint.fmpz_mat([s]) * m).entries()
-            w, v, u = int(w), int(v), int(u)
+        for r, w, v, u in allg():
             if u.bit_length() + v.bit_length() + w.bit_length() < N.bit_length() // 2:
                 # the polynomial was not irreducible over Q
                 return None
@@ -175,8 +208,8 @@ def polyselect(N: int, bound: int | None = None, ell: int | None = None):
                             if flint.fmpz(D).jacobi(ell) != -1:
                                 continue
                         # We want a root modulo N, they are easier to compute
-                        # if D is not a square
-                        if flint.fmpz(D).jacobi(N) != -1:
+                        # if -3D is a square
+                        if flint.fmpz(-3 * D).jacobi(N) != 1:
                             continue
                         # Polynomial must have content=1
                         if math.gcd(math.gcd(a, b), math.gcd(c, d)) != 1:
