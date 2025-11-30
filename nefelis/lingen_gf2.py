@@ -212,7 +212,11 @@ def lingen_mat(mats, N: int):
             print(f"before E[{i},{j}]", hex(E[i, j]))
 
     tm2 = time.monotonic()
-    P = mslgdc_gpu(E, delta, N // m + N // n + EXTRA_ITERS)
+    if N < 1000:
+        # Don't switch to GPU for tiny inputs
+        P = mslgdc(E, delta, N // m + N // n + EXTRA_ITERS)
+    else:
+        P = mslgdc_gpu(E, delta, N // m + N // n + EXTRA_ITERS)
     dt2 = time.monotonic() - tm2
     if DEBUG_LINGEN:
         for i, j in numpy.ndindex(*E.shape):
