@@ -206,7 +206,9 @@ def factor_with_kernels(
     if facs is None:
         facs = [n]
 
-    # Prepare more quadratic characters for sanity checks
+    # Prepare a few quadratic characters for sanity checks
+    # Kernel elements are already squares modulo ~16 characters,
+    # no need to check too many of them (doing this in Python is slow).
     testchis = []
     for l in range(2**61, 2**61 + 5000):
         if not flint.fmpz(l).is_prime():
@@ -215,9 +217,19 @@ def factor_with_kernels(
         for r, e in fmodl.roots():
             if e == 1:
                 testchis.append((l, int(r)))
-        if len(testchis) >= 32:
-            break  # 32 characters are enough for sanity check
-    assert len(testchis) >= 16
+        if len(testchis) >= 8:
+            break
+    assert len(testchis) >= 8
+
+    # Precompute character values once.
+    characters = {}
+    for key, xy in enumerate(xy_elems):
+        if xy is None:
+            continue
+        x, y = xy
+        chars = [flint.fmpz(x - _r * y).jacobi(_l) < 0 for _l, _r in testchis]
+        characters[key] = np.array(chars, dtype=np.uint8)
+    del x, y, chars
     logger.info(f"Prepared {len(testchis)} quadratic characters for validation")
 
     dim = M.dim
@@ -225,34 +237,37 @@ def factor_with_kernels(
     assert len(f) > 2
     A = f[-1]
 
-    facs: list[int] = [int(n)]
+    if facs is None:
+        facs = [int(n)]
     for ki in kers:
-        s = set()
+        # Collect product terms for this kernel element.
+        all_ridx = []
         for j in range(dim):
             if ki[j]:
                 r = M.rels[M.rowidx[j]]
-                s.symmetric_difference_update([ridx for ridx in r if ridx < 0])
+                all_ridx.append(r[r < 0])
+        ridxs, rcounts = np.unique(np.concatenate(all_ridx), return_counts=True)
+        ridxs = -ridxs[(rcounts & 1) == 1]
 
         xys = []
-        for ridx in s:
-            x, y = xy_elems[-ridx]
-            xys.append((int(x), -int(y)))
+        for ridx in ridxs:
+            x, y = xy_elems[ridx]
+            xys.append((x, -y))
 
+        char_k = sum(characters[ridx] for ridx in ridxs) & 1
         is_probably_square = True
-        for _l, _r in testchis:
-            residue = flint.nmod(1, _l)
-            for x, y in xys:
-                residue *= x + _r * y
-            if flint.fmpz(int(residue)).jacobi(_l) == -1:
+        for i, (_l, _r) in enumerate(testchis):
+            if char_k[i] & 1 == 1:
                 logger.debug(
                     f"Candidate product of {len(s)} elements is not a square at place {_l},{_r}"
                 )
                 is_probably_square = False
                 break
+        del char_k, all_ridx, x, y
 
         if is_probably_square:
             logger.debug(
-                f"Candidate square: product of {len(s)} elements validated at {len(testchis)} places"
+                f"Candidate square: product of {len(ridxs)} elements validated at {len(testchis)} places"
             )
             rt = sqrt_arb.sqrt(f, xys)
             bits = int(max(ai.abs_upper().log_base(2) for ai in rt).ceil().fmpz())
@@ -273,9 +288,10 @@ def factor_with_kernels(
 
             # print(sqrt**2)
 
-            candidate = Zn(1)
-            for x, y in xys:
-                candidate *= x + zn * y
+            # Uncomment to check square roots modulo n.
+            # candidate = Zn(1)
+            # for x, y in xys:
+            #     candidate *= x + zn * y
             # print(candidate)
 
             # Compute square root on the rational side
@@ -289,8 +305,9 @@ def factor_with_kernels(
                 sqrtz *= Zn(p) ** (e // 2)
             sqrtz /= Zn(g[-1]) ** (len(xys) // 2)
             # print(sqrt, sqrtz)
-            assert candidate == sqrt**2
-            assert candidate == sqrtz**2
+            # assert candidate == sqrt**2
+            # assert candidate == sqrtz**2
+            assert sqrt**2 == sqrtz**2
 
             d1 = flint.fmpz(n).gcd(int(sqrt - sqrtz))
             d2 = flint.fmpz(n).gcd(int(sqrt + sqrtz))

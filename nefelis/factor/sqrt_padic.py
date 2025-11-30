@@ -49,7 +49,7 @@ def sqrt(f: list[int], xys: list[tuple[int, int]], size_hint: int) -> list[int]:
             break
     assert flint.fmpz(p).is_probable_prime()
     N = int(math.ceil(size_hint / math.log2(p)))
-    logger.info(f"Using p-adic arithmetic with p={hex(p)} and precision O(p^{N})")
+    logger.debug(f"Using p-adic arithmetic with p={hex(p)} and precision O(p^{N})")
 
     pN = flint.fmpz(p) ** N
     ZpX = flint.fmpz_mod_poly_ctx(p)
