@@ -280,7 +280,9 @@ def main_impl(args):
             radius = 0.5 * (qmin.bit_length() + 1 + logA)
             f, g = snfs_select(N, radius)
             degree = len(f) - 1
-            skew = 1.0  # skewness(f)
+            # Force skewed sieving rectangles for more efficiency
+            # They will point to random angles and still cover a balanced region.
+            skew = 3.0
         else:
             f, g = polyselect(N, degree, lowcpu=args.lowcpu)
             skew = skewness(f)
@@ -331,10 +333,20 @@ def main_impl(args):
         skew2 = skew
     else:
         skew2 = skew / (1.5 * qmin)
-    H = int(math.sqrt(2 ** (logA - 1) / skew2))
+    # For performance, we are biased towards larger width
     W = (
-        max(1, int(round(2 ** (logA - 1) / H / LineSiever2.SEGMENT_SIZE)))
+        max(
+            1,
+            int(
+                math.ceil(math.sqrt(2 ** (logA - 1) * skew2) / LineSiever2.SEGMENT_SIZE)
+            ),
+        )
     ) * LineSiever2.SEGMENT_SIZE
+    H = int(round(2 ** (logA - 1) / W))
+    if H < 32:
+        # Avoid waste of resources, have at least 32 lines.
+        W = 2 ** (logA - 1) // 32
+        H = 32
     logger.info(
         f"Sieve rectangle size {2 * W >> 10}k x {H} (skewness: {W / H:.3g}, area: {(2 * W * H) >> 20}M)"
     )
