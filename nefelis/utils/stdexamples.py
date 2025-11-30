@@ -20,25 +20,28 @@ def main():
     )
     argp.add_argument(
         "SEED",
-        choices=("pow10", "fibo", "e", "pi", "random"),
+        choices=("pow2", "pow10", "fibo", "e", "pi", "random"),
         help="Generate numbers using this seed family",
     )
     argp.add_argument("MINBITS", type=int)
     argp.add_argument("MAXBITS", type=int)
+    argp.add_argument("STEP", nargs="?", type=int, default=10)
     args = argp.parse_args()
 
     # Precomputed things
     smalls.extend(smallprimes(10000))
     flint.ctx.dps = 1000
 
-    for bits in range(args.MINBITS, args.MAXBITS + 1, 10):
+    for bits in range(args.MINBITS, args.MAXBITS + 1, args.STEP):
         sname, s = seed(args.SEED, bits)
         p = generate(args.TYPE, s)
         print(bits, f"{sname}+{p - s}", p)
 
 
 def seed(kind: str, size: int):
-    if kind == "pow10":
+    if kind == "pow2":
+        return f"2^{size}", 1 << size
+    elif kind == "pow10":
         return f"10^{size // 10 * 3}", 10 ** (size // 10 * 3)
     elif kind == "fibo":
         n = int(1.44 * size)
@@ -67,7 +70,7 @@ def generate(typ: str, start: int) -> int:
     if typ == "p":
         # Generate a strong prime:
         # we want start+i prime and (start+i-1)/2 prime
-        arr = np.zeros(200_000, dtype=np.uint8)
+        arr = np.zeros(100_000 + 10 * start.bit_length() ** 2, dtype=np.uint8)
         for l in smalls:
             # (start+r) is divisible by l?
             r = (-start) % l
