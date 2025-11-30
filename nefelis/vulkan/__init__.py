@@ -8,12 +8,17 @@ import vulkan as vk
 
 logger = logging.getLogger("vulkan")
 
+SHADER_CACHE = {}
+
 
 def shader(name, defines=None, entry="main"):
     if defines is None:
         defines = {}
+    defines = [f"-D{k}={v}" for k, v in defines.items()]
+    key = (name,) + tuple(defines)
+    if key in SHADER_CACHE:
+        return SHADER_CACHE[key]
     with importlib.resources.path("nefelis.vulkan", name + ".comp") as srcpath:
-        defines = [f"-D{k}={v}" for k, v in defines.items()]
         p = subprocess.Popen(
             ["glslc", "--target-env=vulkan1.3", "-I."]
             + defines
@@ -26,6 +31,7 @@ def shader(name, defines=None, entry="main"):
         out, err = p.communicate(timeout=1)
     if p.returncode:
         raise EnvironmentError(f"shader compilation failed: code {p.returncode}")
+    SHADER_CACHE[key] = out
     return out
 
 
