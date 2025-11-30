@@ -291,10 +291,8 @@ def main_impl(args):
     r = v * pow(-u, -1, N) % N
     assert (u * r + v) % N == 0
     assert sum(fi * r**i for i, fi in enumerate(f)) % N == 0
-    fpoly = flint.fmpz_poly(f)
-    gpoly = flint.fmpz_poly(g)
-    logger.info(f"f = {fpoly}")
-    logger.info(f"g = {gpoly}")
+    logger.info(f"f = {cadocompat.poly_str(f)}")
+    logger.info(f"g = {cadocompat.poly_str(g)}")
 
     with open(datadir / "args.json", "w") as w:
         z = int((-v * pow(u, -1, N)) % N)

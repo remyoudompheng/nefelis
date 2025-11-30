@@ -24,6 +24,7 @@ import time
 
 import flint
 
+from nefelis import cadocompat
 from nefelis.polys import estimate_size
 from nefelis.sieve import Siever, factor_base, gen_specialq, eta as sieve_eta
 from nefelis.integers import factor, factor_smooth
@@ -231,10 +232,10 @@ def main_impl(args):
     assert A * r * r + B * r + C == 0
     r = int(r)
 
-    logger.info(f"f = {f[3]}*x^3+{f[2]}*x^2+{f[1]}*x+{f[0]}")
+    logger.info(f"f = {cadocompat.poly_str(f)}")
+    logger.info(f"g = {cadocompat.poly_str(g)}")
     C, B, A = g
     assert (A * r * r + B * r + C) % N == 0
-    logger.info(f"g = {A} x² + {B} x + {C}")
     logger.info(f"Root r = {r}")
 
     ls, rs = factor_base(g, B1g)
@@ -270,6 +271,9 @@ def main_impl(args):
             },
             w,
         )
+    with open(datadir / "nefelis.poly", "w") as w:
+        cadocompat.export_polys(w, N, 1.0, f, g)
+
     AREA = 2 ** (2 * I + 1)
     seen = set()
     relf = open(datadir / "relations.sieve", "w", buffering=1)

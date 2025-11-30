@@ -29,7 +29,7 @@ import time
 
 import flint
 
-from nefelis import sieve
+from nefelis import cadocompat, sieve
 from nefelis.integers import factor, factor_smooth, smallprimes
 from nefelis.deg2.polyselect import polyselect
 
@@ -189,9 +189,8 @@ def main_impl(args):
     r = v * pow(-u, -1, N) % N
     assert (u * r + v) % N == 0
     assert (A * r * r + B * r + C) % N == 0
-    logger.info(f"f = {A} x^2 + {B} x + {C}")
-    logger.info(f"{u = } size {u.bit_length()}")
-    logger.info(f"{v = } size {v.bit_length()}")
+    logger.info(f"f = {cadocompat.poly_str(f)}")
+    logger.info(f"g = {cadocompat.poly_str(g)}")
 
     ls, rs = sieve.factor_base(g, B1g)
     qs = [_q for _q in smallprimes(10 * qmin + 100) if _q >= qmin and u % _q != 0]
@@ -228,6 +227,9 @@ def main_impl(args):
             },
             w,
         )
+    with open(datadir / "nefelis.poly", "w") as w:
+        cadocompat.export_polys(w, N, 1.0, f, g)
+
     AREA = 2 ** (2 * I + 1)
     seen = set()
     relf = open(datadir / "relations.sieve", "w", buffering=1)
