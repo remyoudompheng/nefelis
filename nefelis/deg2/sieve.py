@@ -194,7 +194,7 @@ def main_impl(args):
     logger.info(f"{v = } size {v.bit_length()}")
 
     ls, rs = sieve.factor_base(g, B1g)
-    qs = [_q for _q in smallprimes(10 * qmin) if _q >= qmin and u % _q != 0]
+    qs = [_q for _q in smallprimes(10 * qmin + 100) if _q >= qmin and u % _q != 0]
     qrs = [-v * pow(u, -1, q) % q for q in qs]
 
     f = [C, B, A]
