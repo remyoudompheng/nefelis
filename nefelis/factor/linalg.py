@@ -21,6 +21,7 @@ import numpy as np
 
 from nefelis import filter_disk
 from nefelis import filter_gf2 as filter
+from nefelis import integers
 from nefelis.linalg_gf2 import SpMV, SpMV_COO, SpMV_COO2
 from nefelis.factor import sqrt_arb
 from nefelis.factor import sqrt_padic
@@ -293,25 +294,28 @@ def factor_with_kernels(
 
             d1 = flint.fmpz(n).gcd(int(sqrt - sqrtz))
             d2 = flint.fmpz(n).gcd(int(sqrt + sqrtz))
-            if d1 > 1 and d1 < n:
-                logsqrt.info(f"Found factor {d1}")
+            divisors: list[flint.fmpz] = []
+            # For convenience, we eliminate small factors here
+            # to avoid looping for tiny factors.
+            tiny_size = max(8, min(32, n.bit_length() // 20))
+            for d in [d1, d2]:
+                if d == 1 or d == n:
+                    continue
+                if d.is_prime():
+                    divisors.append(d)
+                else:
+                    for _l, _e in integers.factor_smooth(d, tiny_size):
+                        divisors += _e * [flint.fmpz(_l)]
+            for d in divisors:
                 facsplit = []
                 for _f in facs:
-                    if (f1 := d1.gcd(_f)) not in (1, _f):
+                    if (f1 := d.gcd(_f)) not in (1, _f):
+                        logsqrt.info(f"Found factor {f1}")
                         facsplit += [int(f1), int(_f // f1)]
                     else:
                         facsplit.append(_f)
                 facs = facsplit
-            elif d2 > 1 and d2 < n:
-                logsqrt.info(f"Found factor {d2}")
-                facsplit = []
-                for _f in facs:
-                    if (f1 := d2.gcd(_f)) not in (1, _f):
-                        facsplit += [int(f1), int(_f // f1)]
-                    else:
-                        facsplit.append(_f)
-                facs = facsplit
-            else:
+            if not divisors:
                 logsqrt.info("No factor from this square")
 
             if all(flint.fmpz(_f).is_prime() for _f in facs):
