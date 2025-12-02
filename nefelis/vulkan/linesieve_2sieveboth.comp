@@ -67,11 +67,11 @@ bool yeven = gl_WorkGroupID.y == 1; // constant
 
 // Start of huge buffers
 uint huge_off =
-    int(2 * gl_WorkGroupID.x + 1) * LINES_PER_WG * N_SEGMENTS * BUCKET_SIZE;
+    int(2 * gl_WorkGroupID.x + gl_WorkGroupID.y) * LINES_PER_WG * N_SEGMENTS * BUCKET_SIZE;
 shared uint hugelen[LINES_PER_WG][N_SEGMENTS];
 
 uint huge_off2 =
-    int(2 * gl_WorkGroupID.x + 1) * LINES_PER_WG * N_SEGMENTS * BUCKET_SIZE2;
+    int(2 * gl_WorkGroupID.x + gl_WorkGroupID.y) * LINES_PER_WG * N_SEGMENTS * BUCKET_SIZE2;
 shared uint hugelen2[LINES_PER_WG][N_SEGMENTS];
 
 #include <arith.comp>
