@@ -13,6 +13,7 @@ import logging
 import pathlib
 import time
 
+from networkx import Graph, connected_components
 import numpy as np
 
 logger = logging.getLogger("filter")
@@ -25,7 +26,8 @@ def filter(rels: list, datadir: pathlib.Path | None):
     logger.info(f"Max column index {dim}")
 
     t0 = time.monotonic()
-    Ds = [2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 20]
+    Ds = [4, 6, 8, 10, 12, 14, 16, 18, 20]
+    rels = merge2(rels, dim + 1)
     for d in Ds:
         rels = merge(rels, d, dim + 1)
         if sum(len(r) for r in rels) > len(rels) * 100:
@@ -41,6 +43,57 @@ def filter(rels: list, datadir: pathlib.Path | None):
                 w.write("\n")
             logger.info(f"{len(rels)} relations written to {w.name}")
 
+    return rels
+
+
+def merge2(rels, imax: int):
+    # Special case of merge for d=2
+
+    t0 = time.monotonic()
+
+    # Compute stats
+    counts = np.zeros(imax, dtype=np.uint32)
+    for r in rels:
+        counts[r[r >= 0]] += 1
+    nr = len(rels)
+    nc = np.count_nonzero(counts)
+
+    # Find mergeable primes
+    doubles = (counts == 2).nonzero()[0]
+    edges = np.zeros(
+        (len(doubles) * 2), dtype=[("pidx", np.uint32), ("ridx", np.uint32)]
+    )
+    i = 0
+    for ridx, r in enumerate(rels):
+        rpos = r[r >= 0]
+        pivots = rpos[counts[rpos] == 2]
+        edges[i : i + len(pivots)]["ridx"] = ridx
+        edges[i : i + len(pivots)]["pidx"] = pivots
+        i += len(pivots)
+    assert i == len(edges)
+    edges.sort()
+
+    g = Graph()
+    for ij in edges["ridx"].reshape((len(doubles), 2)):
+        g.add_edge(ij[0], ij[1])
+
+    merged = []
+    for comp in connected_components(g):
+        # Add all relations in this component
+        comp0 = comp.pop()
+        r = rels[comp0]
+        for i in comp:
+            r = np.setxor1d(r, rels[i], assume_unique=True)
+        merged.append(r)
+
+    for idx in edges["ridx"]:
+        rels[idx] = None
+
+    rels = merged + [r for r in rels if r is not None]
+    dt = time.monotonic() - t0
+    logger.info(
+        f"2-merge: {nc} columns {nr} rows excess={nr - nc} cliques={len(merged)}/{len(g)} dt={dt:.1f}s"
+    )
     return rels
 
 
@@ -83,7 +136,7 @@ def merge(rels, d, imax: int):
     pivots = 0
     # Track modified relations, we skip a pivot if any row is modified.
     pivotedp = np.zeros(imax + 1, dtype=np.uint8)
-    md = sorted(md, key=lambda i: counts[i])
+    md = md[np.argsort(counts[md])]
     for p in md:
         # Beware: relations are modified during iteration
         # We must skip p if it may appear in a relation outside sets[p]
