@@ -273,21 +273,26 @@ def main_impl(args):
     degree, B1f, B1g, B2f, B2g, COFACTOR_BITS, COFACTOR_BITS2, logA, qmin = get_params(
         Nparams, lowcpu=args.lowcpu, snfs=args.snfs
     )
-    logger.info(
-        f"Sieving with B1={B1f / 1000:.0f}k,{B1g / 1000:.0f}k log(B2)={B2f},{B2g} q={qmin}.. A={logA} {COFACTOR_BITS}/{COFACTOR_BITS2} cofactor bits"
-    )
 
     if not args.poly:
         if args.snfs:
             radius = 0.5 * (qmin.bit_length() + 1 + logA)
             f, g = snfs_select(N, radius)
             degree = len(f) - 1
+            # f may have large coefficients
+            if any(abs(fi) > 1000 for fi in f):
+                B1f += B1f // 2
+                B1g += B1g // 2
             # Force skewed sieving rectangles for more efficiency
             # They will point to random angles and still cover a balanced region.
             skew = 3.0
         else:
             f, g = polyselect(N, degree, lowcpu=args.lowcpu)
             skew = skewness(f)
+
+    logger.info(
+        f"Sieving with B1={B1f / 1000:.0f}k,{B1g / 1000:.0f}k log(B2)={B2f},{B2g} q={qmin}.. A={logA} {COFACTOR_BITS}/{COFACTOR_BITS2} cofactor bits"
+    )
 
     v, u = g
     r = v * pow(-u, -1, N) % N
