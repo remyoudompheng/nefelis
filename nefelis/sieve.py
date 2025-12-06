@@ -78,8 +78,8 @@ def eta(
         return None
 
     A = np.vstack([np.log(stats[:, 0]), np.ones(stats.shape[0])]).T
-    Vf = -np.log(1.0 - stats[:, 1] / pif)
-    Vg = -np.log(1.0 - stats[:, 2] / pig)
+    Vf = -np.log(1.0 - np.minimum(stats[:, 1], pif - 1) / pif)
+    Vg = -np.log(1.0 - np.minimum(stats[:, 2], pig - 1) / pig)
     af, bf = np.linalg.lstsq(A, np.log(Vf), rcond=0)[0]
     ag, bg = np.linalg.lstsq(A, np.log(Vg), rcond=0)[0]
     if not af or not ag:
