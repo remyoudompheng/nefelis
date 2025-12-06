@@ -39,7 +39,7 @@ def main():
 
     linalg_args = argp.add_argument_group("Linear algebra options")
     linalg_args.add_argument(
-        "--blockw", default=1, type=int, help="Use Block Wiedemann with size m=ARG n=1"
+        "--blockw", type=int, help="Use Block Wiedemann with size m=ARG n=1"
     )
 
     factor_args = argp.add_argument_group("Factoring options")
