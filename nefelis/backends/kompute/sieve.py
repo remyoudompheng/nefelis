@@ -44,8 +44,10 @@ class Siever:
         WIDTH = 1 << I
         # We want to sieve at least 2M per workgroup (2W LINES > 2M)
         # We want to have at least 4 workgroups per core
-        WGROWS = min(2 * WIDTH // (4 * gpu_cores()), (1 << 20) // WIDTH) + 1
-        N_WG = 2 * WIDTH // WGROWS + 1
+        WGROWS = round(min(WIDTH / (4 * gpu_cores()), (1 << 20) // (2 * WIDTH)))
+        if WGROWS < 2:
+            WGROWS = 2
+        N_WG = WIDTH // WGROWS + 1
 
         defines = {
             "THRESHOLD": threshold,
@@ -62,7 +64,7 @@ class Siever:
             tprimes2 = mgr.tensor_t(np.array(primes2, dtype=np.uint32))
             troots2 = mgr.tensor_t(np.array(roots2, dtype=np.uint32))
             tqroots2 = mgr.tensor_t(np.zeros(len(roots2), dtype=np.uint32))
-            touttemp = mgr.tensor_t(np.zeros(4 * outsize, dtype=np.int32))
+            touttemp = mgr.tensor_t(np.zeros(8 * outsize, dtype=np.int32))
             defines["DEGREE2"] = len(poly2) - 1
             defines["THRESHOLD2"] = threshold2
 
@@ -78,7 +80,7 @@ class Siever:
                 "BUCKET_SIZE": bucket,
             }
             thuge = mgr.tensor_t(
-                np.zeros(N_WG * bucket * (WGROWS - 1), dtype=np.uint16).view(np.uint32)
+                np.zeros((N_WG + 1) * bucket * 2 * WGROWS, dtype=np.uint16).view(np.uint32)
             )
 
             memhuge = thuge.size() * 4
@@ -108,7 +110,7 @@ class Siever:
         algo2 = mgr.algorithm(
             [tprimes, tqroots, tq, touttemp if GPU_FACTOR else tout, thuge, tdebug],
             shader2,
-            (N_WG, 1, 1),
+            (N_WG // 2, 2, 1),
         )
         if GPU_FACTOR:
             shader3 = shader("sieve_3factor", defines)
@@ -524,7 +526,9 @@ class LineSiever2:
                 "BUCKET_SIZE": bucket,
             }
             thuge = mgr.tensor_t(
-                np.zeros((H + 2 * LINES_PER_WG) * bucket * NSEGS, dtype=np.uint16).view(np.uint32)
+                np.zeros((H + 2 * LINES_PER_WG) * bucket * NSEGS, dtype=np.uint16).view(
+                    np.uint32
+                )
             )
 
             memhuge = thuge.size() * 4
@@ -558,7 +562,9 @@ class LineSiever2:
                 "BUCKET_SIZE2": bucket,
             }
             thuge2 = mgr.tensor_t(
-                np.zeros((H + 2 * LINES_PER_WG) * bucket * NSEGS, dtype=np.uint16).view(np.uint32)
+                np.zeros((H + 2 * LINES_PER_WG) * bucket * NSEGS, dtype=np.uint16).view(
+                    np.uint32
+                )
             )
 
             memhuge = thuge2.size() * 4

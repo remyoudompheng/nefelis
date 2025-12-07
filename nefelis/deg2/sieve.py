@@ -230,8 +230,7 @@ def main_impl(args):
     with open(datadir / "nefelis.poly", "w") as w:
         cadocompat.export_polys(w, N, 1.0, f, g)
 
-    # FIXME: should be AREA = 2 ** (2 * I + 1)
-    AREA = 2 ** (2 * I)
+    AREA = 2 ** (2 * I + 1)
     seen = set()
     relf = open(datadir / "relations.sieve", "w", buffering=1)
     total = 0

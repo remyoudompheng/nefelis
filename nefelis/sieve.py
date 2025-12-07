@@ -170,12 +170,11 @@ def benchmark():
             total += len(xys)
         dt = time.monotonic() - t0
 
-        # FIXME: should be 2 ** (2 * I + 1)
-        area = 2 ** (2 * I) * cores
+        area = 2 ** (2 * I + 1) * cores
         speed = area / dt
         logging.info(
             f"Siever      B1={B1f // 1000}k/{B1g // 1000}k thresholds {thr1}/{thr2} "
-            f"shape {2 ** (I - 10)}k x {2 ** (I + 1)}: {speed * 1e-9:.2f}G/s, {total} results"
+            f"shape {2 ** (I - 9)}k x {2 ** I}: {speed * 1e-9:.2f}G/s, {total} results"
         )
 
     def runbench2(B1f: int, B1g: int, thr1: int, thr2: int, W: int, H: int):

@@ -10,7 +10,7 @@
 #extension GL_EXT_shader_explicit_arithmetic_types : require
 
 // Assume that the sieve region width is a valid shared memory size.
-// The sieve region is 0 <= x <= WIDTH and -WIDTH <= y < WIDTH
+// The sieve region is -WIDTH <= x < WIDTH and 0 < y < WIDTH
 #ifndef THRESHOLD
 #error THRESHOLD is missing
 #endif
@@ -43,19 +43,22 @@ layout(binding = 5) coherent buffer Debug { uint debug[]; };
 shared uint row[WIDTH / 4];
 
 uint tidx = gl_LocalInvocationID.x;
-int y0 = int(gl_WorkGroupID.x) * WGROWS + 1;// - WIDTH;
+int y0 = int(gl_WorkGroupID.x) * (2 * WGROWS) + int(gl_WorkGroupID.y + 1);
+bool yeven = gl_WorkGroupID.y == 1; // constant
 
 const uint LOGHUGE = LOGWIDTH + 3;
+const uint N_SEGMENTS = 2;
 
 #ifdef HUGE_PRIME
 // Start of huge buffers
-uint huge0 = gl_WorkGroupID.x * (WGROWS - 1) * BUCKET_SIZE;
-shared uint hugelen[WGROWS - 1];
+uint huge0 =
+    (2 * gl_WorkGroupID.x + gl_WorkGroupID.y) * 2 * WGROWS * BUCKET_SIZE;
+shared uint hugelen[WGROWS][N_SEGMENTS];
 #endif
 
 #include <arith.comp>
 
-void doprime(uint pidx, int y, bool small) {
+void doprime(uint pidx, int y, int xseg, bool small) {
   const uint p = primes[pidx];
   const uint logp = findMSB(p + p / 2);
   const float pinv = 1.0 / float(p);
@@ -64,27 +67,25 @@ void doprime(uint pidx, int y, bool small) {
   if (qr == p)
     return; // FIXME
 
-  uint x = mulmod(int(qr), y, p, pinv);
-#if DEBUG
-  //if (y == 1337)
-  //  qroots[pidx] = x;
-#endif
-
+  // Small/medium primes can be multiplied by y without overflow.
+  // Huge primes start at ~2^15 and y is at most 2^15
+  int x_ = int(qr * y);
+  if (xseg == 0)
+    x_ += int(WIDTH);
+  if (yeven) {
+    // If y is even, divide by 2 (2x+1 => x)
+    if ((x_ & 1) == 0)
+      x_ += int(p);
+    x_ /= 2;
+  }
+  uint x = modp_float(x_, p, pinv);
   if (x >= WIDTH)
     return;
-  uint pstride = p;
-  /*
-  if ((y & 1) == 0 && pidx > 2) {
-          // If y is even, we want only odd x.
-          if ((x & 1) == 0) x += p;
-          pstride = 2 * p;
-  }
-  */
 
   if (small) {
     // For small primes, an entire subgroup sieves it.
-    x += gl_SubgroupInvocationID * pstride;
-    pstride *= gl_SubgroupSize;
+    const uint pstride = p * gl_SubgroupSize;
+    x += gl_SubgroupInvocationID * p;
     while (x < WIDTH) {
       atomicAdd(row[x / 4], logp << (8 * (x % 4)));
       x += pstride;
@@ -95,7 +96,7 @@ void doprime(uint pidx, int y, bool small) {
   // For large primes, each invocation sieves a different prime.
   while (x < WIDTH) {
     atomicAdd(row[x / 4], logp << (8 * (x % 4)));
-    x += pstride;
+    x += p;
   }
 }
 
@@ -107,30 +108,48 @@ void prepare_huge(uint pidx) {
   const uint logp_bits = clamp((logp - LOGHUGE) / 2, 0, 65536 / WIDTH);
   const float pinv = 1.0 / float(p);
 
-  const uint qr = qroots[pidx];
+  uint qr = qroots[pidx];
   if (qr == p)
     return; // FIXME
 
-  uint x = mulmod(int(qr), y0, p, pinv);
-  // Fill 1st row now
-  if (x < WIDTH)
-    atomicAdd(row[x / 4], logp << (8 * (x % 4)));
-  for (uint j = 0; j < WGROWS - 1; j++) {
+  int64_t x0_ = int64_t(qr) * int64_t(y0) + WIDTH;
+  uint x0 = modp_float(x0_, p, pinv);
+  // At index dy, the starting point is:
+  // - in odd mode: (x0 + 2 * dy * qr) mod p
+  // - in even mode: (x0 + 2 * dy * qr)/2 mod p
+  const uint xmax = yeven ? WIDTH : (2 * WIDTH);
+  if (!yeven) {
+    // In odd mode, every 2 lines, the root has +2qr
+    qr *= 2;
+    if (qr >= p)
+      qr -= p;
+  } else {
+    // In even mode, we divide x by 2, so add only +qr for 2 lines
+    x0 -= 1;
+    if ((x0 & 1) == 1)
+      x0 += p;
+    x0 /= 2;
+  }
+  uint x = x0;
+  [[unroll]]
+  for (uint j = 0; j < WGROWS; j++) {
+    if (x < xmax) {
+      // FIXME: avoid bank conflict (j is uniform)
+      const uint k = x / WIDTH;
+      const uint hidx = atomicAdd(hugelen[j][k], 1);
+      uint val = bitfieldInsert(x, logp_bits, int(LOGWIDTH), int(32 - LOGWIDTH));
+      huges[huge0 + (2 * j + k) * BUCKET_SIZE + hidx] = uint16_t(val);
+    }
     x += qr;
     if (x >= p)
       x -= p;
-    if (x < WIDTH) {
-      // FIXME: avoid bank conflict (j is uniform)
-      const uint hidx = atomicAdd(hugelen[j], 1);
-      huges[huge0 + j * BUCKET_SIZE + hidx] = uint16_t(x + WIDTH * logp_bits);
-    }
   }
 }
 
-void dohuge(int y) {
-  const int j = y - y0 - 1;
-  const uint bidx0 = huge0 + j * BUCKET_SIZE;
-  const uint blen = hugelen[j];
+void dohuge(int y, int xseg) {
+  const int j = (y - y0) / 2;
+  const uint bidx0 = huge0 + (j * N_SEGMENTS + xseg) * BUCKET_SIZE;
+  const uint blen = hugelen[j][xseg];
   for (uint i = 0; i < blen; i += gl_WorkGroupSize.x) {
     if (i + tidx < blen) {
       uint x = huges[bidx0 + i + tidx];
@@ -142,17 +161,14 @@ void dohuge(int y) {
 }
 #endif
 
-void dorow(int y) {
-  if (y0 > WIDTH)
-    return;
-
+void dorow(int y, int xseg) {
   // Tiny primes: we don't sieve them at all.
   const uint N_TINY = 4;
   // Small primes
   const uint N_SMALL = N_TINY + 64;
   for (uint pidx = N_TINY + gl_SubgroupID; pidx < N_SMALL;
        pidx += gl_NumSubgroups) {
-    doprime(pidx, y, true);
+    doprime(pidx, y, xseg, true);
   }
   // Medium primes
 #ifdef HUGE_PRIME
@@ -162,19 +178,19 @@ void dorow(int y) {
 #endif
   for (uint pidx = N_SMALL + tidx; pidx < medium_end;
        pidx += gl_WorkGroupSize.x) {
-    doprime(pidx, y, false);
+    doprime(pidx, y, xseg, false);
   }
   // Huge primes
 #ifdef HUGE_PRIME
-  if (y == y0) {
+  if (y == y0 && xseg == 0) {
     for (uint pidx = HUGE_PRIME + tidx; pidx < primes.length();
          pidx += gl_WorkGroupSize.x)
       prepare_huge(pidx);
     barrier();
     memoryBarrier();
-  } else {
-    dohuge(y);
+    memoryBarrierShared();
   }
+  dohuge(y, xseg);
 #endif
   barrier();
   memoryBarrierShared();
@@ -186,7 +202,11 @@ void dorow(int y) {
     for (uint ii = 0; ii < 4; ii++) {
       // Adjust threshold if x,y are small
       if (int(logs[ii]) - DEGREE * xylog > THRESHOLD - DEGREE * LOGWIDTH) {
-        const uint x = 4 * (i + tidx) + ii;
+        int x = int(4 * (i + tidx) + ii);
+        if (yeven)
+          x = 2 * x + 1;
+        if (xseg == 0)
+          x -= int(WIDTH);
         const uint ridx = atomicAdd(result[0].x, 1);
         if (ridx + 1 < result.length())
 #ifdef THRESHOLD2
@@ -204,19 +224,26 @@ void dorow(int y) {
 }
 
 void main() {
+  if (y0 > WIDTH)
+    return;
+
   for (uint i = 0; i < row.length(); i += gl_WorkGroupSize.x) {
     row[i + tidx] = 0;
   }
 
 #ifdef HUGE_PRIME
-  if (tidx < hugelen.length())
-    hugelen[tidx] = 0;
+  if (tidx < hugelen.length()) {
+    hugelen[tidx][0] = 0;
+    hugelen[tidx][1] = 0;
+  }
 #endif
 
   barrier();
   memoryBarrierShared();
 
   for (int j = 0; j < WGROWS; j++) {
-    dorow(y0 + j);
+    dorow(y0 + 2 * j, 0);
+    if (!yeven)
+      dorow(y0 + 2 * j, 1);
   }
 }
