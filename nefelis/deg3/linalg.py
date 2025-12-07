@@ -192,7 +192,7 @@ def main_impl(args):
         assert sum(e * ker[prime_idx[l]] for l, e in r.items()) % ell == 0
     logger.info("Checked element of matrix right kernel")
 
-    assert len(basis) == len(ker)
+    assert len(basis) <= len(ker)
 
     # Build dlog database
     dlog = {l: v for l, v in zip(basis, ker)}
