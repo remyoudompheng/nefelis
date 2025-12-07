@@ -351,8 +351,8 @@ def main_impl(args):
                         f"Unable to check logarithm of {xl}+{yl}i in ideal ({l},{r})"
                     )
                 else:
-                    zz = xl + z * yl
-                    if pow(gen, logz * coell, n) != pow(zz, coell, n):
+                    zz = Zn(xl + z * yl)
+                    if (zz * ginv**logz) ** coell != 1:
                         logger.error(f"FAIL {xl}+{yl}*ω != ± {gen}^{logz}")
                         raise
                     # logger.debug(f"Checked algebraic {xl}+{yl}*ω == ± {gen}^{logz}")
