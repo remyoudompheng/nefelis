@@ -137,11 +137,16 @@ def polyselect(
 
 
 def main():
+    import nefelis.logging
+
     # 280 bits => bound 100
     argp = argparse.ArgumentParser()
+    argp.add_argument("-v", action="store_true")
     argp.add_argument("N", type=int)
     argp.add_argument("bound", nargs="?", type=int)
     args = argp.parse_args()
+
+    nefelis.logging.setup(logging.DEBUG if args.v else logging.INFO)
 
     f, g = polyselect(args.N, args.bound)
     print("f", f)
@@ -149,5 +154,4 @@ def main():
 
 
 if __name__ == "__main__":
-    logging.getLogger().setLevel(logging.INFO)
     main()

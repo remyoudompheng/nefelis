@@ -295,7 +295,9 @@ def main_impl(args):
     relf.write(
         f"# Total {total} reports [{1 / rels_per_t:.3g}s/r, {rels_per_q:.3f}r/sq] in {elapsed:.2f} elapsed s\n"
     )
-    logger.info(f"{total} relations {duplicates} duplicates in {elapsed:.3f}s")
+    logger.info(
+        f"{total} relations {duplicates} duplicates for q={qmin}..{q} in {elapsed:.3f}s"
+    )
     relf.close()
 
 
