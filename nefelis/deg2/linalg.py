@@ -217,7 +217,7 @@ def main_impl(args):
         k1inv = pow(ker2[idx0], -1, ell)
         for i in range(len(ker2)):
             ker2[i] = ker2[i] * k1inv % ell
-            if ker2[i] != ker[i]:
+            if ker2[i] != ker[i] and i < len(basis):
                 logger.info(f"Ambiguous logarithm for prime {basis[i]}")
                 bad_indexes.add(i)
 
@@ -229,7 +229,7 @@ def main_impl(args):
             continue
         assert sum(e * ker[prime_idx[l]] for l, e in r.items()) % ell == 0
 
-    assert len(basis) == len(ker)
+    assert len(basis) <= len(ker)
 
     # Build dlog database
     dlog = {l: v for l, v in zip(basis, ker) if prime_idx[l] not in bad_indexes}
