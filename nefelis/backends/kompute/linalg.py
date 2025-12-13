@@ -13,6 +13,8 @@ from nefelis.vulkan import shader, stamp_period
 
 # Avoid row reordering when constructing SpMV matrices.
 DEBUG_NO_SORT_ROWS = False
+# Disable padding of rectangular matrices
+DEBUG_NO_PADDING = False
 
 logger = logging.getLogger("linalg")
 
@@ -202,7 +204,7 @@ class SpMV:
         assert count == ITERS
         return gpu_ticks
 
-    def wiedemann_big(self, l: int, blockm=None) -> list[int]:
+    def wiedemann_big(self, l: int, blockm=None, v0=None) -> list[int]:
         """
         Perform Wiedemann algorithm for a single big modulus
 
@@ -231,9 +233,11 @@ class SpMV:
         defines = self.defines | {"BLOCKM": blockm}
 
         # Tensor holding M^k V and M^(k+1) V
+        if v0 is None:
+            v0 = [random.randrange(l) for _ in range(dim)]
         v = np.zeros((2, dim, BLEN), dtype=np.uint32)
         for i in range(dim):
-            v[0, i, :] = to_uvec(random.randrange(l), BLEN)
+            v[0, i, :] = to_uvec(v0[i], BLEN)
         xv = mgr.tensor_t(v.flatten())
         xiter = mgr.tensor_t(np.zeros(N_WG, dtype=np.uint32))
         # Output sequence out[k] = S M^k V
@@ -387,6 +391,10 @@ def to_sparse_matrix(
     rowidx = [ridx for _, _, ridx, _ in sign_rels]
     rels = [_r for _, _, _, _r in sign_rels]
 
+    if not DEBUG_NO_PADDING:
+        for i in range(16):
+            rels.append({})
+
     # Dense coefficients must fit in int8 type
     for r in rels:
         for p in dense_p:
@@ -406,9 +414,19 @@ def to_sparse_matrix(
 
     primes = dense_p + dense_big + sorted(p for p in stats if p not in dense_set)
 
+    # If the matrix is very overdetermined, it will have a large block of null columns
+    # and the Krylov sequence will ignore the result of a large block of rows.
+    # By adding random padding beyond the length of basis, we can mix rows (increase rank)
+    # without losing the actual matrix kernel.
+    #
+    # A deterministic pseudo-random padding should be enough.
+
     prime_idx = {p: idx for idx, p in enumerate(primes)}
     plus = []
     minus = []
+    pad_rng = random.Random(0)
+    pad_cols = list(range(len(primes), len(rels)))
+    pad_count = 0
     for r in rels:
         row_p, row_m = [], []
         for p, e in r.items():
@@ -419,10 +437,32 @@ def to_sparse_matrix(
                 row_p.extend(e * [idx])
             else:
                 row_m.extend(-e * [idx])
+        if not DEBUG_NO_PADDING:
+            # Only pad shorter rows, using a single coefficient.
+            k = min(3, len(pad_cols) // 2)
+            if not r:
+                row_p = pad_rng.sample(pad_cols, pad_rng.randrange(1, k))
+                row_m = pad_rng.sample(pad_cols, pad_rng.randrange(1, k))
+                pad_count += len(row_m) + len(row_p)
+            elif len(row_p) < len(row_m):
+                pad_p = pad_rng.sample(pad_cols, pad_rng.randrange(1, k))
+                pad_count += len(pad_p)
+                row_p += pad_p
+            elif len(row_p) > len(row_m):
+                pad_m = pad_rng.sample(pad_cols, pad_rng.randrange(1, k))
+                pad_count += len(pad_m)
+                row_m += pad_m
         row_p.sort()
         row_m.sort()
         plus.append(row_p)
         minus.append(row_m)
+
+    if not DEBUG_NO_PADDING:
+        pad_overhead = pad_count / sparse_weight / len(rels)
+        logger.info(
+            f"Added {pad_count} coefficients for preconditioning (+{100 * pad_overhead:.1f}%)"
+        )
+
     return primes, rowidx, dense, matbig, plus, minus
 
 
