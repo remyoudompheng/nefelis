@@ -557,5 +557,7 @@ def process(workdir, args, ell: int, blockw: int = 1):
 
 
 if __name__ == "__main__":
-    logging.getLogger().setLevel(level=logging.DEBUG)
+    import nefelis.logging
+
+    nefelis.logging.setup(logging.DEBUG)
     main()

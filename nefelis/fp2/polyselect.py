@@ -5,6 +5,7 @@ import time
 
 import flint
 
+from nefelis.cadocompat import poly_str
 from nefelis import integers
 from nefelis import polys
 
@@ -38,7 +39,7 @@ def polyselect(N, bound=None) -> tuple[list, list, int, list[list]]:
         raise ArithmeticError("N has a no square root for any small -p")
 
     # Iterate over small polynomials
-    logger.info(f"Selecting quadratic field K=Q(sqrt(-{D})) and bound {bound}")
+    logger.info(f"Selecting quadratic field K=Q(sqrt({D})) and bound {bound}")
 
     j = int(flint.fmpz_mod(D, flint.fmpz_mod_ctx(N)).sqrt())
 
@@ -121,7 +122,7 @@ def polyselect(N, bound=None) -> tuple[list, list, int, list[list]]:
             score = gbits + ag + fbits + af
             if score < best:
                 logger.info(
-                    f"GOOD! {ff} |f|={fbits:.2f} α(f)={af:.2f} |g|={gbits:.2f} α(g)={ag:.2f} score {score:.2f}"
+                    f"GOOD! ({poly_str(xs)})²{-D:+}({poly_str(ys)})²={ff} |f|={fbits:.2f} α(f)={af:.2f} |g|={gbits:.2f} α(g)={ag:.2f} score {score:.2f}"
                 )
                 best = score
                 f = ff_l
@@ -132,7 +133,6 @@ def polyselect(N, bound=None) -> tuple[list, list, int, list[list]]:
 
     # Check that g divides f modulo N
     ZnX = flint.fmpz_mod_poly_ctx(N)
-    print(f, g)
     fn = flint.fmpz_mod_poly(f, ZnX)
     gn = flint.fmpz_mod_poly(g, ZnX)
     assert len(gn.roots()) == 0
@@ -150,11 +150,17 @@ def main():
     argp.add_argument("bound", nargs="?", type=int)
     args = argp.parse_args()
 
-    f, g = polyselect(args.N, args.bound)
-    print("f", f)
-    print("g", g)
+    f, g, D, gj = polyselect(args.N, args.bound)
+    print(f"{D = }")
+    print(f"f = {poly_str(f)}")
+    print(f"g = {poly_str(g)}")
+    gx = [x for x, y in gj]
+    gy = [y for x, y in gj]
+    print(f"gj = {poly_str(gx)} + sqrt(D) ({poly_str(gy)})")
 
 
 if __name__ == "__main__":
-    logging.getLogger().setLevel(logging.INFO)
+    import nefelis.logging
+
+    nefelis.logging.setup(logging.DEBUG)
     main()

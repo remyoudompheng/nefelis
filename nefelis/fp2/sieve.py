@@ -26,6 +26,7 @@ import time
 
 import flint
 
+from nefelis import cadocompat
 from nefelis import integers
 from nefelis.sieve import Siever
 from nefelis.fp2 import polyselect
@@ -235,8 +236,8 @@ def main_impl(args):
     Fp2 = flint.fq_default_ctx(N, 2, var="i", modulus=ZnX(conway))
     Fp2X = flint.fq_default_poly_ctx(Fp2)
 
-    logger.info(f"f = {f[4]}*x^4+{f[3]}*x^3+{f[2]}*x^2+{f[1]}*x+{f[0]}")
-    logger.info(f"g = {A}*x^2 + {B}*x + {C}")
+    logger.info(f"f = {cadocompat.poly_str(f)}")
+    logger.info(f"g = {cadocompat.poly_str(g)}")
     roots_g = Fp2X(g).roots()
     z = roots_g[0][0]
     if roots_g[1][0].to_list()[1] < z.to_list()[1]:
@@ -299,6 +300,9 @@ def main_impl(args):
             },
             w,
         )
+    with open(datadir / "nefelis.poly", "w") as w:
+        cadocompat.export_polys(w, N, 1.0, f, g)
+
     AREA = 2 ** (2 * I + 1)
     seen = set()
     relf = open(datadir / "relations.sieve", "w", buffering=1)
@@ -419,9 +423,14 @@ def main_impl(args):
     relf.write(
         f"# Total {total} reports [{1 / rels_per_t:.3g}s/r, {rels_per_q:.3f}r/sq] in {elapsed:.2f} elapsed s\n"
     )
-    logger.info(f"{total} relations {duplicates} duplicates in {elapsed:.3f}s")
+    logger.info(
+        f"{total} relations {duplicates} duplicates for q={qmin}..{q} in {elapsed:.3f}s"
+    )
     relf.close()
 
 
 if __name__ == "__main__":
+    import nefelis.logging
+
+    nefelis.logging.setup(logging.DEBUG)
     main()
