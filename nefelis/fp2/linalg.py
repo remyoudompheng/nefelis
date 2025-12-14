@@ -58,44 +58,8 @@ def read_relations(
             yield int(x), int(y), facg, facf
 
 
-def schirokauer_place(f, ell, root=None):
-    """
-    Returns the root of f modulo l^2
-    """
-    if root is None:
-        rs = flint.fmpz_mod_poly(f, flint.fmpz_mod_poly_ctx(ell)).roots()
-        assert len(rs) >= 1
-        root = rs[0][0]
-
-    # Hensel lift the root of f modulo ell^2
-    # r -> r - f(r)/f'(r)
-    sm_place = flint.fmpz_mod_ctx(ell**2)
-    r = flint.fmpz_mod(int(root), sm_place)
-    fr = sum(fi * r**i for i, fi in enumerate(f))
-    dfr = sum(i * fi * r ** (i - 1) for i, fi in enumerate(f) if i > 0)
-    r -= fr / dfr
-    assert sum(fi * r**i for i, fi in enumerate(f)) == 0
-    return r
-
-
-def schirokauer_map(x, y, r, ell):
-    """
-    Compute the Schirokauer map for algebraic element x+yω
-    at place (l,r)
-    """
-    zl = x + y * r
-    zl1 = int(zl ** (ell - 1))
-    assert zl1 % ell == 1
-    return zl1 // ell
-
-
 def main():
     argp = argparse.ArgumentParser()
-    argp.add_argument(
-        "--nosm",
-        action="store_true",
-        help="Choose simple polynomials to avoid Schirokauer maps",
-    )
     argp.add_argument(
         "--blockw", default=1, type=int, help="Use Block Wiedemann with size m=ARG n=1"
     )
@@ -111,9 +75,7 @@ def main_impl(args):
         doc = json.load(f)
         n = doc["n"]
 
-    ell0 = int(flint.fmpz(n - 1).factor()[-1][0])
     ell1 = int(flint.fmpz(n + 1).factor()[-1][0])
-    process(workdir, doc, ell0, args.blockw)
     process(workdir, doc, ell1, args.blockw)
 
 
@@ -225,8 +187,6 @@ def process(workdir, args, ell: int, blockw: int = 1):
     assert Fp2X(f)(z) == 0
     assert Fp2X(g)(z) == 0
 
-    IS_FP = n % ell == 1
-
     rels = []
     seen_xy = set()
     duplicates = 0
@@ -237,21 +197,7 @@ def process(workdir, args, ell: int, blockw: int = 1):
 
     assert D > 0
 
-    sm_root = None
-    if IS_FP:
-        sm_root = None
-        logger.info(f"Logarithms modulo {ell=} (in GF(p))")
-        # The Schirokauer map is given by sqrt(D) mod ell^2
-        modell2 = flint.fmpz_mod_ctx(ell**2)
-        sm_root = modell2(int(flint.fmpz_mod(D, flint.fmpz_mod_ctx(ell)).sqrt()))
-        sm_root -= (sm_root**2 - D) / (2 * sm_root)
-        assert sm_root**2 == D
-        logger.info(f"Schirokauer map will use root {sm_root} mod l^2")
-        # image of gj in polynomials modulo l^2
-        gell = [_x + sm_root * _y for _x, _y in gj]
-    else:
-        logger.info(f"Logarithms modulo {ell=} (in norm 1 subgroup of GF(p²))")
-        logger.info("Schirokauer map is ignored")
+    logger.info(f"Logarithms modulo {ell=} (in norm 1 subgroup of GF(p²))")
 
     for x, y, facg, facf in read_relations(workdir / "relations.sieve"):
         if (x, y) in seen_xy:
@@ -262,11 +208,8 @@ def process(workdir, args, ell: int, blockw: int = 1):
 
         # z = factor(f(z), Kf) = factor(g(z), Kg) / leading(g)
         # For the norm 1 subgroup, z/zbar makes the constant disappear
-        if IS_FP:
-            rel = {"CONSTANT": 1}
-        else:
-            # Constant is on the g side, set coefficient -1 for consistency
-            rel = {"CONSTANT": -1}
+        # Constant is on the g side, set coefficient -1 for consistency
+        rel = {"CONSTANT": -1}
         for _l in facf:
             _r = x * pow(y, -1, _l) % _l if y % _l else _l
             key0 = f"f_{_l}_{_r}"
@@ -276,9 +219,6 @@ def process(workdir, args, ell: int, blockw: int = 1):
             else:
                 _, _r2 = Kf.conjugate(_l, int(_r))
                 key, e = key0, 1
-            if IS_FP:
-                # logarithms are conjugation-invariant
-                e = 1
             # print("relation key",key)
             rel[key] = rel.get(key, 0) + e
         for _l in facg:
@@ -289,18 +229,7 @@ def process(workdir, args, ell: int, blockw: int = 1):
             else:
                 _, _r2 = Kg.conjugate(_l, int(_r))
                 key, e = key0, 1
-            if IS_FP:
-                # logarithms are conjugation-invariant
-                e = 1
             rel[key] = rel.get(key, 0) - e
-        # Corresponding algebraic integer is x-yω
-        if IS_FP:
-            # Compute the norm of x-yω in the quadratic subfield
-            vf = gell[0] * y**2 + gell[1] * x * y + gell[2] * x**2
-            # Then apply Schirokauer map
-            sm1 = int(vf ** (ell - 1))
-            assert int(sm1) % ell == 1
-            rel["SM"] = sm1 // ell
 
         rels.append(rel)
 
@@ -425,7 +354,7 @@ def process(workdir, args, ell: int, blockw: int = 1):
             g_primes.setdefault(_l, []).append(key)
 
     # Check the logs of conjugates
-    sign = 1 if IS_FP else -1
+    sign = -1
     n_conj = 0
     for (l, r1), (_, r2) in Kf.conjugates.items():
         k1 = f"f_{l}_{r1}"
@@ -448,7 +377,7 @@ def process(workdir, args, ell: int, blockw: int = 1):
 
     if True:
         # Fill logs of conjugates
-        sign = 1 if IS_FP else -1
+        sign = -1
         n_conj = 0
         for l, r1 in sorted(Kf.conjugates):
             k1 = f"f_{l}_{r1}"
@@ -470,39 +399,7 @@ def process(workdir, args, ell: int, blockw: int = 1):
                 n_conj += 1
         logger.info(f"Added {n_conj} conjugate ideals")
 
-    if IS_FP:
-        gen = None
-
-        # We can easily use norms of g to check results
-        for l in sorted(g_primes):
-            keys = g_primes[l]
-            if len(keys) == 2:
-                assert dlog[keys[0]] == dlog[keys[1]]
-            # l = (l,r)(l,rbar) = (l,r)^2
-            dlog_l = 2 * dlog[keys[0]]
-            dlog[f"Z_{l}"] = dlog_l % ell
-            if gen is None:
-                gen = f"Z_{l}"
-
-        # Normalize kernel vector
-        ginv = pow(dlog[gen], -1, ell)
-        for k in dlog:
-            dlog[k] = dlog[k] * ginv % ell
-        logger.info(f"Computed logarithms in base {gen}")
-
-        # Check rational primes
-        checked = 0
-        grat = int(gen[2:])
-        for k in dlog:
-            if k.startswith("Z"):
-                krat = int(k[2:])
-                if pow(grat, dlog[k], n) not in (krat, n - krat):
-                    logger.error(f"WRONG VALUE dlog({k}) = {dlog[k]}")
-                    dlog[k] = None
-                    continue
-                checked += 1
-        logger.info(f"Checked logarithms for {checked} rational primes")
-    else:
+    if True:
         for l in sorted(g_primes):
             keys = g_primes[l]
             if len(keys) == 2:
