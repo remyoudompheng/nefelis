@@ -189,6 +189,7 @@ def process(workdir, args, ell: int, blockw: int = 1):
 
     rels = []
     seen_xy = set()
+    xy_facs = []
     duplicates = 0
 
     t0 = time.monotonic()
@@ -230,7 +231,10 @@ def process(workdir, args, ell: int, blockw: int = 1):
                 _, _r2 = Kg.conjugate(_l, int(_r))
                 key, e = key0, 1
             rel[key] = rel.get(key, 0) - e
-
+        # Save factors of g(x,y) for final checks.
+        xy_facs.append(
+            (x, y, {k: -v for k, v in rel.items() if not k.startswith("f_")})
+        )
         rels.append(rel)
 
     dt = time.monotonic() - t0
@@ -409,34 +413,26 @@ def process(workdir, args, ell: int, blockw: int = 1):
         gen = None
         checked = 0
         # An exponent realizing the projection on the order ell subgroup
-        projexp = (n - 1) * coell * pow((n - 1) * coell, -1, ell)
-        assert projexp % ell == 1
-        for x, y, facg, _ in read_relations(workdir / "relations.sieve"):
-            logxy = dlog["CONSTANT"]
-            facs = []
-            try:
-                for _l in facg:
-                    _r = x * pow(y, -1, _l) % _l if y % _l else _l
-                    key = f"g_{_l}_{_r}"
-                    logxy += dlog[key]
-                    facs.append((key, e))
-            except KeyError:
-                # print("skip")
-                continue
+        # x => (xbar/x)^projexp is idempotent
+        projexp = coell * pow((n - 1) * coell, -1, ell)
+
+        zbar = z**n
+        for x, y, rel in xy_facs:
             assert (
-                g[2] * (x - y * z) ** (n + 1)
+                g[2] * (x - y * z) * (x - y * zbar)
                 == g[2] * x**2 + g[1] * x * y + g[0] * y**2
             )
-            # continue
-            xy1 = (x - y * z) ** projexp
-            assert xy1**ell == 1
+            if any(k not in dlog for k in rel):
+                continue
+            logxy = sum(v * dlog[k] for k, v in rel.items())
+            xy1 = ((x - y * zbar) / (x - y * z)) ** projexp
+            # assert xy1**ell == 1
             if xy1 == 1:
                 assert logxy % ell == 0
             elif gen is None:
                 # print(xy1, logxy)
                 gen = xy1 ** int(pow(logxy, -1, ell))
                 assert xy1 == gen**logxy
-                assert gen**projexp == gen
             else:
                 assert xy1 == gen**logxy
             checked += 1
