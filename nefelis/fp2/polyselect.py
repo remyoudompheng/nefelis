@@ -62,13 +62,7 @@ def polyselect(N, bound=None) -> tuple[list, list, int, list[list]]:
                                     yield (x0, x1, x2), (y0, y1, y2)
 
     # When reducing the matrix, only 2 rows are small.
-    smallv = [(1, 0, 0), (0, 1, 0), (1, 1, 0), (1, -1, 0)]
-
-    m = flint.fmpz_mat([[0, N], [1, int(j)]]).lll()
-    jden, jnum = [int(_) for _ in m.table()[0]]
-    jden2, jnum2 = [int(_) for _ in m.table()[1]]
-    assert jnum * pow(jden, -1, N) % N == j
-    assert (jnum**2 - D * jden**2) % N == 0
+    smallv = [(1, 0), (0, 1), (1, 1), (1, -1), (2, 1), (2, -1), (1, 2), (1, -2)]
 
     best = 1e9
     counter = 0
@@ -101,12 +95,11 @@ def polyselect(N, bound=None) -> tuple[list, list, int, list[list]]:
         fbits = math.log2(fsize) / 2
 
         # Scale x+yj to get O(sqrt(N)) coefficients (matrix will be almost reduced)
-        zs = [xi * jden + yi * jnum for xi, yi in zip(xs, ys)]
-        zs2 = [xi * jden2 + yi * jnum2 for xi, yi in zip(xs, ys)]
-        mat = flint.fmpz_mat([zs, zs2, [N, 0, 0]]).lll()
+        zs = [xi + yi * j for xi, yi in zip(xs, ys)]
+        mat = flint.fmpz_mat([zs, [N, 0, 0], [0, N, 0], [0, 0, N]]).lll()
+        v0, v1 = mat.table()[:2]
         for v in smallv:
-            g0, g1, g2 = (flint.fmpz_mat([v]) * mat).entries()
-            g0, g1, g2 = int(g0), int(g1), int(g2)
+            g0, g1, g2 = [int(v[0] * x0 + v[1] * x1) for x0, x1 in zip(v0, v1)]
             # We prefer negative discriminants
             Dg = g1**2 - 4 * g0 * g2
             if Dg >= 0:
