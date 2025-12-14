@@ -26,13 +26,8 @@ def polyselect(N, bound=None) -> tuple[list, list, int, list[list]]:
         bound = max(3, int(0.6 * 2 ** (N.bit_length() / 40)))
 
     # First, select a real quadratic field where N splits.
-    # We also want ell to split (for large factors ell of (N-1))
-    ells = [_l for _l, _ in integers.factor(N - 1) if _l.bit_length() > 64]
-    logger.info(f"Looking for a real quadratic field with split {ells}")
     for D in integers.smallprimes(10000):
-        if flint.fmpz(D).jacobi(N) != 1:
-            continue
-        if all(flint.fmpz(D).jacobi(ell) == 1 for ell in ells):
+        if flint.fmpz(D).jacobi(N) == 1:
             break
     else:
         # Should never happen for reasonable size inputs
@@ -116,13 +111,14 @@ def polyselect(N, bound=None) -> tuple[list, list, int, list[list]]:
             Dg = g1**2 - 4 * g0 * g2
             if Dg >= 0:
                 continue
-            ag = polys.alpha2(Dg, g2, g1, g0)
             gsize = polys.l2norm([g0, g1, g2])
             gbits = math.log2(gsize) / 2
             if gbits < N.bit_length() / 3:
                 # Most probably f is not irreducible
                 continue
-
+            if bads := polys.bad_ideals([g0, g1, g2]):
+                continue
+            ag = polys.alpha2(Dg, g2, g1, g0)
             score = gbits + ag + fbits + af
             if score < best:
                 logger.info(
