@@ -48,14 +48,14 @@ def polyselect(N, bound=None) -> tuple[list, list, int, list[list]]:
         Let j = sqrt(-c)
         We choose g = x^2 + (a + bj) x + (c + dj)
         """
-        for x0 in range(-bound, bound + 1):
-            for x1 in range(-bound, bound + 1):
-                # for x2 in range(-bound, bound+1):
-                for x2 in [1]:
-                    for y0 in range(-bound, bound + 1):
-                        if x0**2 - D * y0**2 < 0:
-                            # polynomial will have a real root
-                            continue
+        sqrtD = math.sqrt(D)
+        for y0 in range(-bound, bound + 1):
+            # We want x0 ± sqrt(D) y0 >= 0 to avoid real roots.
+            xmin = int(math.ceil(abs(y0) * sqrtD))
+            for x0 in range(xmin, bound + 1):
+                for x1 in range(-bound, bound + 1):
+                    # for x2 in range(-bound, bound+1):
+                    for x2 in [1]:
                         for y1 in range(-bound, bound + 1):
                             # for y2 in range(-bound, bound+1):
                             for y2 in [0]:
@@ -82,6 +82,29 @@ def polyselect(N, bound=None) -> tuple[list, list, int, list[list]]:
     t0 = time.monotonic()
     for xs, ys in small_gj(j, bound):
         counter += 1
+
+        f1 = flint.fmpz_poly(list(xs))
+        f2 = flint.fmpz_poly(list(ys))
+        ff = f1**2 - D * f2**2
+        if ff[4] < 0:
+            ff = -ff  # normalize sign
+        roots_f = flint.fmpz_poly(ff).complex_roots()
+        if any(_r.imag == 0 for _r, _ in roots_f):
+            # logger.warning(f"Ignoring good polynomial {ff} with a real root")
+            continue
+        ff_l = [int(fi) for fi in list(ff)]
+        Df = polys.discriminant(ff_l)
+        if Df == 0:
+            continue
+        if bads := polys.bad_ideals(ff_l):
+            # logger.warning(
+            #    f"Skipping interesting polynomial {ff} with bad primes {bads}"
+            # )
+            continue
+        fsize = polys.l2norm(ff_l)
+        af = polys.alpha4(Df, ff_l)
+        fbits = math.log2(fsize) / 2
+
         # Scale x+yj to get O(sqrt(N)) coefficients (matrix will be almost reduced)
         zs = [xi * jden + yi * jnum for xi, yi in zip(xs, ys)]
         zs2 = [xi * jden2 + yi * jnum2 for xi, yi in zip(xs, ys)]
@@ -100,25 +123,6 @@ def polyselect(N, bound=None) -> tuple[list, list, int, list[list]]:
                 # Most probably f is not irreducible
                 continue
 
-            f1 = flint.fmpz_poly(list(xs))
-            f2 = flint.fmpz_poly(list(ys))
-            ff = f1**2 - D * f2**2
-            if ff[4] < 0:
-                ff = -ff  # normalize sign
-            roots_f = flint.fmpz_poly(ff).complex_roots()
-            if any(_r.imag == 0 for _r, _ in roots_f):
-                # logger.warning(f"Ignoring good polynomial {ff} with a real root")
-                continue
-            ff_l = [int(fi) for fi in list(ff)]
-            if bads := polys.bad_ideals(ff_l):
-                # logger.warning(
-                #    f"Skipping interesting polynomial {ff} with bad primes {bads}"
-                # )
-                continue
-            fsize = polys.l2norm(ff_l)
-            Df = polys.discriminant(ff_l)
-            af = polys.alpha4(Df, ff_l)
-            fbits = math.log2(fsize) / 2
             score = gbits + ag + fbits + af
             if score < best:
                 logger.info(
