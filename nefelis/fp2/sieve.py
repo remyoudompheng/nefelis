@@ -28,18 +28,31 @@ import flint
 
 from nefelis import cadocompat
 from nefelis import integers
-from nefelis.sieve import Siever
+from nefelis.sieve import Siever, eta as sieve_eta, gen_specialq
 from nefelis.fp2 import polyselect
 
 logger = logging.getLogger("sieve")
 
+# If True, assume that the linear algebra step
+# will consider all ideals without the conjugacy relation.
+DEBUG_IGNORE_CONJUGATES = False
+
 
 class Factorer:
-    def __init__(self, f, g, B2f, B2g):
+    def __init__(self, f, g, gj, B2f, B2g):
         self.f = f
         self.g = g
+        self.gj = gj
         self.B2f = B2f
         self.B2g = B2g
+
+    def ideal_proj(self, x, y, facf):
+        (cx, cy), (bx, by), (ax, ay) = self.gj
+        xx, xy, yy = x * x, x * y, y * y
+        num = ax * xx + bx * xy + cx * yy
+        den = ay * xx + by * xy + cy * yy
+        # assert num**2 - D * den**2 == 0 mod l
+        return [num * pow(den, -1, l) % l if den % l else l for l in facf]
 
     def factor_fg(self, q, chunk):
         res = []
@@ -72,7 +85,16 @@ class Factorer:
             if any(_l.bit_length() > self.B2g for _l in facg):
                 continue
 
-            idealf = [x * pow(y, -1, _l) % _l if y % _l else _l for _l in facf]
+            facf.sort()
+            facg.sort()
+            # Since we are interested in ideals of f up to conjugacy,
+            # we only need to determine the corresponding ideal of Q(sqrt(D))
+            # which is determined by f1(x,y)/f2(x,y) which is a square root of D.
+            if DEBUG_IGNORE_CONJUGATES:
+                idealf = [x * pow(y, -1, _l) % _l if y % _l else _l for _l in facf]
+            else:
+                idealf = self.ideal_proj(x, y, facf)
+                # print([i*i % l for i, l in zip(idealf, facf)])
             idealg = [x * pow(y, -1, _l) % _l if y % _l else _l for _l in facg]
             res.append((x, y, facf, facg, idealf, idealg))
 
@@ -82,9 +104,9 @@ class Factorer:
 FACTORER = None
 
 
-def factorer_init(f, g, B2f, B2g):
+def factorer_init(f, g, gj, B2f, B2g):
     global FACTORER
-    FACTORER = Factorer(f, g, B2f, B2g)
+    FACTORER = Factorer(f, g, gj, B2f, B2g)
 
 
 def factorer_task(args):
@@ -202,10 +224,6 @@ def main():
     main_impl(args)
 
 
-# FIXME: manage to remove this flag
-DEBUG_IGNORE_CONJUGATES = True
-
-
 def main_impl(args):
     N = args.N
     datadir = pathlib.Path(args.WORKDIR)
@@ -252,20 +270,21 @@ def main_impl(args):
             ls.append(_l)
             rs.append(_r)
 
-    # NOTE: due to the Galois symmetry of K(g),
-    # we don't sieve both an ideal and its conjugate
+    # NOTE: due to the symmetries of polynomials g1,g2
+    # we don't sieve both ideals of K(g) above a given prime
     # (they will give "mirrored" relations).
-    qs = []
-    for _q in integers.smallprimes(10 * qmin):
-        if _q >= qmin and A % _q != 0:
-            for _r, _ in flint.nmod_poly(g, _q).roots():
-                qs.append((int(_q), int(_r)))
-                break  # Only one root per q
+    def specialq():
+        qprev = None
+        for q, r in gen_specialq(qmin, g):
+            if q == qprev:
+                continue
+            qprev = q
+            yield q, r
 
-    LOGAREA = qs[-1][0].bit_length() + 2 * I
+    LOGAREA = (10 * qmin).bit_length() + 2 * I
     # We sieve g(x) which has size log2(N)/3 + 2 log2(x) but has a known factor q
     gsize = max(_gi.bit_length() for _gi in g)
-    THRESHOLD = gsize + 2 * LOGAREA // 2 - qs[-1][0].bit_length() - COFACTOR_BITS
+    THRESHOLD = gsize + 2 * LOGAREA // 2 - (10 * qmin).bit_length() - COFACTOR_BITS
 
     ls2, rs2 = None, None
     if B1f > 0:
@@ -284,7 +303,7 @@ def main_impl(args):
     factorpool = ProcessPoolExecutor(
         args.ncpu or os.cpu_count(),
         initializer=factorer_init,
-        initargs=(f, g, B2f, B2g),
+        initargs=(f, g, gj, B2f, B2g),
     )
 
     with open(datadir / "args.json", "w") as w:
@@ -321,7 +340,8 @@ def main_impl(args):
     seenf = set()
     seeng = set()
 
-    sieve_args: Iterator[tuple[int, int]] = iter(qs)
+    sieve_args: Iterator[tuple[int, int]] = specialq()
+    sieve_stats: list[tuple[int, int, int]] = []
     MAX_SIEVE_QUEUE = 64
     enough_rels = False
     with sievepool, factorpool:
@@ -368,18 +388,21 @@ def main_impl(args):
                 print(f"# q={q} r={qr}", file=relf)
 
                 for x, y, facf, facg, idealf, idealg in reschunk:
-                    # Normalize sign
-                    if y < 0:
-                        x, y = -x, -y
-                    xy = x + (y << 32)
+                    # Due to the extra symmetry, we don't use x,y to deduplicate,
+                    # but the sum of 2 largest primes.
+                    topf = facf[-2] + facf[-1]
+                    topg = facg[-2] + facg[-1]
+                    xy = topf + (topg << 32)
                     if xy in seen:
                         duplicates += 1
                         continue
                     # facg will omit q
                     str_facf = ",".join(f"{_l:x}" for _l in facf)
                     str_facg = ",".join(f"{_l:x}" for _l in facg)
-                    seenf.update(facf)
-                    seeng.update(facg)
+                    for _l, _r in zip(facf, idealf):
+                        seenf.add((_l << 32) | _r)
+                    for _l, _r in zip(facg, idealg):
+                        seeng.add((_l << 32) | _r)
                     seen.add(xy)
                     relf.write(f"{x},{y}:{str_facg}:{str_facf}\n")
                     nrels += 1
@@ -399,15 +422,20 @@ def main_impl(args):
                         f"Sieved q={q} r={qr:<8} area {total_area / 1e9:.0f}G in {dt:.3f}s (speed {total_area / elapsed / 1e9:.3f}G/s): "
                         f"{nrels}/{nreports} relations, {gcount}/{fcount} Kg/Kf primes, total {total}"
                     )
+
+                    sieve_stats.append((total, gcount, fcount))
+                    if total and len(sieve_stats) % 30 == 10:
+                        boundg = max(seeng) >> 32
+                        boundf = max(seenf) >> 32
+                        eta = sieve_eta(boundg, boundf, total // 100, sieve_stats)
+                        logger.info(
+                            f"Requiring {int(eta * total)} relations ({100 / eta:.1f}% done)"
+                        )
+
                 # Correct fcount because there are 4/3 primes per norm on average
-                if DEBUG_IGNORE_CONJUGATES:
-                    if total > 1.2 * (2.66 * fcount + 2 * gcount):
-                        enough_rels = True
-                        break
-                else:
-                    if total > 1.7 * (1.33 * fcount + gcount):
-                        enough_rels = True
-                        break
+                if total > 1.01 * (fcount + gcount):
+                    enough_rels = True
+                    break
             factor_jobs = remaining
 
         logger.info("Enough relations")

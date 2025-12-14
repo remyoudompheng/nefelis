@@ -39,7 +39,7 @@ DEBUG_RELS = False
 
 # If enabled, ignore relations between conjugate ideals.
 # This can be used to validate the optimization.
-DEBUG_IGNORE_CONJUGATES = True
+DEBUG_IGNORE_CONJUGATES = False
 
 logger = logging.getLogger("linalg")
 
@@ -318,12 +318,16 @@ def process(workdir, args, ell: int, blockw: int = 1):
         for rel in extra:
             news = [l for l in rel if l not in dlog]
             if len(news) == 0:
-                continue
-            if len(news) == 1:
+                v = sum(_e * dlog[_p] for _p, _e in rel.items())
+                assert v % ell == 0, (v, rel)
+            elif len(news) == 1:
                 l = news[0]
                 v = sum(_e * dlog[_p] for _p, _e in rel.items() if _p != l)
                 dlog[l] = v * pow(-rel[l], -1, ell) % ell
-            remaining.append(rel)
+                # v = sum(_e * dlog[_p] for _p, _e in rel.items())
+                # assert v % ell == 0, (v, rel)
+            else:
+                remaining.append(rel)
         if len(remaining) == len(extra):
             break
         extra = remaining
