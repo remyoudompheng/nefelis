@@ -149,6 +149,11 @@ class Field:
                 xA, yA = self.gj[2]
                 gx = xA * r**2 + xB * r + xC
                 gy = yA * r**2 + yB * r + yC
+                # EXCEPT if gx and gy have a common root modulo l
+                # Then don't try to conjugate ideal.
+                if gx % l == 0 and gy % l == 0:
+                    self.conjugates[(l, int(r))] = (l, int(r))
+                    return (l, r)
                 # the conjugation is trace(r) == -B/A
                 j = flint.nmod(self.D, l).sqrt()
                 if gx + j * gy != 0:
@@ -268,11 +273,6 @@ def process(workdir, args, blockw: int = 1):
     ker = M.polyeval(wi, ell, poly_k)
     assert any(k for k in ker)
 
-    if any(k for k in ker[len(basis) :]):
-        kdim = len(set(ker[len(basis) :]))
-        logger.info(f"Kernel is inaccurate (extra dimensions {kdim})")
-        # FIXME: this will usually fail
-
     # Validate result
     prime_idx = {l: idx for idx, l in enumerate(basis)}
     for i, ridx in enumerate(M.rowidx):
@@ -365,7 +365,7 @@ def process(workdir, args, blockw: int = 1):
     for (l, r1), (_, r2) in Kf.conjugates.items():
         k1 = f"f_{l}_{r1}"
         k2 = f"f_{l}_{r2}"
-        if k1 in dlog and k2 in dlog:
+        if k1 != k2 and k1 in dlog and k2 in dlog:
             assert dlog[k1] % ell == (sign * dlog[k2]) % ell, (
                 k1,
                 k2,
