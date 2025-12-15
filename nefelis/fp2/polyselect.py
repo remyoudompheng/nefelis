@@ -52,6 +52,9 @@ def polyselect(N, bound=None) -> tuple[list, list, int, list[list]]:
                     # for x2 in range(-bound, bound+1):
                     for x2 in [1]:
                         for y1 in range(-bound, bound + 1):
+                            # FIXME: when y1==0, f = gx^2 - D l^2 behaves badly modulo l, why?
+                            if y1 == 0:
+                                continue
                             # for y2 in range(-bound, bound+1):
                             for y2 in [0]:
                                 A = x2 + y2 * j
