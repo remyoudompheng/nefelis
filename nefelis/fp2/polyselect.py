@@ -23,7 +23,7 @@ def polyselect(N, bound=None) -> tuple[list, list, int, list[list]]:
       gj: a polynomial over Z[sqrt(D)] represented as a list of pairs
     """
     if bound is None:
-        bound = 5 + int((N.bit_length() / 50)**2)
+        bound = 5 + int((N.bit_length() / 50) ** 2)
 
     # First, select a real quadratic field where N splits.
     for D in integers.smallprimes(10000):

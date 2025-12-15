@@ -174,7 +174,7 @@ def benchmark():
         speed = area / dt
         logging.info(
             f"Siever      B1={B1f // 1000}k/{B1g // 1000}k thresholds {thr1}/{thr2} "
-            f"shape {2 ** (I - 9)}k x {2 ** I}: {speed * 1e-9:.2f}G/s, {total} results"
+            f"shape {2 ** (I - 9)}k x {2**I}: {speed * 1e-9:.2f}G/s, {total} results"
         )
 
     def runbench2(B1f: int, B1g: int, thr1: int, thr2: int, W: int, H: int):

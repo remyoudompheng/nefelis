@@ -80,7 +80,9 @@ class Siever:
                 "BUCKET_SIZE": bucket,
             }
             thuge = mgr.tensor_t(
-                np.zeros((N_WG + 1) * bucket * 2 * WGROWS, dtype=np.uint16).view(np.uint32)
+                np.zeros((N_WG + 1) * bucket * 2 * WGROWS, dtype=np.uint16).view(
+                    np.uint32
+                )
             )
 
             memhuge = thuge.size() * 4

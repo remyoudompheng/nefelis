@@ -213,7 +213,7 @@ def process(workdir, args, blockw: int = 1):
             _r = x * pow(y, -1, _l) % _l if y % _l else _l
             key0 = f"f_{_l}_{_r}"
             if not DEBUG_IGNORE_CONJUGATES:
-                # logarithms are conjugation-invariant
+                # logarithms are conjugation equivariant
                 key, e = Kf.canonical_conj(_l, int(_r))
             else:
                 _, _r2 = Kf.conjugate(_l, int(_r))
@@ -223,6 +223,8 @@ def process(workdir, args, blockw: int = 1):
         for _l in facg:
             _r = x * pow(y, -1, _l) % _l if y % _l else _l
             key0 = f"g_{_l}_{_r}"
+            # logarithms are conjugation equivariant
+            # This is because l = (l,r) * (l,rbar) has null logarithm.
             if not DEBUG_IGNORE_CONJUGATES:
                 key, e = Kg.canonical_conj(_l, int(_r))
             else:
