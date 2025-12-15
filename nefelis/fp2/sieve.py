@@ -231,6 +231,8 @@ def main_impl(args):
 
     assert flint.fmpz(N).is_prime()
 
+    ell = integers.factor_smooth(N + 1, 16)[-1][0]
+
     B1g, B2g, B2f, COFACTOR_BITS, I, qmin = get_params(N)
     B1f, thr2 = 0, 0
     if not args.nogpufactor:
@@ -314,6 +316,7 @@ def main_impl(args):
                 "g": g,
                 "D": D,
                 "gj": gj,
+                "ell": ell,
                 "conway": conway,
                 "z": [int(_zi) for _zi in z.to_list()],
             },

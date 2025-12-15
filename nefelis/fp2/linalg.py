@@ -73,10 +73,7 @@ def main_impl(args):
 
     with open(workdir / "args.json") as f:
         doc = json.load(f)
-        n = doc["n"]
-
-    ell1 = int(flint.fmpz(n + 1).factor()[-1][0])
-    process(workdir, doc, ell1, args.blockw)
+        process(workdir, doc, args.blockw)
 
 
 class Field:
@@ -166,7 +163,7 @@ class Field:
         return self.conjugates[(l, r)]
 
 
-def process(workdir, args, ell: int, blockw: int = 1):
+def process(workdir, args, blockw: int = 1):
     """
     Perform the linear algebra step modulo a prime ell.
 
@@ -178,6 +175,7 @@ def process(workdir, args, ell: int, blockw: int = 1):
     g = args["g"]
     D = args["D"]
     gj = args["gj"]
+    ell = args["ell"]
     conway = args["conway"]
 
     ZnX = flint.fmpz_mod_poly_ctx(n)
@@ -245,10 +243,8 @@ def process(workdir, args, ell: int, blockw: int = 1):
     if duplicates:
         logger.info(f"{duplicates} duplicate results in input file, ignored")
 
-    subdir = pathlib.Path(workdir) / f"subgroup.{ell}"
-    subdir.mkdir(exist_ok=True)
-    rels2, _ = filter.prune(rels, subdir)
-    rels3 = filter.filter(rels2, subdir)
+    rels2, _ = filter.prune(rels, workdir)
+    rels3 = filter.filter(rels2, workdir)
 
     M = SpMV(rels3, ell)
     basis = M.basis
@@ -291,7 +287,7 @@ def process(workdir, args, ell: int, blockw: int = 1):
     dlog: dict[str, int] = {l: v for l, v in zip(basis, ker)}
 
     added, nremoved = 0, 0
-    with open(subdir / "relations.removed") as fd:
+    with open(workdir / "relations.removed") as fd:
         for line in fd:
             nremoved += 1
             key, _, facs = line.partition("=")
@@ -340,7 +336,7 @@ def process(workdir, args, ell: int, blockw: int = 1):
         return 0
 
     dlogs = [(key_l(k), k, v) for k, v in dlog.items()]
-    with open(subdir / "dlog.tmp", "w") as w:
+    with open(workdir / "dlog.tmp", "w") as w:
         for _, k, v in sorted(dlogs):
             w.write(f"{k} {v}\n")
 
@@ -443,12 +439,12 @@ def process(workdir, args, ell: int, blockw: int = 1):
         logger.info(f"Checked logarithms for {checked} norm 1 elements")
         logger.info(f"Logarithm base is {gen}")
         # Write generator to file
-        with open(subdir / "gen", "w") as w:
+        with open(workdir / "gen", "w") as w:
             genx, geny = gen.to_list()
             w.write(f"{genx},{geny}\n")
 
     dlogs = [(key_l(k), k, v) for k, v in dlog.items()]
-    with open(subdir / "dlog", "w") as w:
+    with open(workdir / "dlog", "w") as w:
         for _, k, v in sorted(dlogs):
             w.write(f"{k} {v}\n")
 

@@ -58,6 +58,7 @@ def main_impl(args):
         n = doc["n"]
         f = doc["f"]
         g = doc["g"]
+        ell = doc["ell"]
         conway = doc["conway"]
 
         ZnX = flint.fmpz_mod_poly_ctx(n)
@@ -68,10 +69,10 @@ def main_impl(args):
     logger.info(f"Computing logarithms modulo {ell}")
 
     dlogs = {}
-    with open(workdir / f"subgroup.{ell}" / "gen") as fd:
+    with open(workdir / "gen") as fd:
         gx, gy = fd.read().strip().split(",")
         gen = Fp2([int(gx), int(gy)])
-    with open(workdir / f"subgroup.{ell}" / "dlog") as fd:
+    with open(workdir / "dlog") as fd:
         for line in fd:
             key, val = line.split()
             val = int(val)
