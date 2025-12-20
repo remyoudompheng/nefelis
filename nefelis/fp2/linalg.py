@@ -268,7 +268,7 @@ def process(workdir, args, blockw: int = 1):
     i0 = next(i for i, ai in enumerate(poly) if ai)
     logger.info(f"Polynomial (degree {len(poly) - 1}) is divisible by X^{i0}")
 
-    poly_k = poly[1:]
+    poly_k = poly[i0:]
     wi = [random.randrange(ell) for _ in range(dim)]
     ker = M.polyeval(wi, ell, poly_k)
     assert any(k for k in ker)
