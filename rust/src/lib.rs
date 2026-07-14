@@ -9,7 +9,7 @@ mod math;
 #[pymodule]
 fn nefelis_rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(prune_relations, m)?)?;
-    m.add_function(wrap_pyfunction!(load_relations, m)?)?;
+    m.add_function(wrap_pyfunction!(merge_relations, m)?)?;
     m.add_function(wrap_pyfunction!(legendre_symbol, m)?)?;
     m.add_function(wrap_pyfunction!(compute_characters, m)?)?;
     Ok(())
@@ -54,16 +54,28 @@ fn prune_relations_impl(py: Python<'_>, filename: &str, logger: Option<Py<PyAny>
 }
 
 #[pyfunction]
-#[pyo3(signature=(filename, characters),
-        text_signature="(filename: str, characters: list[tuple[int, int]])")]
-fn load_relations(
+#[pyo3(signature=(filename, characters, logger=None),
+        text_signature="(filename: str, characters: list[tuple[int, int]], logger=None)")]
+fn merge_relations(
     py: Python<'_>,
     filename: &str,
     characters: Vec<(i64, i64)>,
+    logger: Option<Py<PyAny>>
 ) -> PyResult<Py<PyAny>> {
-    let res = filter::parse_with_characters(filename, characters)
+    let logfunc = |s: String| {
+        if let Some(l) = &logger {
+            let _ = l.call_method1(py, "info", (s,));
+        }
+    };
+    let (rels, zrels) = filter::parse_with_characters(filename, characters)
         .map_err(|e| PyValueError::new_err(format!("Could not parse file: {e}")))?;
-    res.into_py_any(py)
+
+    let filtered = filter::filter_gf2(rels, logfunc);
+    filter::write_filtered(&format!("{filename}.filtered"), &filtered)
+        .map_err(|e| PyValueError::new_err(format!("Could not parse file: {e}")))?;
+
+    let filtered_packed: Vec<Vec<u8>> = filtered.into_iter().map(filter::le32_vector).collect();
+    (filtered_packed, zrels).into_py_any(py)
 }
 
 #[pyfunction]

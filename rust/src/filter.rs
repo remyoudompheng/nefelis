@@ -1,3 +1,6 @@
+#![allow(clippy::len_zero, clippy::type_complexity)]
+
+use std::cmp::max;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Seek, SeekFrom, Write};
@@ -6,6 +9,11 @@ use anyhow::{bail, Context, Result};
 use num_integer::Integer;
 
 use crate::math::legendre_symbol;
+
+// Merging hyperparameters
+const DENSE_LIMIT: u32 = 100;
+const MAX_WEIGHT: usize = 100;
+const MIN_EXCESS: usize = 512;
 
 pub(crate) fn prune_singles<F>(file_path: &str, dest_path: &str, logfunc: F) -> Result<()>
 where
@@ -244,13 +252,13 @@ where
 ///
 /// The relations are modulo 2 and no duplicate indices are returned in the first list.
 ///
-/// All vectors are returned as LE32 buffers.
+/// All rational relation vectors are returned as LE32 buffers.
 ///
 /// FIXME: currently assumes that primes are not ramified.
 pub(crate) fn parse_with_characters(
     file_path: &str,
     characters: Vec<(i64, i64)>,
-) -> Result<(Vec<Vec<u8>>, Vec<(i64, i64, Vec<u8>)>)> {
+) -> Result<(Vec<Vec<i32>>, Vec<(i64, i64, Vec<u8>)>)> {
     let file = File::open(file_path).context("failed to open file")?;
     let mut reader = BufReader::new(file);
 
@@ -343,27 +351,15 @@ pub(crate) fn parse_with_characters(
         }
 
         // Relations are modulo 2, code expects no duplicates
-        rel.sort();
-        let mut i = 0;
-        let mut j = 0;
-        while i < rel.len() {
-            if i + 1 < rel.len() && rel[i] == rel[i + 1] {
-                i += 2
-            } else {
-                rel[j] = rel[i];
-                i += 1;
-                j += 1;
-            }
-        }
-        rel.truncate(j);
-        all_rels.push(le32_vector(rel));
+        simplify_rel(&mut rel);
+        all_rels.push(rel);
         zrels.push((x, y, le32_vector(zrel)));
     }
     assert_eq!(all_rels.len(), zrels.len());
     Ok((all_rels, zrels))
 }
 
-fn le32_vector(v: Vec<i32>) -> Vec<u8> {
+pub(crate) fn le32_vector(v: Vec<i32>) -> Vec<u8> {
     let len = 4 * v.len();
     let mut b = Vec::with_capacity(len);
     for x in v {
@@ -372,4 +368,239 @@ fn le32_vector(v: Vec<i32>) -> Vec<u8> {
     }
     assert_eq!(b.len(), len);
     b
+}
+
+pub(crate) fn filter_gf2<F>(rels: Vec<Vec<i32>>, logfunc: F) -> Vec<Vec<i32>>
+where
+    F: Fn(String),
+{
+    let mut imax = 0;
+    for r in &rels {
+        imax = max(imax, r.iter().max().copied().unwrap_or(0));
+    }
+    logfunc(format!("Max column index {imax}"));
+    // Merge primes with multiplicity 2 (sum each connected component of the graph).
+    let mut counts = vec![0_u32; imax as usize + 1];
+    for r in &rels {
+        for &x in r {
+            if x >= 0 {
+                counts[x as usize] += 1;
+            }
+        }
+    }
+    let nc = counts.iter().filter(|&&x| x != 0).count();
+    let mut edges: HashMap<i32, [i64; 2]> = HashMap::new();
+    for (ridx, r) in rels.iter().enumerate() {
+        for &x in r {
+            if x >= 0 && counts[x as usize] == 2 {
+                if let Some(v) = edges.get_mut(&x) {
+                    v[1] = ridx as i64;
+                } else {
+                    edges.insert(x, [ridx as i64, -1]);
+                }
+            }
+        }
+    }
+    let mut gr = petgraph::graph::UnGraph::<i64, ()>::new_undirected();
+    let mut nodes = vec![];
+    for ridx in 0..rels.len() {
+        nodes.push(gr.add_node(ridx as i64));
+    }
+    for &[r1, r2] in edges.values() {
+        gr.add_edge(nodes[r1 as usize], nodes[r2 as usize], ());
+    }
+
+    let comps = petgraph::algo::tarjan_scc(&gr);
+    //println!("{}", comps.len());
+
+    let mut output = vec![];
+    let mut n_pivoted = 0;
+    for c in comps {
+        let mut rel = vec![];
+        let clen = c.len();
+        for node in c {
+            let ridx = gr.node_weight(node).copied().unwrap() as usize;
+            rel.extend_from_slice(&rels[ridx]);
+        }
+        if clen > 1 {
+            n_pivoted += clen - 1;
+            simplify_rel(&mut rel);
+        }
+        output.push(rel);
+    }
+    logfunc(format!(
+        "2-merge: {nc} columns {} rows excess={} eliminated={n_pivoted}",
+        rels.len(),
+        rels.len() - nc,
+    ));
+    for maxmult in [4, 6, 8, 10, 12, 14, 16, 18, 20] {
+        merge(&mut output, imax as usize + 1, maxmult, &logfunc);
+        if output.iter().map(|r| r.len()).sum::<usize>() > output.len() * MAX_WEIGHT {
+            break;
+        }
+    }
+    clear_excess(&mut output, imax as usize + 1, &logfunc);
+    output
+}
+
+pub(crate) fn write_filtered(dest_path: &str, rels: &Vec<Vec<i32>>) -> Result<()> {
+    // Write filtered relations
+    let w = File::create(dest_path).context("failed to open file")?;
+    let mut bufw = std::io::BufWriter::new(w);
+    for r in rels {
+        assert!(r.len() > 0);
+        let mut line: Vec<u8> = vec![];
+        write!(line, "{}", r[0]).unwrap();
+        for x in &r[1..] {
+            write!(line, " {x}").unwrap();
+        }
+        line.push(b'\n');
+        bufw.write_all(&line)?;
+    }
+    Ok(())
+}
+
+fn length_rel(rel: &[i32]) -> usize {
+    rel.iter().filter(|&&x| x > 0).count()
+}
+
+fn simplify_rel(rel: &mut Vec<i32>) {
+    rel.sort();
+    let mut i = 0;
+    let mut j = 0;
+    while i < rel.len() {
+        if i + 1 < rel.len() && rel[i] == rel[i + 1] {
+            i += 2
+        } else {
+            rel[j] = rel[i];
+            i += 1;
+            j += 1;
+        }
+    }
+    rel.truncate(j);
+}
+
+fn merge<F>(rels: &mut Vec<Vec<i32>>, ncols: usize, maxmult: usize, logfunc: F)
+where
+    F: Fn(String),
+{
+    let mut counts = vec![0_u32; ncols];
+    for r in rels.iter() {
+        for &x in r {
+            if x >= 0 {
+                counts[x as usize] += 1;
+            }
+        }
+    }
+    let nr = rels.len();
+    let nc = counts.iter().filter(|&&n| n != 0).count();
+    // Select all pivots and order by increasing multiplicity.
+    let mut pivots = vec![];
+    for (idx, &c) in counts.iter().enumerate() {
+        if 0 < c && c as usize <= maxmult {
+            pivots.push(idx);
+        }
+    }
+    pivots.sort_by_key(|&idx| counts[idx]);
+    // Build reverse index
+    let mut revidx = HashMap::<usize, Vec<usize>>::new();
+    for &p in &pivots {
+        revidx.insert(p, vec![]);
+    }
+    for (ridx, r) in rels.iter().enumerate() {
+        for &x in r {
+            if x >= 0 && counts[x as usize] as usize <= maxmult {
+                revidx.get_mut(&(x as usize)).unwrap().push(ridx);
+            }
+        }
+    }
+    let weight = |rel: &Vec<i32>| -> usize {
+        let mut res = 0;
+        for &x in rel {
+            if x >= 0 && counts[x as usize] < DENSE_LIMIT {
+                res += 1;
+            }
+        }
+        res
+    };
+    // Perform merge
+    let mut pivoted = vec![false; ncols];
+    let mut n_pivoted = 0;
+    let n_pivots = pivots.len();
+    for p in pivots {
+        if pivoted[p] {
+            continue;
+        }
+        let prels = revidx.get_mut(&p).unwrap();
+        prels.retain(|&ridx| rels[ridx].len() > 0);
+        if prels.len() == 0 {
+            continue; // all eliminated
+        }
+        prels.sort_by_key(|&ridx| weight(&rels[ridx]));
+        // Smallest relation is the pivot
+        let pividx = prels[0];
+        let piv = rels[pividx].clone(); // FIXME: avoid clone?
+        assert!(piv.len() > 0);
+        assert!(piv.contains(&(p as i32)));
+        for &tgt in &prels[1..] {
+            rels[tgt].extend_from_slice(&piv);
+            simplify_rel(&mut rels[tgt]);
+        }
+        // Clear pivot
+        for x in piv {
+            if x >= 0 {
+                pivoted[x as usize] = true;
+            }
+        }
+        rels[pividx].clear();
+        n_pivoted += 1;
+    }
+    rels.retain(|r| length_rel(r) > 0);
+    logfunc(format!(
+        "{maxmult}-merge: {nc} columns {nr} rows excess={} pivots={n_pivoted}/{n_pivots}",
+        nr - nc
+    ));
+}
+
+fn clear_excess<F>(rels: &mut Vec<Vec<i32>>, ncols: usize, logfunc: F) -> usize
+where
+    F: Fn(String),
+{
+    let mut counts = vec![0_u32; ncols];
+    for r in rels.iter() {
+        for &x in r {
+            if x >= 0 {
+                counts[x as usize] += 1;
+            }
+        }
+    }
+    let nr = rels.len();
+    let nc = counts.iter().filter(|&&n| n != 0).count();
+    let excess = nr - nc;
+    if excess <= MIN_EXCESS {
+        return 0;
+    }
+
+    let weight = |rel: &Vec<i32>| -> usize {
+        let mut res = 0;
+        for &x in rel {
+            if x >= 0 && counts[x as usize] < DENSE_LIMIT {
+                res += 1;
+            }
+        }
+        res
+    };
+    let mut idx: Vec<usize> = (0..rels.len()).collect();
+    idx.sort_by_key(|&ridx| weight(&rels[ridx]));
+    let to_remove = excess - MIN_EXCESS;
+    let score_min = weight(&rels[idx[idx.len().saturating_sub(to_remove)]]);
+    let score_max = weight(&rels[idx[idx.len() - 1]]);
+    for &i in &idx[idx.len().saturating_sub(to_remove)..] {
+        rels[i].clear()
+    }
+    rels.retain(|r| !r.is_empty());
+    logfunc(format!(
+        "Purged {to_remove} relations with score {score_min}..{score_max}"
+    ));
+    to_remove
 }

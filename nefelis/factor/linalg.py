@@ -93,13 +93,13 @@ def main_impl(args):
     logger.info(f"Prepared {len(chis)} quadratic characters")
 
     t0 = time.monotonic()
-    rels, xy_elems, zrels = prune_load_fast(workdir, chis)
+    rels, xy_elems, zrels = prune_merge_fast(workdir, chis)
     dt = time.monotonic() - t0
     logger.info(
-        f"Computed factorizations and characters for {len(rels)} relations in {dt:.1f}s"
+        f"Computed factorizations and characters for {len(zrels)} relations ({len(rels)} merged) in {dt:.1f}s"
     )
 
-    rels = filter.filter(rels, pathlib.Path(workdir))
+    # rels = filter.filter(rels, pathlib.Path(workdir))
 
     M = SpMV_COO2(rels)
     facs = [n]
@@ -201,12 +201,14 @@ def prune_load(workdir, chis: list[tuple[str, int, int]]):
     return rels, xy_elems, zrels
 
 
-def prune_load_fast(workdir, chis: list[tuple[str, int, int]]):
+def prune_merge_fast(workdir, chis: list[tuple[str, int, int]]):
     if not (workdir / "relations.sieve.pruned").is_file():
         nefelis_rust.prune_relations(str(workdir / "relations.sieve"), logfilter)
 
-    rels, xy_zrels = nefelis_rust.load_relations(
-        str(workdir / "relations.sieve.pruned"), [(l, r) for (_, l, r) in chis]
+    rels, xy_zrels = nefelis_rust.merge_relations(
+        str(workdir / "relations.sieve.pruned"),
+        [(l, r) for (_, l, r) in chis],
+        logfilter,
     )
     for idx in range(len(rels)):
         rels[idx] = np.frombuffer(rels[idx], dtype=np.int32)
