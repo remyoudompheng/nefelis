@@ -19,6 +19,7 @@ import time
 import flint
 import numpy as np
 
+import nefelis_rust
 from nefelis import filter_disk
 from nefelis import filter_gf2 as filter
 from nefelis import integers
@@ -28,6 +29,7 @@ from nefelis.factor import sqrt_padic
 
 logger = logging.getLogger("linalg")
 logsqrt = logging.getLogger("sqrt")
+logfilter = logging.getLogger("filter")
 
 DEBUG_USE_REALCOMPLEX_SQRT = False
 
@@ -91,7 +93,7 @@ def main_impl(args):
     logger.info(f"Prepared {len(chis)} quadratic characters")
 
     t0 = time.monotonic()
-    rels, xy_elems, zrels = prune_load(workdir, chis)
+    rels, xy_elems, zrels = prune_load_fast(workdir, chis)
     dt = time.monotonic() - t0
     logger.info(
         f"Computed factorizations and characters for {len(rels)} relations in {dt:.1f}s"
@@ -199,6 +201,23 @@ def prune_load(workdir, chis: list[tuple[str, int, int]]):
     return rels, xy_elems, zrels
 
 
+def prune_load_fast(workdir, chis: list[tuple[str, int, int]]):
+    if not (workdir / "relations.sieve.pruned").is_file():
+        nefelis_rust.prune_relations(str(workdir / "relations.sieve"), logfilter)
+
+    rels, xy_zrels = nefelis_rust.load_relations(
+        str(workdir / "relations.sieve.pruned"), [(l, r) for (_, l, r) in chis]
+    )
+    for idx in range(len(rels)):
+        rels[idx] = np.frombuffer(rels[idx], dtype=np.int32)
+    zrels = {}
+    for idx, (x, y, facg) in enumerate(xy_zrels):
+        zrels[(x, -y)] = np.frombuffer(facg, dtype=np.int32).astype(np.uint64)
+        xy_zrels[idx] = (x, y)
+    xy_elems = [None] + xy_zrels
+    return rels, xy_elems, zrels
+
+
 def factor_with_kernels(
     n: int, f, g, z, xy_elems, zrels, M, kers, facs: list[int] = None
 ) -> list:
@@ -259,7 +278,7 @@ def factor_with_kernels(
         for i, (_l, _r) in enumerate(testchis):
             if char_k[i] & 1 == 1:
                 logger.debug(
-                    f"Candidate product of {len(s)} elements is not a square at place {_l},{_r}"
+                    f"Candidate product of {len(xys)} elements is not a square at place {_l},{_r}"
                 )
                 is_probably_square = False
                 break

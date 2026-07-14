@@ -293,8 +293,8 @@ def main():
     fbase = sys.argv[1]
     f = fbase
 
-    prune(f, f + ".tmp")
-    prune(f + ".tmp", f + ".tmp2")
+    singles(f, f + ".tmp")
+    singles(f + ".tmp", f + ".tmp2")
     cliques(f + ".tmp2", f + ".test")
     cliques(f + ".test", f + ".test2")
     cliques(f + ".test2", f + ".test3", aggressive=True)

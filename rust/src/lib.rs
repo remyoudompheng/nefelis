@@ -1,13 +1,22 @@
 use anyhow::Result;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::IntoPyObjectExt;
 
 mod filter;
+mod math;
 
 #[pymodule]
 fn nefelis_rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(prune_relations, m)?)?;
+    m.add_function(wrap_pyfunction!(load_relations, m)?)?;
+    m.add_function(wrap_pyfunction!(legendre_symbol, m)?)?;
     Ok(())
+}
+
+#[pyfunction]
+fn legendre_symbol(x: i64, p: i64) -> i32 {
+    math::legendre_symbol(x, p)
 }
 
 #[pyfunction]
@@ -41,4 +50,17 @@ fn prune_relations_impl(py: Python<'_>, filename: &str, logger: Option<Py<PyAny>
         &format!("{filename}.pruned"),
         logfunc,
     )
+}
+
+#[pyfunction]
+#[pyo3(signature=(filename, characters),
+        text_signature="(filename: str, characters: list[tuple[int, int]])")]
+fn load_relations(
+    py: Python<'_>,
+    filename: &str,
+    characters: Vec<(i64, i64)>,
+) -> PyResult<Py<PyAny>> {
+    let res = filter::parse_with_characters(filename, characters)
+        .map_err(|e| PyValueError::new_err(format!("Could not parse file: {e}")))?;
+    res.into_py_any(py)
 }
