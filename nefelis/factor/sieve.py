@@ -117,7 +117,7 @@ def worker_task(args):
 
 # Parameters for high CPU or low GPU (gpu.cores/cpu.cores < 2)
 PARAMS = [
-    # bitsize, degree, B1f, B2f, B2g, cofactor bits, cofactor2 bits, A=logarea, qmin
+    # bitsize, degree, B1f, B1g, B2f, B2g, cofactor bits, cofactor2 bits, A=logarea, qmin
     (60, 3, 2000, 1000, 12, 11, 5, 5, 23, 20),
     (80, 3, 2000, 1000, 12, 11, 10, 10, 23, 20),
     (100, 3, 5000, 3000, 13, 12, 10, 10, 23, 50),
