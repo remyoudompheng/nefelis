@@ -1,0 +1,23 @@
+[package]
+name = "nefelis-rust"
+version = "0.1.0"
+rust-version = "1.74"
+edition = "2021"
+description = "Nefelis utility functions"
+license = "BSD3"
+
+[lib]
+name = "nefelis_rust"
+crate-type = ["cdylib"]
+
+[resolver]
+incompatible-rust-versions = "fallback"
+
+[dependencies]
+pyo3 = { version = "0.26", features = ["abi3-py37", "extension-module"] }
+anyhow = "1.0"
+num-integer = "0.1"
+petgraph = "0.8"
+
+[profile.release]
+debug = 2
