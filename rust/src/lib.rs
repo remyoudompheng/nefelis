@@ -11,6 +11,7 @@ fn nefelis_rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(prune_relations, m)?)?;
     m.add_function(wrap_pyfunction!(load_relations, m)?)?;
     m.add_function(wrap_pyfunction!(legendre_symbol, m)?)?;
+    m.add_function(wrap_pyfunction!(compute_characters, m)?)?;
     Ok(())
 }
 
@@ -63,4 +64,24 @@ fn load_relations(
     let res = filter::parse_with_characters(filename, characters)
         .map_err(|e| PyValueError::new_err(format!("Could not parse file: {e}")))?;
     res.into_py_any(py)
+}
+
+#[pyfunction]
+#[pyo3(signature=(xys, characters),
+        text_signature="(xys: list[tuple[int, int]], characters: list[tuple[int, int]])")]
+fn compute_characters(xys: Vec<(i64, i64)>, characters: Vec<(i64, i64)>) -> Vec<u64> {
+    assert!(characters.len() <= 64);
+    let mut res = Vec::with_capacity(xys.len());
+    for (x, y) in xys {
+        let mut mask = 0_u64;
+        // Compute characters
+        for (cidx, &(l, r)) in characters.iter().enumerate() {
+            let v = x as i128 - r as i128 * y as i128;
+            if legendre_symbol((v % l as i128) as i64, l) < 0 {
+                mask |= 1 << cidx;
+            }
+        }
+        res.push(mask);
+    }
+    res
 }

@@ -152,7 +152,7 @@ def prune_load(workdir, chis: list[tuple[str, int, int]]):
     # - positive integers for the ideal/character basis
     seen_basis: dict[str, int] = {"CONSTANT": 0}
     name_basis: list[str] = ["CONSTANT"]
-    xy_elems: list[tuple] = [None]
+    xy_elems: list[tuple] = []
 
     for key, _, _ in chis:
         seen_basis[key] = len(name_basis)
@@ -165,7 +165,7 @@ def prune_load(workdir, chis: list[tuple[str, int, int]]):
         seen_xy.add((x, y))
         xy_elems.append((x, y))
         # Index of (x,y) to reconstruct value from kernel vector
-        rel = {0, 1 - len(xy_elems)}
+        rel = {0, -len(xy_elems)}
         for _l in facf:
             _r = x * pow(y, -1, _l) % _l if y % _l else _l
             key = f"f_{_l}_{_r}"
@@ -214,8 +214,7 @@ def prune_load_fast(workdir, chis: list[tuple[str, int, int]]):
     for idx, (x, y, facg) in enumerate(xy_zrels):
         zrels[(x, -y)] = np.frombuffer(facg, dtype=np.int32).astype(np.uint64)
         xy_zrels[idx] = (x, y)
-    xy_elems = [None] + xy_zrels
-    return rels, xy_elems, zrels
+    return rels, xy_zrels, zrels
 
 
 def factor_with_kernels(
@@ -241,14 +240,7 @@ def factor_with_kernels(
     assert len(testchis) >= 8
 
     # Precompute character values once.
-    characters = {}
-    for key, xy in enumerate(xy_elems):
-        if xy is None:
-            continue
-        x, y = xy
-        chars = [flint.fmpz(x - _r * y).jacobi(_l) < 0 for _l, _r in testchis]
-        characters[key] = np.array(chars, dtype=np.uint8)
-    del x, y, chars
+    characters = nefelis_rust.compute_characters(xy_elems, testchis)
     logger.info(f"Prepared {len(testchis)} quadratic characters for validation")
 
     dim = M.dim
@@ -267,16 +259,18 @@ def factor_with_kernels(
                 all_ridx.append(r[r < 0])
         ridxs, rcounts = np.unique(np.concatenate(all_ridx), return_counts=True)
         ridxs = -ridxs[(rcounts & 1) == 1]
+        ridxs -= 1
 
         xys = []
+        char_k = 0
         for ridx in ridxs:
             x, y = xy_elems[ridx]
+            char_k ^= characters[ridx]
             xys.append((x, -y))
 
-        char_k = sum(characters[ridx] for ridx in ridxs) & 1
         is_probably_square = True
         for i, (_l, _r) in enumerate(testchis):
-            if char_k[i] & 1 == 1:
+            if char_k & (1 << i):
                 logger.debug(
                     f"Candidate product of {len(xys)} elements is not a square at place {_l},{_r}"
                 )
