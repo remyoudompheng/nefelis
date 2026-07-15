@@ -91,52 +91,40 @@ def sqrt(f: list[int], xys: list[tuple[int, int]], size_hint: int) -> list[int]:
     logger.info(f"Computed S(z) = product(Ax+yz) in {dt:.3f}s")
     assert len(S) == degf
 
-    # 2. Reduce to the residue field GF(p^d) and compute a square root Tp=sqrt(Sp)
+    # 2. Reduce to the residue field GF(p^d) and compute a square root Tp=1/sqrt(Sp)
     Sp = Fpd(S)
-    Tp = Sp.sqrt()
-    logger.debug(f"Initialized square root in GF(p^{degf}): {Tp}")
+    Tp = 1 / Sp.sqrt()
+    logger.debug(f"Initialized inverse square root in GF(p^{degf}): {Tp}")
 
-    # 3. Lift p-adically to obtain T=sqrt(S)
+    # 3. Lift p-adically to obtain T=1/sqrt(S)
     t1 = time.monotonic()
     k = 1
     # Invariant:
-    # Tk is the square root of S modulo p^k
-    # Tinvk is the inverse of 2Tk
-    # It is faster to lift the inverse modulo p than recompute XGCD of polynomials each time.
+    # Tk is 1/sqrt(S) modulo p^k
     Tk: list[flint.fmpz] = Tp.to_list()
-    Tinvk: list[flint.fmpz] = (1 / (2 * Tp)).to_list()
     while k < N:
         k = min(2 * k, N)
         ZpkX = flint.fmpz_mod_poly_ctx(fmpz_mod_ctx_composite(flint.fmpz(p) ** k))
         # Newton iteration in Zp[x]/f(x):
-        # Tinv => 2 * Tinv - 2T Tinv^2
-        # T => T + (S-T²)/2T = T/2 + S/2T
+        # T => T/2 * (3 - S T^2)
         Sk = ZpkX(S)
         fk = ZpkX(fmonic)
         T = ZpkX(Tk)
         if DEBUG_CHECK_NEWTON:
-            rem = list(Sk - T**2 % fk)
+            rem = list(1 - Sk * T**2 % fk)
             for ri in rem:
                 assert int(ri) % p ** (k // 2) == 0
-        Tinv = ZpkX(Tinvk)
-        Tinv = Tinv * (2 - 2 * T * Tinv) % fk
-        Tadj = (Sk * Tinv - T / 2) % fk
-        T += Tadj
+        Tadj = (3 - Sk * (T**2 % fk) % fk) / 2
+        T = (T * Tadj) % fk
         if DEBUG_CHECK_NEWTON:
-            assert (2 * T * Tinv) % fk == 1
-            assert T * T % fk == Sk
+            assert (Sk * T * T) % fk == 1
         Tk = [flint.fmpz(int(ti)) for ti in list(T)]
-        # Adjust inverse to match new T
-        # 1/(2T+2Tadj) = Tinv - 2Tadj/(2T)^2
-        Tinv = (Tinv - 2 * Tadj * Tinv * Tinv) % fk
-        # assert (2 * T * Tinv) % fk == 1
-        Tinvk = [flint.fmpz(int(ti)) for ti in list(Tinv)]
 
     dt = time.monotonic() - t1
-    logger.info(f"Computed T(z) = sqrt(S(z)) in {dt:.3f}s")
+    logger.info(f"Computed T(z) = 1/sqrt(S(z)) in {dt:.3f}s")
 
-    T = ZpNX(Tk)
-    assert T * T % fpN == SN
+    T = (SN * ZpNX(Tk)) % fpN
+    assert (T * T) % fpN == SN
     pN = p**N
     result = []
     for ti in T:
