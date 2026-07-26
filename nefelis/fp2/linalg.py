@@ -21,7 +21,7 @@ and a root modulo l, and the root modulo l is used to define
 the Schirokauer map.
 """
 
-from typing import Iterator
+from collections.abc import Iterator
 
 import argparse
 import json

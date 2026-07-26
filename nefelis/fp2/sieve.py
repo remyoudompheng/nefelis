@@ -17,7 +17,7 @@ we only sieve half of special-q to avoid duplicates caused by this
 extra symmetry.
 """
 
-from typing import Iterator
+from collections.abc import Iterator
 
 import argparse
 import concurrent.futures

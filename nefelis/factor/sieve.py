@@ -4,7 +4,7 @@ Sieve for factoring
 The sieve is done on the algebraic side (polynomial f).
 """
 
-from typing import Iterator
+from collections.abc import Iterator
 
 import argparse
 import concurrent.futures

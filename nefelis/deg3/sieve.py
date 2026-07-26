@@ -9,7 +9,7 @@ Notations:
 We assume that B^2 - 4AC < 0 (A > 0 and C > 0)
 """
 
-from typing import Iterator
+from collections.abc import Iterator
 
 import argparse
 import concurrent.futures
