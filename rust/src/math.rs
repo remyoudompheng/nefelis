@@ -55,3 +55,42 @@ pub(crate) fn legendre_symbol(x: i64, p: i64) -> i32 {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_legendre() {
+        for p in [
+            63977,
+            2500213,
+            2500363,
+            300 * 1024 + 1,
+            (7 << 20) + 1,
+            (13 << 20) + 1,
+        ] {
+            for i in 0..1000 {
+                let x: u64 = 65537 * i + 1337;
+                let x2 = (x * x) % p;
+                assert_eq!(legendre_symbol(x2 as i64, p as i64), 1);
+            }
+        }
+        // Not squares
+        for p in [19774193805679, 65161807337651, 12631785623819] {
+            for i in 0..1000 {
+                let x: u64 = 65537 * i + 1337;
+                let x2 = p - (x * x) % p;
+                assert_eq!(legendre_symbol(x2 as i64, p as i64), -1);
+            }
+        }
+        // Multiples
+        for p in [63977, 2500213, 2500363] {
+            for i in 20..40 {
+                for j in 70..90 {
+                    assert_eq!(legendre_symbol((i * p) as i64, (2 * j + 1) * p as i64), 0);
+                }
+            }
+        }
+    }
+}
