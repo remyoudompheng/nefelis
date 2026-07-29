@@ -19,6 +19,7 @@ import time
 import flint
 import nefelis_rust
 import numpy as np
+from opentelemetry import trace
 
 from nefelis import filter_disk, integers
 from nefelis.factor import sqrt_arb, sqrt_padic
@@ -27,6 +28,7 @@ from nefelis.linalg_gf2 import SpMV, SpMV_COO, SpMV_COO2
 logger = logging.getLogger("linalg")
 logsqrt = logging.getLogger("sqrt")
 logfilter = logging.getLogger("filter")
+tracer = trace.get_tracer("linalg")
 
 DEBUG_USE_REALCOMPLEX_SQRT = False
 
@@ -62,6 +64,7 @@ def main():
         main_impl(args)
 
 
+@tracer.start_as_current_span("linalg")
 def main_impl(args):
     workdir = pathlib.Path(args.WORKDIR)
     with open(workdir / "args.json") as f:
@@ -98,10 +101,12 @@ def main_impl(args):
 
     # rels = filter.filter(rels, pathlib.Path(workdir))
 
-    M = SpMV_COO2(rels)
+    with tracer.start_as_current_span("build_matrix"):
+        M = SpMV_COO2(rels)
     facs = [n]
     while True:
-        kers = M.left_kernel()
+        with tracer.start_as_current_span("kernel"):
+            kers = M.left_kernel()
         logger.info(f"Found {len(kers)} left kernel elements")
         sqrt_start = time.monotonic()
         facs = factor_with_kernels(n, f, g, z, xy_elems, zrels, M, kers, facs)
@@ -198,6 +203,7 @@ def prune_load(workdir, chis: list[tuple[str, int, int]]):
     return rels, xy_elems, zrels
 
 
+@tracer.start_as_current_span("prune")
 def prune_merge_fast(workdir, chis: list[tuple[str, int, int]]):
     if not (workdir / "relations.sieve.pruned").is_file():
         nefelis_rust.prune_relations(str(workdir / "relations.sieve"), logfilter)
@@ -216,6 +222,7 @@ def prune_merge_fast(workdir, chis: list[tuple[str, int, int]]):
     return rels, xy_zrels, zrels
 
 
+@tracer.start_as_current_span("sqrt")
 def factor_with_kernels(
     n: int, f, g, z, xy_elems, zrels, M, kers, facs: list[int] = None
 ) -> list:

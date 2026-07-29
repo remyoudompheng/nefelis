@@ -30,6 +30,12 @@ parts of the implementation are suboptimal or broken.
 
 The project is not currently open to external contributions.
 
+## Logging
+
+In addition to console logging, optional OpenTelemetry is available using the `--otlp`
+command line option. Destination should be configured using environment variables
+like `OTEL_EXPORTER_OTLP_HEADERS` and `OTEL_EXPORTER_OTLP_ENDPOINT`.
+
 ## Dependencies
 
 The most notable project dependencies are:

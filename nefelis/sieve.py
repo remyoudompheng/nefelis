@@ -3,11 +3,25 @@ from collections.abc import Iterator
 
 import flint
 import numpy as np
+from opentelemetry import metrics
 
 from .backends.kompute.sieve import LineSiever, LineSiever2, Siever
 from .integers import smallprimes
 
 DEBUG_ESTIMATOR = False
+
+
+class Metrics:
+    meter = metrics.get_meter("nefelis.sieve")
+    specialq = meter.create_counter(
+        "specialq", unit="1", description="Number of special-q"
+    )
+    reports = meter.create_counter(
+        "reports", unit="1", description="Number of total reported smooth numbers"
+    )
+    relations = meter.create_counter(
+        "relations", unit="1", description="Number of relations"
+    )
 
 
 def factor_base(poly: list[int], B1: int) -> tuple[list, list]:

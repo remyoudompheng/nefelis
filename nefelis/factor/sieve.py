@@ -17,17 +17,19 @@ from concurrent.futures import ProcessPoolExecutor
 from multiprocessing import current_process
 
 import numpy as np
+from opentelemetry import trace
 
 from nefelis import cadocompat
 from nefelis.factor.polyselect import polyselect
 from nefelis.factor.polyselect_snfs import snfs_select
 from nefelis.integers import factor_smooth
 from nefelis.polys import estimate_size
-from nefelis.sieve import LineSiever2, factor_base, gen_specialq
+from nefelis.sieve import LineSiever2, Metrics, factor_base, gen_specialq
 from nefelis.sieve import eta as sieve_eta
 from nefelis.skewpoly import skewness
 
 logger = logging.getLogger("sieve")
+tracer = trace.get_tracer("sieve")
 
 
 class Factorer:
@@ -247,6 +249,7 @@ def main():
     main_impl(args)
 
 
+@tracer.start_as_current_span("sieve")
 def main_impl(args):
     N = args.N
     datadir = pathlib.Path(args.WORKDIR)
@@ -416,6 +419,9 @@ def main_impl(args):
     sieve_stats2 = []
     MAX_SIEVE_QUEUE = 64
     MIN_EXCESS = 64
+
+    current_span = trace.get_current_span()
+    current_span.add_event("sieve start")
     with sievepool, factorpool:
         sieve_jobs = []
         factor_jobs = []
@@ -430,6 +436,8 @@ def main_impl(args):
                     sieve_pending.append(sfut)
                     continue
                 q, qr, dt, qmat, reports = sfut.result()
+                Metrics.specialq.add(1)
+                Metrics.reports.add(len(reports))
                 fut = factorpool.submit(factorer_task, (q, qmat, reports))
                 factor_jobs.append((q, qr, dt, len(reports), fut))
             # Throttle if factoring is late
@@ -447,6 +455,7 @@ def main_impl(args):
 
                 nrels = 0
                 reschunk = fut.result()
+                Metrics.relations.add(len(reschunk))
                 print(f"# q={q} r={qr}", file=relf)
                 for x, y, facf, facg, ideals in reschunk:
                     # Normalize sign

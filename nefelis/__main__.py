@@ -2,13 +2,18 @@ import argparse
 import logging
 import tempfile
 
+from opentelemetry import trace
+
 import nefelis.logging
 from nefelis import deg2, deg3, factor, fp2
+
+tracer = trace.get_tracer("main")
 
 
 def main():
     argp = argparse.ArgumentParser()
     argp.add_argument("-v", "--verbose", action="store_true")
+    argp.add_argument("--otlp", action="store_true")
     argp.add_argument("--workdir", dest="WORKDIR", help="Path to working directory")
 
     polyselect_args = argp.add_argument_group("Polynomial selection options")
@@ -57,6 +62,8 @@ def main():
     # Logger names should have length <= 6 (poly, sieve, linalg, dlog)
     level = logging.DEBUG if args.verbose else logging.INFO
     nefelis.logging.setup(level)
+    if args.otlp:
+        nefelis.logging.setup_otlp()
 
     if args.WORKDIR is None:
         with tempfile.TemporaryDirectory(prefix="nefelis") as tmpdir:
@@ -69,7 +76,9 @@ def main():
         main_impl(args)
 
 
+@tracer.start_as_current_span("main")
 def main_impl(args):
+    trace.get_current_span().set_attribute("method", args.METHOD)
     match args.METHOD:
         case "deg2":
             deg2.sieve.main_impl(args)

@@ -13,10 +13,12 @@ from multiprocessing import Pool, Value
 
 import flint
 import numpy as np
+from opentelemetry import context, metrics, trace
 
 from nefelis import integers, polys, skewpoly
 
 logger = logging.getLogger("poly")
+tracer = trace.get_tracer("poly")
 
 
 class Polyselect:
@@ -28,36 +30,41 @@ class Polyselect:
         self.bestsize: Value = bestsize
 
     def process(self, ad: int):
-        res = find_raw(self.N, self.deg, ad, self.pmax, self.best)
+        with tracer.start_as_current_span("generate") as span:
+            span.set_attribute("ad", ad)
+            res = find_raw(self.N, self.deg, ad, self.pmax, self.best)
+            span.set_attribute("n_results", len(res))
+            span.set_status(trace.Status(trace.StatusCode.OK))
 
         best = None, None, 1e9
-        for score, f, g in res:
-            if score < self.bestsize.value:
-                with self.bestsize.get_lock():
-                    self.bestsize.value = min(self.bestsize.value, score)
-            if score > self.bestsize.value + 3.0:
-                continue
+        with tracer.start_as_current_span("optimize"):
+            for score, f, g in res:
+                if score < self.bestsize.value:
+                    with self.bestsize.get_lock():
+                        self.bestsize.value = min(self.bestsize.value, score)
+                if score > self.bestsize.value + 3.0:
+                    continue
 
-            skew = skewpoly.skewness(f)
-            f, g, skew = size_optimize(f, g, skew)
-            f = root_optimize(f, g, skew)
-            if f is None:
-                # sometimes all polynomials are bad
-                continue
-            skew = skewpoly.skewness(f)
-            norm = math.log2(math.sqrt(skewpoly.l2norm(f, skew)))
-            normg = math.log2(math.sqrt(skewpoly.l2norm(g, skew)))
-            alpha = polys.alpha(polys.discriminant(f), f)
-            score = norm + GSCORE * normg + alpha
-            if score < best[2]:
-                best = (f, g, score)
-            if score < self.best.value:
-                with self.best.get_lock():
-                    self.best.value = min(self.best.value, score)
-                logger.info(
-                    f"f={f} g={g} log2(norm) {norm:.3f} "
-                    + f"α {alpha:.3f} score {score:.3f} skew {skew:.0f}"
-                )
+                skew = skewpoly.skewness(f)
+                f, g, skew = size_optimize(f, g, skew)
+                f = root_optimize(f, g, skew)
+                if f is None:
+                    # sometimes all polynomials are bad
+                    continue
+                skew = skewpoly.skewness(f)
+                norm = math.log2(math.sqrt(skewpoly.l2norm(f, skew)))
+                normg = math.log2(math.sqrt(skewpoly.l2norm(g, skew)))
+                alpha = polys.alpha(polys.discriminant(f), f)
+                score = norm + GSCORE * normg + alpha
+                if score < best[2]:
+                    best = (f, g, score)
+                if score < self.best.value:
+                    with self.best.get_lock():
+                        self.best.value = min(self.best.value, score)
+                    logger.info(
+                        f"f={f} g={g} log2(norm) {norm:.3f} "
+                        + f"α {alpha:.3f} score {score:.3f} skew {skew:.0f}"
+                    )
 
         if best[0] is None:
             return None
@@ -68,8 +75,11 @@ class Polyselect:
 WORKER = None
 
 
-def worker_init(N: int, d: int, pmax: int, global_best: Value, global_bestsize: Value):
+def worker_init(
+    N: int, d: int, pmax: int, global_best: Value, global_bestsize: Value, ctx
+):
     global WORKER
+    context.attach(ctx)
     WORKER = Polyselect(N, d, pmax, global_best, global_bestsize)
 
 
@@ -121,6 +131,7 @@ PARAMS5 = [
 ]
 
 
+@tracer.start_as_current_span("polyselect")
 def polyselect(N: int, deg: int, lowcpu: bool = False) -> tuple[list[int], list[int]]:
     best = Value("d", 1e9)
     bestsize = Value("d", 1e9)
@@ -139,7 +150,8 @@ def polyselect(N: int, deg: int, lowcpu: bool = False) -> tuple[list[int], list[
     logger.info(
         f"Start polynomial selection for ad=[{admin}:{admax}:{adstride}] and {pmax=}"
     )
-    pool = Pool(initializer=worker_init, initargs=(N, deg, pmax, best, bestsize))
+    ctx = context.get_current()
+    pool = Pool(initializer=worker_init, initargs=(N, deg, pmax, best, bestsize, ctx))
     best_fg = None
     score_fg = 1e9
     t0 = time.monotonic()
@@ -224,6 +236,7 @@ def roots_nth(N, d, p) -> list[int]:
     return [r2 % p2]
 
 
+# @tracer.start_as_current_span("size_optimize")
 def size_optimize(f, g, s: float):
     # Optimal translation should be between [-2s, 2s]
     n0 = skewpoly.l2norm(f, s)
@@ -252,6 +265,7 @@ def size_optimize(f, g, s: float):
     return f, g, skew
 
 
+# @tracer.start_as_current_span("root_optimize")
 def root_optimize(f, g, s: float):
     # Look for range of k such that norm(f+kg) ~ norm(f)
     sup = max(abs(f[2]) * s**2, abs(f[1]) * s, abs(f[0]))
@@ -430,23 +444,22 @@ def find_raw(N, d: int, ad, pmax: int, global_best: Value):
 
 
 def main():
+    import nefelis.logging
+
     argp = argparse.ArgumentParser()
     argp.add_argument("-v", action="store_true")
+    argp.add_argument("--otlp", action="store_true")
     argp.add_argument("N", type=int)
     argp.add_argument("DEGREE", type=int)
     args = argp.parse_args()
 
-    logging.getLogger().setLevel(logging.INFO)
-    logger.setLevel(logging.INFO)
-    if args.v:
-        logging.getLogger().setLevel(logging.DEBUG)
-        logger.setLevel(logging.DEBUG)
+    nefelis.logging.setup(logging.DEBUG if args.v else logging.INFO)
+    if args.otlp:
+        nefelis.logging.setup_otlp()
     f, g = polyselect(args.N, args.DEGREE)
     print("f", f)
     print("g", g)
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    logging.getLogger().setLevel(logging.INFO)
     main()
