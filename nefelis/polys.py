@@ -2,8 +2,8 @@
 Various helpers about polyomials (discriminants, "bad ideals", norms)
 """
 
-from enum import Enum, auto
 import math
+from enum import Enum, auto
 
 import flint
 import numpy

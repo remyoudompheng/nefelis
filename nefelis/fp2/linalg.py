@@ -21,14 +21,13 @@ and a root modulo l, and the root modulo l is used to define
 the Schirokauer map.
 """
 
-from collections.abc import Iterator
-
 import argparse
 import json
 import logging
 import pathlib
 import random
 import time
+from collections.abc import Iterator
 
 import flint
 

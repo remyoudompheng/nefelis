@@ -9,8 +9,8 @@ However it uses a few Numpy features to achieve decent speed.
 import math
 import time
 
-import numpy as np
 import flint
+import numpy as np
 
 DEBUG = False
 
@@ -59,7 +59,7 @@ def sieve(u, v, primes, roots, q, xmax, ymax, threshold):
             S[:, 0::l] += llog
             hits += S[:, 0::l].size
         elif l < xmax:
-            for y in range(0, ymax):
+            for y in range(ymax):
                 x = (xmax + r * y) % l
                 if DEBUG:
                     assert (x - xmax - r * y) % l == 0

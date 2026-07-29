@@ -29,7 +29,8 @@ import logging
 import math
 
 import flint
-from nefelis.integers import smallprimes, factor
+
+from nefelis.integers import factor, smallprimes
 
 logger = logging.getLogger("field")
 
@@ -392,7 +393,7 @@ class CubicFieldUFD:
                 return tuple(int(_) for _ in v)
         # Otherwise enumerate short vectors
         bound = self.c
-        for x in range(0, bound):
+        for x in range(bound):
             for y in range(-bound, bound):
                 for z in range(-bound, bound):
                     v = (flint.fmpz_mat([[x, y, z]]) * B).entries()
@@ -444,6 +445,7 @@ class CubicFieldUFD:
 
 if __name__ == "__main__":
     import random
+
     import tqdm
 
     logging.basicConfig(level=logging.DEBUG)

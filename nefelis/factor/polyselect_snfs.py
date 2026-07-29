@@ -8,9 +8,9 @@ import math
 import time
 
 import flint
-from nefelis import integers
+
+from nefelis import integers, polys
 from nefelis.factor.polyselect import lemma21
-from nefelis import polys
 
 logger = logging.getLogger("poly")
 

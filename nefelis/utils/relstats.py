@@ -11,6 +11,7 @@ import math
 import sys
 
 import numpy
+
 from nefelis.integers import product
 
 

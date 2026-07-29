@@ -30,8 +30,8 @@ import time
 import flint
 
 from nefelis import cadocompat, sieve
-from nefelis.integers import factor, factor_smooth, smallprimes
 from nefelis.deg2.polyselect import polyselect
+from nefelis.integers import factor, factor_smooth, smallprimes
 
 logger = logging.getLogger("sieve")
 

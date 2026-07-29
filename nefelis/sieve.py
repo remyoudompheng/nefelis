@@ -1,10 +1,10 @@
-from collections.abc import Iterator
 import math
+from collections.abc import Iterator
 
 import flint
 import numpy as np
 
-from .backends.kompute.sieve import Siever, LineSiever, LineSiever2
+from .backends.kompute.sieve import LineSiever, LineSiever2, Siever
 from .integers import smallprimes
 
 DEBUG_ESTIMATOR = False

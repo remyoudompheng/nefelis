@@ -9,7 +9,6 @@ import logging
 
 import flint
 
-
 logger = logging.getLogger("sqrt")
 
 

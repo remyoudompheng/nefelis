@@ -3,9 +3,9 @@ Utility functions for integers.
 """
 
 import math
-import numpy as np
 
 import flint
+import numpy as np
 
 try:
     import pymqs

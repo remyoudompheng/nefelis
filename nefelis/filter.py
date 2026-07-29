@@ -26,7 +26,7 @@ def prune(rawrels: list[dict], datadir: pathlib.Path | None = None):
         rabs = {_l: abs(_e) for _l, _e in rel.items()}
         rels.append(rabs)
     if duplicates:
-        logger.warn(f"Found {duplicates} duplicate relations before pruning")
+        logger.warning(f"Found {duplicates} duplicate relations before pruning")
 
     # Prune relations in place: a removed relation is replaced by None.
     # We are only interested in coefficients ±1, exponent sign is ignored
@@ -306,7 +306,7 @@ def filter(rels, datadir: pathlib.Path | None):
             rels[ridx] = None
         dedup.add(line)
     if duplicates:
-        logger.warn(f"Found {duplicates} duplicate relations after filtering")
+        logger.warning(f"Found {duplicates} duplicate relations after filtering")
 
     excess -= duplicates
     if excess > MIN_EXCESS:

@@ -4,30 +4,28 @@ Sieve for factoring
 The sieve is done on the algebraic side (polynomial f).
 """
 
-from collections.abc import Iterator
-
 import argparse
 import concurrent.futures
-from concurrent.futures import ProcessPoolExecutor
 import json
 import logging
 import math
-from multiprocessing import current_process
 import os
 import pathlib
 import time
+from collections.abc import Iterator
+from concurrent.futures import ProcessPoolExecutor
+from multiprocessing import current_process
 
-import flint
 import numpy as np
 
 from nefelis import cadocompat
-from nefelis.polys import estimate_size
-from nefelis.skewpoly import skewness
-from nefelis.sieve import eta as sieve_eta, factor_base, gen_specialq, LineSiever2
-from nefelis.integers import factor_smooth
-
 from nefelis.factor.polyselect import polyselect
 from nefelis.factor.polyselect_snfs import snfs_select
+from nefelis.integers import factor_smooth
+from nefelis.polys import estimate_size
+from nefelis.sieve import LineSiever2, factor_base, gen_specialq
+from nefelis.sieve import eta as sieve_eta
+from nefelis.skewpoly import skewness
 
 logger = logging.getLogger("sieve")
 

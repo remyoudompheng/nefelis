@@ -4,10 +4,10 @@ Computation of individual discrete logarithms
 Since g is a linear polynomial, any prime can be used as "special q".
 """
 
+import argparse
 import json
 import logging
 import math
-import argparse
 import pathlib
 import random
 import time

@@ -17,9 +17,9 @@ import time
 import flint
 
 from nefelis import integers
-from nefelis.sieve import Siever
 from nefelis.deg3 import linalg
 from nefelis.deg3.cubic import CubicField
+from nefelis.sieve import Siever
 
 logger = logging.getLogger("dlog")
 

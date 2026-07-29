@@ -8,15 +8,13 @@ https://homepages.loria.fr/EThome/teaching/2022-cse-291-14/slides/cse-291-14-lec
 import argparse
 import logging
 import math
-from multiprocessing import Pool, Value
 import time
+from multiprocessing import Pool, Value
 
 import flint
 import numpy as np
 
-from nefelis import integers
-from nefelis import polys
-from nefelis import skewpoly
+from nefelis import integers, polys, skewpoly
 
 logger = logging.getLogger("poly")
 

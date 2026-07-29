@@ -6,11 +6,11 @@ import logging
 import math
 import time
 
-import numpy as np
-import kp
 import flint
+import kp
+import numpy as np
 
-from nefelis.vulkan import shader, stamp_period, gpu_cores
+from nefelis.vulkan import gpu_cores, shader, stamp_period
 
 DEBUG_ROOTS = False
 DEBUG_TIMINGS = False
@@ -706,7 +706,7 @@ class LineSiever2:
 
 
 if __name__ == "__main__":
-    from nefelis.integers import smallprimes, factor
+    from nefelis.integers import factor, smallprimes
 
     logging.getLogger().setLevel(level=logging.DEBUG)
 

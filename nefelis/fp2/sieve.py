@@ -17,25 +17,24 @@ we only sieve half of special-q to avoid duplicates caused by this
 extra symmetry.
 """
 
-from collections.abc import Iterator
-
 import argparse
 import concurrent.futures
-from concurrent.futures import ProcessPoolExecutor
 import json
 import logging
 import math
-from multiprocessing import current_process
 import os
 import pathlib
 import time
+from collections.abc import Iterator
+from concurrent.futures import ProcessPoolExecutor
+from multiprocessing import current_process
 
 import flint
 
-from nefelis import cadocompat
-from nefelis import integers
-from nefelis.sieve import Siever, eta as sieve_eta, gen_specialq
+from nefelis import cadocompat, integers
 from nefelis.fp2 import polyselect
+from nefelis.sieve import Siever, gen_specialq
+from nefelis.sieve import eta as sieve_eta
 
 logger = logging.getLogger("sieve")
 

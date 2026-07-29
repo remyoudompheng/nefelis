@@ -5,9 +5,8 @@ import time
 
 import flint
 
+from nefelis import integers, polys
 from nefelis.cadocompat import poly_str
-from nefelis import integers
-from nefelis import polys
 
 logger = logging.getLogger("poly")
 

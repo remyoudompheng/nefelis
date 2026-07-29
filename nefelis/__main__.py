@@ -2,11 +2,8 @@ import argparse
 import logging
 import tempfile
 
-from nefelis import deg2
-from nefelis import deg3
-from nefelis import fp2
-from nefelis import factor
 import nefelis.logging
+from nefelis import deg2, deg3, factor, fp2
 
 
 def main():

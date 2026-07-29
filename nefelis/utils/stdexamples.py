@@ -8,7 +8,8 @@ import random
 
 import flint
 import numpy as np
-from nefelis.integers import smallprimes, factor, factor_smooth
+
+from nefelis.integers import factor, factor_smooth, smallprimes
 
 
 def main():
@@ -74,11 +75,11 @@ def generate(typ: str, start: int) -> int:
         for l in smalls:
             # (start+r) is divisible by l?
             r = (-start) % l
-            arr[r::l] += int(1)
+            arr[r::l] += 1
             # (start+r2-1)/2 is divisible by l?
             if l > 2:
                 r2 = (r + 1) % l
-                arr[r2::l] += int(1)
+                arr[r2::l] += 1
         for idx in (arr == 0).nonzero()[0]:
             n = start + int(idx)
             if not flint.fmpz(n).is_probable_prime():
@@ -93,15 +94,15 @@ def generate(typ: str, start: int) -> int:
         for l in smalls:
             # (start+r) is divisible by l?
             r = (-start) % l
-            arr[r::l] += int(1)
+            arr[r::l] += 1
             # (start+r2+1)/2 is divisible by l?
             if l > 3:
                 r2 = (r - 1) % l
-                arr[r2::l] += int(1)
+                arr[r2::l] += 1
             # (start+r2-1)/3 is divisible by l?
             if l > 3:
                 r3 = (r + 1) % l
-                arr[r3::l] += int(1)
+                arr[r3::l] += 1
         for idx in (arr == 0).nonzero()[0]:
             n = start + int(idx)
             if n % 12 != 1:
@@ -118,7 +119,7 @@ def generate(typ: str, start: int) -> int:
         arr = np.zeros(10_000, dtype=np.uint8)
         for l in smalls:
             r = (-start) % l
-            arr[r::l] += int(1)
+            arr[r::l] += 1
         for idx in (arr == 0).nonzero()[0]:
             n = start + int(idx)
             if flint.fmpz(n).is_probable_prime():

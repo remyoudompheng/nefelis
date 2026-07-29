@@ -1,14 +1,14 @@
-from collections.abc import Iterable
 import logging
 import random
 import time
+from collections.abc import Iterable
 
 import kp
 import numpy as np
 import numpy.typing as npt
 
 from nefelis import lingen_gf2
-from nefelis.vulkan import shader, stamp_period, gpu_cores
+from nefelis.vulkan import gpu_cores, shader, stamp_period
 
 # Avoid row reordering when constructing SpMV matrices.
 DEBUG_NO_SORT_ROWS = False
@@ -213,7 +213,7 @@ class SpMV:
                     rw = sum(wi[keyidx[_l]] for _l in r if not _l.startswith("K_")) & 1
                     print(rw, end="")
                     ok = ok and rw == 0
-                print("")
+                print()
                 print("\nkernel ok", ok)
         # M w = 0
         # poly1 = [poly1[0] * 0] + poly1
@@ -664,7 +664,7 @@ class SpMV_COO2(SpMV_COO):
     NEED_COL_STRIPES = True
 
     def __init__(self, *args, **kwargs):
-        super(SpMV_COO2, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.tensors_transposed = self.tensors_columns
 
     def shaders(self, defines, transpose: bool):

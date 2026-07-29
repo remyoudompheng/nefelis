@@ -17,15 +17,12 @@ import random
 import time
 
 import flint
+import nefelis_rust
 import numpy as np
 
-import nefelis_rust
-from nefelis import filter_disk
-from nefelis import filter_gf2 as filter
-from nefelis import integers
+from nefelis import filter_disk, integers
+from nefelis.factor import sqrt_arb, sqrt_padic
 from nefelis.linalg_gf2 import SpMV, SpMV_COO, SpMV_COO2
-from nefelis.factor import sqrt_arb
-from nefelis.factor import sqrt_padic
 
 logger = logging.getLogger("linalg")
 logsqrt = logging.getLogger("sqrt")

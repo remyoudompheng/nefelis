@@ -13,8 +13,8 @@ import logging
 import pathlib
 import time
 
-from networkx import Graph, connected_components
 import numpy as np
+from networkx import Graph, connected_components
 
 logger = logging.getLogger("filter")
 

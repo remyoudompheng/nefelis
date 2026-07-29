@@ -25,12 +25,12 @@ ISSAC '01: Proceedings of the 2001 international symposium on Symbolic and algeb
 https://inria.hal.science/inria-00517999
 """
 
-from concurrent.futures import ThreadPoolExecutor
-import numpy
 import random
+from concurrent.futures import ThreadPoolExecutor
 
 import flint
 import nefelis_flint_extras
+import numpy
 
 
 def lingen(sequences, N: int, l: int):

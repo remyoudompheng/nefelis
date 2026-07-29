@@ -9,26 +9,26 @@ Notations:
 We assume that B^2 - 4AC < 0 (A > 0 and C > 0)
 """
 
-from collections.abc import Iterator
-
 import argparse
 import concurrent.futures
-from concurrent.futures import ProcessPoolExecutor
 import json
 import logging
 import math
-from multiprocessing import current_process
 import os
 import pathlib
 import time
+from collections.abc import Iterator
+from concurrent.futures import ProcessPoolExecutor
+from multiprocessing import current_process
 
 import flint
 
 from nefelis import cadocompat
-from nefelis.polys import estimate_size
-from nefelis.sieve import Siever, factor_base, gen_specialq, eta as sieve_eta
-from nefelis.integers import factor, factor_smooth
 from nefelis.deg3.polyselect import polyselect
+from nefelis.integers import factor, factor_smooth
+from nefelis.polys import estimate_size
+from nefelis.sieve import Siever, factor_base, gen_specialq
+from nefelis.sieve import eta as sieve_eta
 
 logger = logging.getLogger("sieve")
 

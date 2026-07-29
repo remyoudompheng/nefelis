@@ -22,10 +22,9 @@ from multiprocessing import Pool, Value
 
 import flint
 
-from nefelis.polys import l2norm, alpha, discriminant, bad_ideals
-
 # from nefelis.integers import smallprimes
 from nefelis.integers import product
+from nefelis.polys import alpha, bad_ideals, discriminant, l2norm
 
 logger = logging.getLogger("poly")
 

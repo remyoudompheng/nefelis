@@ -1,7 +1,7 @@
-from collections.abc import Iterable
 import logging
 import random
 import time
+from collections.abc import Iterable
 
 import flint
 import kp

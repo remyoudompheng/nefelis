@@ -1,6 +1,6 @@
-import gmpy2
 import random
 
+import gmpy2
 import nefelis_rust
 
 for _ in range(10):

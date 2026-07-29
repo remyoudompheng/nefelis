@@ -4,6 +4,7 @@ import math
 from multiprocessing import Pool
 
 import flint
+
 from nefelis import polys
 
 logger = logging.getLogger("poly")
@@ -96,7 +97,7 @@ def polyselect(
         sqrtD = {}
         # Assume that a > 0, b >= 0, |c| <= a
         for a in range(1, bound):
-            for b in range(0, bound):
+            for b in range(bound):
                 for c in range(-a, a + 1):
                     D = b * b - 4 * a * c
                     if D in squares:

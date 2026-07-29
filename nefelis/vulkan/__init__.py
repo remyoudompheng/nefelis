@@ -1,8 +1,8 @@
 import importlib.resources
 import json
+import logging
 import os
 import subprocess
-import logging
 
 import vulkan as vk
 
@@ -30,7 +30,7 @@ def shader(name, defines=None, entry="main"):
         logger.debug(f"Exec {' '.join(p.args)}")
         out, err = p.communicate(timeout=1)
     if p.returncode:
-        raise EnvironmentError(f"shader compilation failed: code {p.returncode}")
+        raise OSError(f"shader compilation failed: code {p.returncode}")
     SHADER_CACHE[key] = out
     return out
 
