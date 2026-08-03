@@ -16,6 +16,7 @@ import numpy as np
 from opentelemetry import context, metrics, trace
 
 from nefelis import integers, polys, skewpoly
+from nefelis_rust import sieve_squares
 
 logger = logging.getLogger("poly")
 tracer = trace.get_tracer("poly")
@@ -363,46 +364,40 @@ def find_raw(N, d: int, ad, pmax: int, global_best: Value):
             prs.append((p, rs))
     del p, q, qr
 
-    Nroot = int(NN ** (1 / d))
-    S = np.zeros(1 << 20, dtype=np.int64)
-    count = 0
+    def dth_root(x):
+        # x^(1/d) is never more than 200 bits, 2 iterations are enough.
+        # We only need to be correct up to O(1)
+        r = int(x ** (1 / d))
+        for _ in range(2):
+            r = r + (x - r**d) * r // (d * x)
+        return r
+
+    Nroot = dth_root(NN)
+    #print("m0^1/2", Nroot**(1/2))
+    S = []
+    # Rebase all roots w.r.t. Nroot
+    rootsq = []
+    rootsp = []
     for q, qr in qrs:
-        # print("try", q)
         q2 = q * q
-        v0 = Nroot - q2 * BOUND // 2
-        v0 += qr - v0 % q2
-        # assert (NN - v0**d) % q2 == 0
-        # we are looking for v0 + kq
-        for p, pr in prs:
-            if p == q:
-                continue
-            p2 = p * p
-            q2inv = pow(q2, -1, p2)
-            roots = [(_r - v0) * q2inv % p2 for _r in pr]
-            # assert all((v0 + q2 * r) ** d - NN) % p2 == 0 for r in roots)
-            for r in roots:
-                assert ((v0 + q2 * r) ** d - NN) % p2 == 0
-                vals = np.arange(
-                    v0 + q2 * r - Nroot,
-                    v0 + q2 * BOUND - Nroot,
-                    q2 * p2,
-                    dtype=np.int64,
-                )
-                if len(vals) == 0:
-                    continue
-                if count + len(vals) >= len(S):
-                    S = np.resize(S, len(S) * 2)
-                S[count : count + len(vals)] = vals
-                count += len(vals)
-    S = S[:count]
+        s = (qr - Nroot) % q2
+        #assert (NN - (Nroot + s)**d) % q2 == 0
+        rootsq.append((q, s))
+    for p, pr in prs:
+        p2 = p * p
+        for r in pr:
+            s = (r - Nroot) % p2
+            #assert (NN - (Nroot + s)**d) % p2 == 0
+            rootsp.append((p, s))
+    del p, p2, q, q2, pr, qr, s
+    S = sieve_squares(rootsq, rootsp, qmin * qmax * BOUND // 2)
 
     # Find duplicates and small values of dv
     S.sort()
-    dvs = S[(S[:-1] == S[1:]).nonzero()[0]]
     good = []
-    for dv in dvs:
+    for dv in S:
         # Compute polynomials
-        vv = Nroot + int(dv)
+        vv = Nroot + dv
         facs = integers.factor_smooth(abs(NN - vv**d), pmax.bit_length())
         u = 1
         for l, e in facs:

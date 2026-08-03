@@ -5,6 +5,7 @@ use pyo3::IntoPyObjectExt;
 
 mod filter;
 mod math;
+mod polyselect;
 
 #[pymodule]
 fn nefelis_rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -12,6 +13,7 @@ fn nefelis_rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(merge_relations, m)?)?;
     m.add_function(wrap_pyfunction!(legendre_symbol, m)?)?;
     m.add_function(wrap_pyfunction!(compute_characters, m)?)?;
+    m.add_function(wrap_pyfunction!(sieve_squares, m)?)?;
     Ok(())
 }
 
@@ -60,7 +62,7 @@ fn merge_relations(
     py: Python<'_>,
     filename: &str,
     characters: Vec<(i64, i64)>,
-    logger: Option<Py<PyAny>>
+    logger: Option<Py<PyAny>>,
 ) -> PyResult<Py<PyAny>> {
     let logfunc = |s: String| {
         if let Some(l) = &logger {
@@ -96,4 +98,14 @@ fn compute_characters(xys: Vec<(i64, i64)>, characters: Vec<(i64, i64)>) -> Vec<
         res.push(mask);
     }
     res
+}
+
+#[pyfunction]
+fn sieve_squares(
+    py: Python<'_>,
+    rootsq: Vec<(u64, u64)>,
+    roots: Vec<(u64, u64)>,
+    bound: u64,
+) -> Vec<i64> {
+    py.detach(|| polyselect::sieve_squares(&rootsq, &roots, bound))
 }
