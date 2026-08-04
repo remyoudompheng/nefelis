@@ -106,6 +106,6 @@ fn sieve_squares(
     rootsq: Vec<(u64, u64)>,
     roots: Vec<(u64, u64)>,
     bound: u64,
-) -> Vec<i64> {
+) -> Vec<(i64, Vec<u64>)> {
     py.detach(|| polyselect::sieve_squares(&rootsq, &roots, bound))
 }

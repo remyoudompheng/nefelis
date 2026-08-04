@@ -30,6 +30,7 @@ class Polyselect:
         self.best: Value = best
         self.bestsize: Value = bestsize
 
+    @tracer.start_as_current_span("polyselect.job")
     def process(self, ad: int):
         with tracer.start_as_current_span("generate") as span:
             span.set_attribute("ad", ad)
@@ -373,7 +374,7 @@ def find_raw(N, d: int, ad, pmax: int, global_best: Value):
         return r
 
     Nroot = dth_root(NN)
-    #print("m0^1/2", Nroot**(1/2))
+    # print("m0^1/2", Nroot**(1/2))
     S = []
     # Rebase all roots w.r.t. Nroot
     rootsq = []
@@ -381,25 +382,32 @@ def find_raw(N, d: int, ad, pmax: int, global_best: Value):
     for q, qr in qrs:
         q2 = q * q
         s = (qr - Nroot) % q2
-        #assert (NN - (Nroot + s)**d) % q2 == 0
+        # assert (NN - (Nroot + s)**d) % q2 == 0
         rootsq.append((q, s))
     for p, pr in prs:
         p2 = p * p
         for r in pr:
             s = (r - Nroot) % p2
-            #assert (NN - (Nroot + s)**d) % p2 == 0
+            # assert (NN - (Nroot + s)**d) % p2 == 0
             rootsp.append((p, s))
     del p, p2, q, q2, pr, qr, s
-    S = sieve_squares(rootsq, rootsp, qmin * qmax * BOUND // 2)
+    with tracer.start_as_current_span("generate.sieve"):
+        S = sieve_squares(rootsq, rootsp, qmin * qmax * BOUND // 2)
 
     # Find duplicates and small values of dv
     S.sort()
     good = []
-    for dv in S:
+    for dv, pqfacs in S:
         # Compute polynomials
         vv = Nroot + dv
-        facs = integers.factor_smooth(abs(NN - vv**d), pmax.bit_length())
+        cofactor = abs(NN - vv**d)
         u = 1
+        for p in pqfacs:
+            assert cofactor % (p * p) == 0
+            u *= p
+            cofactor //= p * p
+        # There can be a small additional factor
+        facs = integers.factor_smooth(cofactor, 10)
         for l, e in facs:
             if e & 1 == 0 and (d * ad % l) != 0:
                 u *= l ** (e // 2)
