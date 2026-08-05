@@ -196,7 +196,7 @@ def lemma21(N, v, u, d, ad):
     return f
 
 
-def roots4(N, p) -> list[int]:
+def roots4(N, p, base) -> list[int]:
     """
     Compute 4-th roots of N/ad modulo p^2
     """
@@ -220,21 +220,21 @@ def roots4(N, p) -> list[int]:
     for r in rs:
         if r == 0:
             continue
-        r = r - (r**4 - N) * pow(4 * r**3, -1, p2)
+        r = r - base - (r**4 - N) * pow(4 * r**3, -1, p2)
         lifts.append(r % p2)
     return lifts
 
 
-def roots_nth(N, d, p) -> list[int]:
+def roots_nth(N, d, p, base) -> list[int]:
     if d == 4:
-        return roots4(N, p)
+        return roots4(N, p, base)
     if p % d == 1:
         return []
     inv = pow(d, -1, p - 1)
     r = pow(N, inv, p)
     assert (r**d - N) % p == 0
     p2 = p * p
-    r2 = r - (r**d - N) * pow(d * r ** (d - 1), -1, p2)
+    r2 = r - base - (r**d - N) * pow(d * r ** (d - 1), -1, p2)
     return [r2 % p2]
 
 
@@ -257,10 +257,10 @@ def size_optimize(f, g, s: float):
         nn2 = skewpoly.l2norm(f2, skewpoly.skewness(f2))
         if nn1 < nn2:
             t2 = m2
-            #n2 = nn2
+            # n2 = nn2
         else:
             t1 = m1
-            #n1 = nn1
+            # n1 = nn1
     t = (t1 + t2) // 2
     f = [int(fi) for fi in fpoly(flint.fmpz_poly([t, 1]))]
     g = [g[0] + t * g[1], g[1]]
@@ -309,6 +309,17 @@ def find_raw(N, d: int, ad, pmax: int, global_best: Value):
     # if v = N^1/4 + eps, B ~ 4 N^1/4 eps / N^1/2 u^2
 
     NN = d**d * ad ** (d - 1) * N
+
+    def dth_root(x):
+        # x^(1/d) is never more than 200 bits, 2 iterations are enough.
+        # We only need to be correct up to O(1)
+        r = int(x ** (1 / d))
+        for _ in range(2):
+            r = r + (x - r**d) * r // (d * x)
+        return r
+
+    Nroot = dth_root(NN)
+
     # FIXME: choose according to size of N
     BOUND = pmax**2
     # Generate "special-q"
@@ -320,13 +331,14 @@ def find_raw(N, d: int, ad, pmax: int, global_best: Value):
         qmin, qmax = 500, 700
     else:
         qmin, qmax = 50, 200
+
     for q in range(qmin, qmax):
         if not flint.fmpz(q).is_probable_prime():
             continue
         if d % q == 0 or NN % q == 0:
             continue
-        for qr in roots_nth(NN, d, q):
-            assert (qr**d - NN) % (q * q) == 0
+        for qr in roots_nth(NN, d, q, Nroot):
+            # assert ((Nroot + qr)**d - NN) % (q * q) == 0
             qrs.append((q, qr))
 
     # Prepare roots
@@ -335,43 +347,20 @@ def find_raw(N, d: int, ad, pmax: int, global_best: Value):
     for p in primes[len(primes) // 16 :]:
         if p <= qrs[-1][0]:
             continue
-        rs = roots_nth(NN, d, p)
-        if rs:
-            prs.append((p, rs))
-    del p, q, qr
+        rs = roots_nth(NN, d, p, Nroot)
+        for pr in rs:
+            prs.append((p, pr))
+    del p, q, pr, qr
 
-    def dth_root(x):
-        # x^(1/d) is never more than 200 bits, 2 iterations are enough.
-        # We only need to be correct up to O(1)
-        r = int(x ** (1 / d))
-        for _ in range(2):
-            r = r + (x - r**d) * r // (d * x)
-        return r
-
-    Nroot = dth_root(NN)
     # print("m0^1/2", Nroot**(1/2))
     S = []
-    # Rebase all roots w.r.t. Nroot
-    rootsq = []
-    rootsp = []
-    for q, qr in qrs:
-        q2 = q * q
-        s = (qr - Nroot) % q2
-        # assert (NN - (Nroot + s)**d) % q2 == 0
-        rootsq.append((q, s))
-    for p, pr in prs:
-        p2 = p * p
-        for r in pr:
-            s = (r - Nroot) % p2
-            # assert (NN - (Nroot + s)**d) % p2 == 0
-            rootsp.append((p, s))
-    del p, p2, q, q2, pr, qr, s
     with tracer.start_as_current_span("generate.sieve"):
-        S = sieve_squares(rootsq, rootsp, qmin * qmax * BOUND // 2)
+        S = sieve_squares(qrs, prs, qmin * qmax * BOUND // 2)
 
     # Find duplicates and small values of dv
     S.sort()
     good = []
+    smallprimes = [_l for _l in primes if (d * ad % _l) != 0 and _l < 1024]
     for dv, pqfacs in S:
         # Compute polynomials
         vv = Nroot + dv
@@ -382,10 +371,10 @@ def find_raw(N, d: int, ad, pmax: int, global_best: Value):
             u *= p
             cofactor //= p * p
         # There can be a small additional factor
-        facs = integers.factor_smooth(cofactor, 10)
-        for l, e in facs:
-            if e & 1 == 0 and (d * ad % l) != 0:
-                u *= l ** (e // 2)
+        for l in smallprimes:
+            while cofactor % (l * l) == 0:
+                u *= l
+                cofactor //= l * l
 
         if u < qmax:
             continue
