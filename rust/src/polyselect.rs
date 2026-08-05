@@ -349,7 +349,7 @@ fn nroots<const D: usize>(pows: &FpPowers, l: i32, poly: &[i32; D]) -> usize {
     res
 }
 
-fn discriminant(f: &[BigInt]) -> BigInt {
+pub(crate) fn discriminant(f: &[BigInt]) -> BigInt {
     match f.len() {
         3 => &f[1] * &f[1] - 4 * &f[0] * &f[2],
         4 => {
@@ -365,6 +365,86 @@ fn discriminant(f: &[BigInt]) -> BigInt {
             (4 * &disc0 * &disc0 * &disc0 - &disc1 * &disc1) / 27
         }
         _ => panic!("unsupported"),
+    }
+}
+
+/// Norm of a skewed polynomial: norm of f(x * sqrt(s), y / sqrt(s))
+pub(crate) fn skew_l2norm(f: &[f64], s: f64) -> f64 {
+    // FIXME: explain
+    match f.len() {
+        2 => {
+            let u = f[0];
+            let v = f[1];
+            u * u / s + v * v * s
+        }
+        3 => {
+            let u = f[0] / s;
+            let v = f[1];
+            let w = f[2] * s;
+            (3.0 * (u * u + w * w) + 2.0 * u * w + v * v) / 6.0
+        }
+        4 => {
+            let a = f[0] / s;
+            let b = f[1];
+            let c = f[2] * s;
+            let d = f[3] * s * s;
+            (5.0 * (a * a + d * d) + 2.0 * (a * c + b * d) + b * b + c * c) / s / 8.0
+        }
+        5 => {
+            let a0 = f[0] / s.powi(2);
+            let a1 = f[1] / s;
+            let b = f[2];
+            let c1 = f[3] * s;
+            let c0 = f[4] * s.powi(2);
+            35.0 * (a0.powi(2) + c0.powi(2))
+                + 10.0 * b * (a0 + c0)
+                + 5.0 * (a1.powi(2) + c1.powi(2))
+                + 6.0 * (a0 * c0 + a1 * c1)
+                + 3.0 * b.powi(2)
+        }
+        6 => {
+            let a0 = f[0] / s.powi(2);
+            let a1 = f[1] / s;
+            let a2 = f[2];
+            let c2 = f[3] * s;
+            let c1 = f[4] * s.powi(2);
+            let c0 = f[5] * s.powi(3);
+            (6.0 * (a2 * c1 + a0 * c1 + a1 * c2 + a1 * c0)
+                + 14.0 * (c0 * c2 + a0 * a2)
+                + 63.0 * (a0.powi(2) + c0.powi(2))
+                + 7.0 * (a1.powi(2) + c1.powi(2))
+                + 3.0 * (a2.powi(2) + c2.powi(2)))
+                / s
+        }
+        _ => panic!("unsupported degree"),
+    }
+}
+
+/// Equivalent of Cado-NFS skew_l2norm_tk_circular
+pub(crate) fn skewness(f: &[f64]) -> f64 {
+    // Coefficients are less than 10**50, this should fit double-precision range
+    // The norm is assumed to be a decreasing-then-increasing function of skew
+    let mut s1 = 0.1;
+    let mut s2 = 1e10;
+    let mut n1 = skew_l2norm(&f, s1);
+    let mut n2 = skew_l2norm(&f, s2);
+    while s2 - s1 > 1e-3 {
+        let t1 = (2.0 * s1 + s2) / 3.0;
+        let t2 = (s1 + 2.0 * s2) / 3.0;
+        let m1 = skew_l2norm(&f, t1);
+        let m2 = skew_l2norm(&f, t2);
+        if m1 < m2 {
+            s2 = t2;
+            n2 = m2;
+        } else {
+            s1 = t1;
+            n1 = m1;
+        }
+    }
+    if n1 < n2 {
+        s1
+    } else {
+        s2
     }
 }
 
@@ -442,5 +522,20 @@ mod tests {
             discriminant(&[7, 1, 9, 4, 2].map(BigInt::from)),
             1097356.into()
         );
+    }
+
+    #[test]
+    fn test_skew() {
+        let f: Vec<f64> = vec![
+            -148542579752395458097583792765647.,
+            48704989161145263711343080.,
+            596511211626418813.,
+            -11378139486.,
+            480.,
+        ];
+        let s = skewness(&f);
+        assert_eq!(s.round(), 29293087.);
+        let n = skew_l2norm(&f, s);
+        assert!(2.0103329e37 <= n && n <= 2.0103330e37);
     }
 }

@@ -9,15 +9,49 @@ mod math;
 mod polyselect;
 
 #[pymodule]
-fn nefelis_rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(prune_relations, m)?)?;
-    m.add_function(wrap_pyfunction!(merge_relations, m)?)?;
-    m.add_function(wrap_pyfunction!(legendre_symbol, m)?)?;
-    m.add_function(wrap_pyfunction!(compute_characters, m)?)?;
-    m.add_function(wrap_pyfunction!(sieve_squares, m)?)?;
-    m.add_function(wrap_pyfunction!(root_sieve, m)?)?;
-    m.add_function(wrap_pyfunction!(alpha, m)?)?;
-    Ok(())
+mod nefelis_rust {
+    use pyo3::prelude::*;
+
+    #[pymodule_export]
+    use super::compute_characters;
+    #[pymodule_export]
+    use super::legendre_symbol;
+    #[pymodule_export]
+    use super::merge_relations;
+    #[pymodule_export]
+    use super::prune_relations;
+    #[pymodule_export]
+    use super::root_sieve;
+    #[pymodule_export]
+    use super::sieve_squares;
+
+    #[pymodule]
+    mod polys {
+        use pyo3::prelude::*;
+
+        #[pymodule_export]
+        use crate::alpha;
+
+        #[pyfunction]
+        fn discriminant(f: Vec<num_bigint::BigInt>) -> num_bigint::BigInt {
+            crate::polyselect::discriminant(&f)
+        }
+    }
+
+    #[pymodule]
+    mod skewpoly {
+        use pyo3::prelude::*;
+
+        #[pyfunction]
+        fn l2norm(f: Vec<f64>, s: f64) -> f64 {
+            crate::polyselect::skew_l2norm(&f, s)
+        }
+
+        #[pyfunction]
+        fn skewness(py: Python<'_>, f: Vec<f64>) -> f64 {
+            py.detach(|| crate::polyselect::skewness(&f))
+        }
+    }
 }
 
 #[pyfunction]

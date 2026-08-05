@@ -12,11 +12,11 @@ import time
 from multiprocessing import Pool, Value
 
 import flint
-import numpy as np
-from opentelemetry import context, metrics, trace
+from opentelemetry import context, trace
 
-from nefelis import integers, polys, skewpoly
-from nefelis_rust import sieve_squares, root_sieve
+from nefelis import integers
+from nefelis.polys import bad_ideals
+from nefelis_rust import sieve_squares, root_sieve, polys, skewpoly
 
 logger = logging.getLogger("poly")
 tracer = trace.get_tracer("poly")
@@ -241,13 +241,13 @@ def roots_nth(N, d, p) -> list[int]:
 # @tracer.start_as_current_span("size_optimize")
 def size_optimize(f, g, s: float):
     # Optimal translation should be between [-2s, 2s]
-    n0 = skewpoly.l2norm(f, s)
+    # n0 = skewpoly.l2norm(f, s)
     fpoly = flint.fmpz_poly(f)
     t1, t2 = int(-2 * s), int(2 * s)
     f1 = [float(f) for f in fpoly(flint.fmpz_poly([t1, 1]))]
     f2 = [float(f) for f in fpoly(flint.fmpz_poly([t2, 1]))]
-    n1 = skewpoly.l2norm(f1, skewpoly.skewness(f1))
-    n2 = skewpoly.l2norm(f2, skewpoly.skewness(f2))
+    # n1 = skewpoly.l2norm(f1, skewpoly.skewness(f1))
+    # n2 = skewpoly.l2norm(f2, skewpoly.skewness(f2))
     while t2 - t1 > 100:
         m1 = (2 * t1 + t2) // 3
         m2 = (t1 + 2 * t2) // 3
@@ -256,13 +256,16 @@ def size_optimize(f, g, s: float):
         nn1 = skewpoly.l2norm(f1, skewpoly.skewness(f1))
         nn2 = skewpoly.l2norm(f2, skewpoly.skewness(f2))
         if nn1 < nn2:
-            t2, n2 = m2, nn2
+            t2 = m2
+            #n2 = nn2
         else:
-            t1, n1 = m1, nn1
+            t1 = m1
+            #n1 = nn1
     t = (t1 + t2) // 2
     f = [int(fi) for fi in fpoly(flint.fmpz_poly([t, 1]))]
     g = [g[0] + t * g[1], g[1]]
-    nopt = skewpoly.l2norm(f, skew := skewpoly.skewness(f))
+    skew = skewpoly.skewness(f)
+    # nopt = skewpoly.l2norm(f, skew)
     # logger.debug(f"translate t={t} {n0}=>{nopt} ratio {n0 / nopt:.3f}")
     return f, g, skew
 
@@ -288,7 +291,7 @@ def root_optimize(f, g, s: float):
         alpha = polys.alpha(polys.discriminant(fi), fi)
         if alpha < bestalpha:
             # Usually there are always bad ideals: we want only mild singularities
-            if bads := polys.bad_ideals([int(c) for c in fi]):
+            if bads := bad_ideals([int(c) for c in fi]):
                 # if any(typ == polys.BadType.COMPLEX for _, _, typ in bads):
                 # logger.warning(
                 #    f"Skipping interesting polynomial f {fi} with bad primes {bads}"
