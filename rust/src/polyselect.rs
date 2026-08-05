@@ -180,7 +180,7 @@ pub(crate) fn root_sieve<const D: usize>(bound: i32, f: &[BigInt; D], g: &[BigIn
     let mut buf = [0.0_f32; 128];
     let mut discs = vec![]; // precompute discriminants
     let mut fplus = f.clone();
-    for _ in 0..*SMALLPRIMES.last().unwrap() {
+    for _ in 0..buf.len() {
         discs.push(discriminant(&fplus));
         fplus[0] += &g[0];
         fplus[0] += &g[1];
@@ -191,7 +191,14 @@ pub(crate) fn root_sieve<const D: usize>(bound: i32, f: &[BigInt; D], g: &[BigIn
         let gl: [i32; 2] = std::array::from_fn(|i| g[i].rem_euclid(&lbig).try_into().unwrap());
         let lf = l as f32;
         let factor = lf.log2() * lf / (lf + 1.);
-        for i in 0..l as usize {
+        let stride = match l {
+            2 => 64,
+            3 => 81,
+            5 => 125,
+            7 | 11 => l * l,
+            _ => l,
+        };
+        for i in 0..stride as usize {
             let v = avgval(lidx, &fl, &discs[i] % l == BigInt::ZERO);
             buf[i] = v as f32 * factor;
             fl[0] += gl[0];
@@ -204,16 +211,16 @@ pub(crate) fn root_sieve<const D: usize>(bound: i32, f: &[BigInt; D], g: &[BigIn
             }
         }
         // Fill array
-        let start = bound.rem_euclid(l); // -bound+start is multiple of l
+        let start = bound.rem_euclid(stride); // -bound+start is multiple of l
         for i in 0..start {
-            sieve[i as usize] += buf[(l - start + i) as usize];
+            sieve[i as usize] += buf[(stride - start + i) as usize];
         }
         let mut i = start;
-        while ((i + l) as usize) < sieve.len() {
-            for j in 0..l as usize {
+        while ((i + stride) as usize) < sieve.len() {
+            for j in 0..stride as usize {
                 sieve[i as usize + j] += buf[j];
             }
-            i += l;
+            i += stride;
         }
         for j in 0..(sieve.len() - (i as usize)) {
             sieve[i as usize + j] += buf[j];
