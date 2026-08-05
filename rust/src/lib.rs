@@ -1,4 +1,5 @@
 use anyhow::Result;
+use num_bigint::BigInt;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::IntoPyObjectExt;
@@ -14,6 +15,8 @@ fn nefelis_rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(legendre_symbol, m)?)?;
     m.add_function(wrap_pyfunction!(compute_characters, m)?)?;
     m.add_function(wrap_pyfunction!(sieve_squares, m)?)?;
+    m.add_function(wrap_pyfunction!(root_sieve, m)?)?;
+    m.add_function(wrap_pyfunction!(alpha, m)?)?;
     Ok(())
 }
 
@@ -108,4 +111,59 @@ fn sieve_squares(
     bound: u64,
 ) -> Vec<(i64, Vec<u64>)> {
     py.detach(|| polyselect::sieve_squares(&rootsq, &roots, bound))
+}
+
+#[pyfunction]
+fn root_sieve(py: Python<'_>, f: Vec<BigInt>, g: Vec<BigInt>, bound: u64) -> PyResult<Vec<i32>> {
+    if bound >= 16 << 20 {
+        return Err(PyValueError::new_err(format!("Bound {bound} is too large")));
+    }
+    if g.len() != 2 {
+        return Err(PyValueError::new_err(format!(
+            "Polynomial g has degree {} instead of 1",
+            g.len() as i32 - 1
+        )));
+    }
+    let bound = bound as i32;
+    let g: &[BigInt; 2] = g[..].try_into().unwrap();
+    py.detach(|| match f.len() {
+        3 => Ok(polyselect::root_sieve::<3>(
+            bound,
+            f[..].try_into().unwrap(),
+            g,
+        )),
+        4 => Ok(polyselect::root_sieve::<4>(
+            bound,
+            f[..].try_into().unwrap(),
+            g,
+        )),
+        5 => Ok(polyselect::root_sieve::<5>(
+            bound,
+            f[..].try_into().unwrap(),
+            g,
+        )),
+        6 => Ok(polyselect::root_sieve::<6>(
+            bound,
+            f[..].try_into().unwrap(),
+            g,
+        )),
+        lf => Err(PyValueError::new_err(format!(
+            "Polynomial f have unsupported degree {}",
+            lf as i64 - 1,
+        ))),
+    })
+}
+
+#[pyfunction]
+fn alpha(py: Python<'_>, _disc: BigInt, poly: Vec<BigInt>) -> PyResult<f64> {
+    py.detach(|| match poly.len() {
+        3 => Ok(polyselect::alpha::<3>(poly[..].try_into().unwrap())),
+        4 => Ok(polyselect::alpha::<4>(poly[..].try_into().unwrap())),
+        5 => Ok(polyselect::alpha::<5>(poly[..].try_into().unwrap())),
+        6 => Ok(polyselect::alpha::<6>(poly[..].try_into().unwrap())),
+        l => Err(PyValueError::new_err(format!(
+            "Polynomial has unsupported degree {}",
+            l as i64 - 1
+        ))),
+    })
 }

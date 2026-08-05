@@ -16,7 +16,7 @@ import numpy as np
 from opentelemetry import context, metrics, trace
 
 from nefelis import integers, polys, skewpoly
-from nefelis_rust import sieve_squares
+from nefelis_rust import sieve_squares, root_sieve
 
 logger = logging.getLogger("poly")
 tracer = trace.get_tracer("poly")
@@ -276,35 +276,7 @@ def root_optimize(f, g, s: float):
         # Nothing to do
         return f
     # The interval size is O(skew) and f[0] << sup
-    S = np.zeros(2 * bound, dtype=np.float32)
-    # print(bound, f[0] / abs(g[0]))
-    discs = []
-    for i in range(200):
-        fi = [f[0] + (i - bound) * g[0], f[1] + (i - bound) * g[1]] + f[2:]
-        discs.append(polys.discriminant(fi))
-    for l in polys.SMALLPRIMES:
-        if l <= 5:
-            ll = l**3
-        else:
-            ll = l
-        alpha_l = []
-        for i in range(-bound, -bound + ll):
-            fi = [f[0] + i * g[0], f[1] + i * g[1]] + f[2:]
-            if len(f) == 4:
-                fi_arr = np.array(fi, dtype=object)
-                v = polys.avgval3(
-                    discs[i + bound], fi[0], fi[1], fi[2], fi[3], l, fi_arr
-                )
-            elif len(f) == 5:
-                v = polys.avgval4(discs[i + bound], l, fi)
-            elif len(f) == 6:
-                v = polys.avgval5(discs[i + bound], l, fi)
-            else:
-                raise NotImplementedError
-            alpha_l.append(v)
-        alpha_l = np.array(alpha_l, dtype=np.float32) * math.log2(l) * l / (l + 1)
-        S += np.tile(alpha_l, (2 * bound) // ll + 1)[: len(S)]
-    best = (S > (np.max(S) - 0.5)).nonzero()[0] - bound
+    best = root_sieve(f, g, bound)
     assert len(best) > 0
     bestf = None
     bestalpha = 0
