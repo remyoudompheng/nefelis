@@ -40,7 +40,30 @@ pub(crate) fn sieve_squares(
     roots: &[(u64, u64)],
     bound: u64,
 ) -> Vec<(i64, Vec<u64>)> {
-    let mut s = Vec::with_capacity(rootsq.len() * roots.len());
+    let mut v = sieve_squares_impl(rootsq, roots, bound, true);
+    v.extend(sieve_squares_impl(rootsq, roots, bound, false));
+    v
+}
+
+pub(crate) fn sieve_squares_impl(
+    rootsq: &[(u64, u64)],
+    roots: &[(u64, u64)],
+    bound: u64,
+    positive: bool,
+) -> Vec<(i64, Vec<u64>)> {
+    // Estimate array size to reserve array and avoid reallocations.
+    let mut qratio = 0.0;
+    let mut pratio = 0.0;
+    for &(q, _) in rootsq {
+        qratio += 1.0 / (q * q) as f64;
+    }
+    for &(p, _) in roots {
+        pratio += 1.0 / (p * p) as f64;
+    }
+    let estimate = 1.1 * bound as f64 * pratio * qratio;
+    assert!(estimate < 128e6);
+
+    let mut s = Vec::with_capacity(estimate.round() as usize);
     for &(q, qr) in rootsq {
         let q2 = (q * q) as i64;
         for &(p, r0) in roots {
@@ -56,22 +79,26 @@ pub(crate) fn sieve_squares(
                 .rem_euclid(q2);
             let r0 = r0 as i64 + k * p2; // k*p2 < p2q2 cannot overflow
             debug_assert_eq!(r0 % q2, qr as i64);
-            let mut r = r0;
-            while r < bound as i64 {
-                s.push(r);
-                r += p2q2;
-            }
-            r = r0 - p2q2;
-            while r > -(bound as i64) {
-                s.push(r);
-                r -= p2q2;
+            if positive {
+                let mut r = r0;
+                while r < bound as i64 {
+                    s.push(r);
+                    r += p2q2;
+                }
+            } else {
+                let mut r = r0 - p2q2;
+                while r > -(bound as i64) {
+                    s.push(r);
+                    r -= p2q2;
+                }
             }
         }
+        assert!((s.len() as f64) < estimate);
     }
     s.sort_unstable();
     let mut res = vec![];
     for i in 1..s.len() {
-        if s[i - 1] == s[i] {
+        if s[i - 1] == s[i] && (i + 1 == s.len() || s[i] != s[i + 1]) {
             res.push(s[i]);
         }
     }
