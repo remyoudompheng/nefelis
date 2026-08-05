@@ -248,7 +248,7 @@ static SMALLPRIMES: [i32; 30] = [
     101, 103, 107, 109, 113,
 ];
 
-type FpPowers = [Vec<i32>; 4]; // arrays of x, x², x³, x^4 mod l
+type FpPowers = [Vec<i32>; 5]; // arrays of x, x², x³, x^4, x^5 mod l
 static FIELDS: std::sync::LazyLock<[FpPowers; 30]> = std::sync::LazyLock::new(|| {
     SMALLPRIMES.map(|l| {
         let mut pows = std::array::from_fn(|_| vec![0i32; l as usize]);
@@ -288,7 +288,7 @@ pub(crate) fn alpha<const D: usize>(poly: &[BigInt; D]) -> f64 {
 }
 
 fn avgval<const D: usize>(lidx: usize, poly: &[i32; D], ramified: bool) -> f64 {
-    debug_assert!(D <= 5);
+    debug_assert!(D <= 6);
     let l = SMALLPRIMES[lidx];
     let pows = &FIELDS[lidx];
     if !ramified {
@@ -366,7 +366,7 @@ fn avgval<const D: usize>(lidx: usize, poly: &[i32; D], ramified: bool) -> f64 {
 
 fn nroots<const D: usize>(pows: &FpPowers, l: i32, poly: &[i32; D]) -> usize {
     debug_assert_eq!(pows[0].len(), l as usize);
-    debug_assert!(D <= 5);
+    debug_assert!(D <= 6);
     let mut res = usize::from(poly[D - 1] % l == 0); // root at infinity
     for x in 0..l as usize {
         let mut v = poly[0];
@@ -397,6 +397,56 @@ pub(crate) fn discriminant(f: &[BigInt]) -> BigInt {
             let disc1 =
                 2 * c.pow(3) - 9 * b * c * d + 27 * b * b * e + 27 * a * d * d - 72 * a * c * e;
             (4 * &disc0 * &disc0 * &disc0 - &disc1 * &disc1) / 27
+        }
+        6 => {
+            // Construct D1 = f' and D2 = 5f - xf' = reverse(reverse(f)')
+            // then Res(D1, D2) = 125 Disc(f)
+            let [f0, f1, f2, f3, f4, f5] = f else {
+                unreachable!()
+            };
+            // Build the Bézout matrix of D1 and D2 (4x4 matrix)
+            // a b c d
+            // * e f g
+            // * * h i
+            // * * * j
+            let a = 4 * f4 * f4 - 10 * f5 * f3;
+            let e = 6 * f3 * f3 - 10 * f2 * f4 - 20 * f5 * f1;
+            let h = 6 * f2 * f2 - 10 * f3 * f1 - 20 * f0 * f4;
+            let j = 4 * f1 * f1 - 10 * f0 * f2;
+
+            let d = f4 * f1 - 25 * f5 * f0;
+            let c = 2 * f4 * f2 - 20 * f5 * f1;
+            let g = 2 * f1 * f3 - 20 * f0 * f4;
+            let b = 3 * f4 * f3 - 15 * f5 * f2;
+            let i = 3 * f1 * f2 - 15 * f0 * f3;
+            let f = 4 * f2 * f3 - 15 * f4 * f1 - 25 * f5 * f0;
+
+            // Sage verification:
+            // R.<f0,f1,f2,f3,f4,f5> = ZZ[]
+            // Rt, t = R["t"].objgen()
+            // f = Rt([f0, f1, f2, f3, f4, f5])
+            // D1 = f.derivative().reverse()
+            // D2 = f.reverse().derivative()
+            // x, y = R["x,y"].gens()
+            // Dxy = (D1(x)*D2(y) - D1(y)*D2(x))//(x-y)
+            // M = Matrix(R, 4, 4, [Dxy.coefficient({x: i, y: j}) for i in range(4) for j in range(4)])
+            // M.determinant() == 125 * f.discriminant()
+
+            // Now compute the 4x4 symmetric determinant
+            let p = &a * &e - &b * &b;
+            let q = &h * &j - &i * &i;
+            let r = &c * &g - &d * &f;
+
+            let n1 = &e * &c - &b * &f;
+            let n2 = &e * &d - &b * &g;
+            let n3 = &a * &f - &b * &c;
+            let n4 = &a * &g - &b * &d;
+
+            let k1 = &c * &n1 + &f * &n3;
+            let k2 = &c * &n2 + &f * &n4;
+            let k3 = &d * &n2 + &g * &n4;
+
+            (p * q + &r * &r - (j * k1 + h * k3 - 2 * i * k2)) / 125
         }
         _ => panic!("unsupported"),
     }
@@ -555,6 +605,19 @@ mod tests {
         assert_eq!(
             discriminant(&[7, 1, 9, 4, 2].map(BigInt::from)),
             1097356.into()
+        );
+        assert_eq!(
+            discriminant(&[4, 25, 7, 9, 4, 1].map(BigInt::from)),
+            1641060433.into()
+        );
+        // 4 f4^2 - 10 f5 f3 = 0
+        assert_eq!(
+            discriminant(&[4, 25, 7, 5, 5, 2].map(BigInt::from)),
+            10046820096_u64.into()
+        );
+        assert_eq!(
+            discriminant(&[-2, 5, -5, 6, 1, 7].map(BigInt::from)),
+            238936288_u64.into()
         );
     }
 
