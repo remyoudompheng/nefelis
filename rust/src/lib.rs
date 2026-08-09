@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 use anyhow::Result;
 use num_bigint::BigInt;
 use pyo3::exceptions::PyValueError;
@@ -36,6 +38,9 @@ mod nefelis_rust {
         fn discriminant(f: Vec<num_bigint::BigInt>) -> num_bigint::BigInt {
             crate::polyselect::discriminant(&f)
         }
+
+        #[pymodule_export]
+        use super::super::murphy;
     }
 
     #[pymodule]
@@ -200,4 +205,33 @@ fn alpha(py: Python<'_>, _disc: BigInt, poly: Vec<BigInt>) -> PyResult<f64> {
             l as i64 - 1
         ))),
     })
+}
+
+#[pyfunction]
+#[rustfmt::skip]
+fn murphy(
+    f: Vec<f64>, g: Vec<f64>,
+    alpha_f: f64, alpha_g: f64,
+    area: f64,
+    bf: f64, bg: f64,
+    skew: f64,
+) -> PyResult<f64> {
+    use crate::polyselect::murphy;
+
+    match (f.len(), g.len()) {
+        // degree(g) = 1
+        (5, 2) => Ok(murphy::<5, 2>(
+            f[..].try_into().unwrap(), g[..].try_into().unwrap(),
+            alpha_f, alpha_g, area, bf, bg, skew,
+        )),
+        (6, 2) => Ok(murphy::<6, 2>(
+            f[..].try_into().unwrap(), g[..].try_into().unwrap(),
+            alpha_f, alpha_g, area, bf, bg, skew,
+        )),
+        (lf, lg) => Err(PyValueError::new_err(format!(
+            "Polynomials have unsupported degrees {},{}",
+            lf as i64 - 1,
+            lg as i64 - 1,
+        ))),
+    }
 }

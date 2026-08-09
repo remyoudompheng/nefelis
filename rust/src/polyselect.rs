@@ -1,3 +1,6 @@
+#![allow(clippy::needless_range_loop)]
+#![allow(clippy::too_many_arguments)]
+
 use std::collections::HashSet;
 
 use num_bigint::BigInt;
@@ -510,13 +513,13 @@ pub(crate) fn skewness(f: &[f64]) -> f64 {
     // The norm is assumed to be a decreasing-then-increasing function of skew
     let mut s1 = 0.1;
     let mut s2 = 1e10;
-    let mut n1 = skew_l2norm(&f, s1);
-    let mut n2 = skew_l2norm(&f, s2);
+    let mut n1 = skew_l2norm(f, s1);
+    let mut n2 = skew_l2norm(f, s2);
     while s2 - s1 > 1e-3 {
         let t1 = (2.0 * s1 + s2) / 3.0;
         let t2 = (s1 + 2.0 * s2) / 3.0;
-        let m1 = skew_l2norm(&f, t1);
-        let m2 = skew_l2norm(&f, t2);
+        let m1 = skew_l2norm(f, t1);
+        let m2 = skew_l2norm(f, t2);
         if m1 < m2 {
             s2 = t2;
             n2 = m2;
@@ -530,6 +533,108 @@ pub(crate) fn skewness(f: &[f64]) -> f64 {
     } else {
         s2
     }
+}
+
+/// Computation of the Murphy E-score (following Cado-NFS methods, see E.sage file).
+/// It is only instantiated for (DF,DG)=(d,1) and (DF,DG)=(d,d-1)
+pub(crate) fn murphy<const DF: usize, const DG: usize>(
+    f: &[f64; DF],
+    g: &[f64; DG],
+    alpha_f: f64,
+    alpha_g: f64,
+    area: f64,
+    bf: f64,
+    bg: f64,
+    skew: f64,
+) -> f64 {
+    // Polynomial degrees
+    let df: usize = DF - 1;
+    let dg: usize = DG - 1;
+
+    // Apply skewness
+    let s = skew.sqrt();
+    let fskew: [f64; DF] = std::array::from_fn(|i| f[i] * s.powi(2 * i as i32 - df as i32));
+    let gskew: [f64; DG] = std::array::from_fn(|i| g[i] * s.powi(2 * i as i32 - dg as i32));
+    fn eval<const D: usize>(f: &[f64; D], x: f64, y: f64) -> f64 {
+        let (xx, xy, yy) = (x * x, x * y, y * y);
+        match D {
+            2 => f[1] * x + f[0] * y,
+            3 => f[2] * xx + f[1] * xy + f[0] * yy,
+            4 => (f[3] * x + f[2] * y) * xx + (f[1] * x + f[0] * y) * yy,
+            5 => {
+                (f[4] * xx + f[3] * xy + f[2] * yy) * xx
+                    + (f[1] * xy + f[0] * yy) * yy
+            }
+            6 => {
+                (f[5] * xx * x + f[4] * xx * y + f[3] * x * yy + f[2] * y * yy) * xx
+                    + (f[1] * x * yy + f[0] * y * yy) * yy
+            }
+            _ => panic!("unsupported degree {}", f.len() - 1),
+        }
+    }
+    let size_f = df as f64 * area.ln() / 2.0 + alpha_f;
+    let size_g = dg as f64 * area.ln() / 2.0 + alpha_g;
+    let invlog_bf = 1.0 / bf.ln();
+    let invlog_bg = 1.0 / bg.ln();
+    let mut integral = 0.0;
+    for i in 0..512 {
+        // x > 0, y > 0
+        let (x, y) = (SINES[511 - i], SINES[i]);
+        let fxy = eval(&fskew, x, y);
+        let u_f = (size_f + fxy.abs().ln()) * invlog_bf;
+        let gxy = eval(&gskew, x, y);
+        let u_g = (size_g + gxy.abs().ln()) * invlog_bg;
+        integral += dickman_rho(u_f) * dickman_rho(u_g);
+        //println!("{i} {} {} {}", size_f + fxy.abs().ln(), size_g + gxy.abs().ln(), dickman_rho(u_f) * dickman_rho(u_g)
+        // x < 0, y > 0
+        let fxy = eval(&fskew, -x, y);
+        let u_f = (size_f + fxy.abs().ln()) * invlog_bf;
+        let gxy = eval(&gskew, -x, y);
+        let u_g = (size_g + gxy.abs().ln()) * invlog_bg;
+        integral += dickman_rho(u_f) * dickman_rho(u_g);
+    }
+    integral / 1024.0
+}
+
+// Precomputed trigonometric values for sin((k+0.5)π/512)
+static SINES: std::sync::LazyLock<[f64; 512]> = std::sync::LazyLock::new(|| {
+    std::array::from_fn(|idx| (std::f64::consts::PI / 1024.0 * (idx as f64 + 0.5)).sin())
+});
+
+#[rustfmt::skip]
+const DICKMAN_SERIES: [&[f64]; 10] = [
+    // sage: for n in range(1, 11):
+    // ....:     s = dickman_rho.power_series(n, 20 + 3 * n).list()
+    // ....:     print("&[" + ", ".join(f"{si:.6e}" for si in s) + "],")
+    // 
+    // DICKMAN_SERIES[i] is a power series approximation for ρ(i+0.5+0.5x) where x = -1.0..+1.0
+    // relative precision is not constant but should be at least 1e-3
+    &[5.945350e-1, -3.333330e-1, 5.555560e-2, -1.234570e-2, 3.086420e-3, -8.230450e-4, 2.286240e-4, -6.532110e-5, 1.905200e-5, -5.645030e-6, 1.693510e-6, -5.131840e-7, 1.568060e-7, -4.824810e-8, 1.493390e-8],
+    &[1.303196e-1, -1.189070e-1, 4.522403e-2, -9.733574e-3, 2.077320e-3, -4.558280e-4, 1.034062e-4, -2.425888e-5, 5.878330e-6, -1.468414e-6, 3.772150e-7, -9.937562e-8, 2.677194e-8, -7.354917e-9, 2.055172e-9],
+    &[1.622959e-2, -1.861708e-2, 9.823147e-3, -3.089063e-3, 6.785987e-4, -1.369061e-4, 2.715140e-5, -5.434991e-6, 1.112568e-6, -2.345853e-7, 5.113831e-8, -1.154024e-8, 2.694264e-9, -6.494847e-10, 1.612063e-10],
+    &[1.370118e-3, -1.803288e-3, 1.134465e-3, -4.478547e-4, 1.231285e-4, -2.602473e-5, 4.944996e-6, -9.019266e-7, 1.631733e-7, -2.985129e-8, 5.591633e-9, -1.081360e-9, 2.169925e-10, -4.528355e-11],
+    &[8.601862e-5, -1.245562e-4, 8.762929e-5, -3.968859e-5, 1.288456e-5, -3.175759e-6, 6.349019e-7, -1.136936e-7, 1.929298e-8, -3.207243e-9, 5.337862e-10, -9.032640e-11, 1.571932e-11, -2.836534e-12],
+    &[4.250355e-6, -6.616816e-6, 5.045114e-6, -2.505629e-6, 9.077976e-7, -2.540884e-7, 5.700258e-8, -1.073536e-8, 1.815780e-9, -2.890531e-10, 4.468247e-11, -6.857419e-12, 1.062551e-12],
+    &[1.717870e-7, -2.833570e-7, 2.300060e-7, -1.223360e-7, 4.787730e-8, -1.465740e-8, 3.637510e-9, -7.507390e-10, 1.332540e-10, -2.134680e-11, 3.207830e-12, -4.652170e-13, 6.652670e-14],
+    &[5.840600e-9, -1.010510e-8, 8.631240e-9, -4.848400e-9, 2.012960e-9, -6.579900e-10, 1.759550e-10, -3.943890e-11, 7.550090e-12, -1.265720e-12, 1.925780e-13, -2.745240e-14],
+    &[1.706400e-10, -3.074000e-10, 2.740100e-10, -1.610400e-10, 7.015200e-11, -2.414300e-11, 6.830700e-12, -1.631100e-12, 3.345800e-13, -5.980600e-14, 9.494600e-15, -1.375700e-15],
+    &[4.356300e-12, -8.125500e-12, 7.512500e-12, -4.587900e-12, 2.081000e-12, -7.473800e-13, 2.212700e-13, -5.549900e-14, 1.202200e-14, -2.279100e-15, 3.824700e-16],
+];
+
+pub(crate) fn dickman_rho(x: f64) -> f64 {
+    if x <= 1.0 {
+        return 1.0;
+    }
+    assert!(1.0 < x && x < 12.0, "x={x}");
+    let idx = (x - 1.0).floor() as usize;
+    let t = 2.0 * x.fract() - 1.0;
+    // Evaluate power series
+    let f = DICKMAN_SERIES[idx];
+    let mut r = 0.0;
+    for i in 1..=f.len() {
+        r = r * t + f[f.len() - i];
+    }
+    r
 }
 
 #[cfg(test)]
@@ -634,5 +739,67 @@ mod tests {
         assert_eq!(s.round(), 29293087.);
         let n = skew_l2norm(&f, s);
         assert!(2.0103329e37 <= n && n <= 2.0103330e37);
+    }
+
+    #[test]
+    fn test_dickman_rho() {
+        // Compute values using Sage
+        // sage: for i in range(2, 20):
+        // ....:     x = round(uniform(i/2, i/2+0.5), 3)
+        // ....:     print(f"({x:.3f}, {dickman_rho(x):.9e}),")
+        // ....:
+        const TESTS: &[(f64, f64)] = &[
+            (1.211, 8.085535354e-1),
+            (1.550, 5.617450691e-1),
+            (2.422, 1.500078491e-1),
+            (2.873, 6.329508309e-2),
+            (3.072, 4.174128113e-2),
+            (3.721, 9.676966302e-3),
+            (4.075, 4.075630335e-3),
+            (4.999, 3.557082001e-4),
+            (5.078, 2.855946762e-4),
+            (5.537, 7.726561003e-5),
+            (6.173, 1.163807044e-5),
+            (6.815, 1.578612703e-6),
+            (7.433, 2.141970204e-7),
+            (7.599, 1.238189170e-7),
+            (8.044, 2.784705430e-8),
+            (8.984, 1.075343115e-9),
+            (9.316, 3.303595001e-10),
+            (9.665, 9.399218248e-11),
+            (10.168, 1.493026146e-11),
+            (10.954, 7.909388410e-13),
+        ];
+        for &(x, rho) in TESTS {
+            let r = dickman_rho(x);
+            assert!(
+                0.999 * rho < r && r < 1.001 * rho,
+                "expected rho({x})={rho} got {r}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_murphy_e() {
+        // Some polynomial generated for RSA-100
+        let f = [
+            -188141196272525220119337.,
+            16405626294446180377.,
+            455462999263479.,
+            -207590274528.,
+            -4384563.,
+            168.,
+        ];
+        let g = [-24637326430150487590., 1494153130583.];
+
+        // f, g, alpha_f, alpha_g, area, Bf, Bg, skew
+        // Compare with Cado-NFS E.sage:
+        // MurphyE(f, g, s=16567, Bf=6.711e+07,Bg=3.355e+07,area=3.775e+11, K=1024)
+        // 0.0000101555127950326
+        let e = murphy(
+            &f, &g, -2.303274, 0.5694650, 3.775e+11, 6.711e+07, 3.355e+07, 16567.,
+        );
+        println!("{e}");
+        assert!(0.0000101555 < e && e < 0.0000101556, "{e}");
     }
 }
