@@ -6,7 +6,9 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Seek, SeekFrom, Write};
 
 use anyhow::{bail, Context, Result};
+use num_bigint::BigInt;
 use num_integer::Integer;
+use rayon::prelude::{ParallelIterator, ParallelSliceMut};
 
 use crate::math::legendre_symbol;
 
@@ -603,4 +605,388 @@ where
         "Purged {to_remove} relations with score {score_min}..{score_max}"
     ));
     to_remove
+}
+
+type SMRel = (BigInt, Vec<(u32, i32)>);
+
+/// Returns a list of encoded relations (list of sparse rows with column indices)
+/// and the basis labels.
+///
+/// Each relation is mapped using the provided Schirokauer map (sm_root, ell).
+///
+/// FIXME: currently assumes that primes are not ramified.
+pub(crate) fn parse_with_sm(
+    file_path: &str,
+    sm_root: &BigInt,
+    ell: &BigInt,
+) -> Result<(Vec<String>, Vec<SMRel>)> {
+    let file = File::open(file_path).context("failed to open file")?;
+    let mut reader = BufReader::new(file);
+
+    // Basis keys are (±l, r) where +l is for the f side and -l is for the g side.
+    let mut basis_idx = HashMap::<(i32, i32), u32>::new();
+    // Index 0 is "CONSTANT"
+    let mut last_basis_idx = 0;
+    let mut basis_str: Vec<String> = vec!["CONSTANT".into()];
+
+    let mut all_rels: Vec<SMRel> = vec![];
+
+    // Schirokauer parameters
+    let sm_exp = ell - 1;
+    let sm_mod = ell * ell;
+
+    loop {
+        let mut line = String::new();
+        let read = reader.read_line(&mut line).context("Failed to read line")?;
+        if read == 0 {
+            break; // End of file
+        }
+
+        let line = line.trim();
+
+        // Skip comments
+        if line.starts_with('#') {
+            continue;
+        }
+
+        // Split the line into parts
+        let parts: Vec<&str> = line.split(':').collect();
+        if parts.len() < 3 {
+            continue;
+        }
+
+        let mut rel = Vec::<(u32, i32)>::with_capacity(32);
+        rel.push((0, 1));
+
+        let [x, y] = parts[0].split(',').collect::<Vec<_>>()[..] else {
+            bail!("invalid x,y coordinates at {}", parts[0])
+        };
+        let x = x.parse::<i64>().context("invalid x")?;
+        let y = y.parse::<i64>().context("invalid y")?;
+
+        let facf = parts[1];
+        let facg = parts[2];
+
+        for f in facf.split(",") {
+            let l = i64::from_str_radix(f.trim(), 16).context("invalid hex number")?;
+            let d = y.extended_gcd(&l); // {gcd, d.x=yinv, y=..}
+            let mut r = if d.gcd == l {
+                l
+            } else {
+                x.checked_mul(d.x).expect("overflow") % l
+            };
+            if r < 0 {
+                r += l;
+            }
+
+            let key = (l as i32, r as i32);
+            let idx = if let Some(idx) = basis_idx.get(&key) {
+                *idx
+            } else {
+                last_basis_idx += 1;
+                basis_idx.insert(key, last_basis_idx);
+                basis_str.push(format!("f_{l}_{r}"));
+                last_basis_idx
+            };
+            let rel_last = rel.len() - 1;
+            if rel[rel_last].0 == idx {
+                rel[rel_last].1 += 1;
+            } else {
+                rel.push((idx, 1));
+            }
+        }
+
+        for f in facg.split(",") {
+            let l = i64::from_str_radix(f.trim(), 16).context("invalid hex number")?;
+            let d = y.extended_gcd(&l); // {gcd, d.x=yinv, y=..}
+            let mut r = if d.gcd == l {
+                l
+            } else {
+                x.checked_mul(d.x).expect("overflow") % l
+            };
+            if r < 0 {
+                r += l;
+            }
+            let key = (-(l as i32), r as i32);
+            let idx = if let Some(idx) = basis_idx.get(&key) {
+                *idx
+            } else {
+                last_basis_idx += 1;
+                basis_idx.insert(key, last_basis_idx);
+                basis_str.push(format!("g_{l}_{r}"));
+                last_basis_idx
+            };
+
+            let rel_last = rel.len() - 1;
+            if rel[rel_last].0 == idx {
+                rel[rel_last].1 += 1;
+            } else {
+                rel.push((idx, 1));
+            }
+        }
+        // Don't compute modular power now.
+        all_rels.push((x + y * sm_root, rel))
+    }
+    // Compute Schirokauer map in parallel
+    // sm = (x + y * sm_root).modpow(&sm_exp, &sm_mod) / ell;
+    all_rels.par_chunks_mut(16).for_each(|slice| {
+        for s in slice {
+            s.0 = s.0.modpow(&sm_exp, &sm_mod) / ell;
+        }
+    });
+    Ok((basis_str, all_rels))
+}
+
+pub(crate) fn merge_sm<F>(rels: &mut Vec<SMRel>, dim: usize, logfunc: F)
+where
+    F: Fn(String),
+{
+    for maxmult in [4, 6, 8, 10, 12, 14, 16, 18, 20] {
+        merge_sm_iter(rels, dim + 1, maxmult, &logfunc);
+        if rels.iter().map(|r| r.1.len()).sum::<usize>() > rels.len() * MAX_WEIGHT {
+            break;
+        }
+    }
+    clear_excess_sm(rels, dim + 1, &logfunc);
+}
+
+/// Variant of merge with coefficients mod ell.
+/// A relation is a tuple with a large coefficient (SM map) and a sparse vector with small
+/// coefficients (vector of (basis index, coefficient))
+fn merge_sm_iter<F>(rels: &mut Vec<SMRel>, ncols: usize, maxmult: usize, logfunc: F)
+where
+    F: Fn(String),
+{
+    let mut counts = vec![0_u32; ncols];
+    for (_, r) in rels.iter() {
+        for &(x, _) in r {
+            counts[x as usize] += 1;
+        }
+    }
+    let nr = rels.len();
+    let nc = counts.iter().filter(|&&n| n != 0).count();
+    // Select all pivots and order by increasing multiplicity.
+    let mut pivots = vec![];
+    for (idx, &c) in counts.iter().enumerate() {
+        if 0 < c && c as usize <= maxmult {
+            pivots.push(idx);
+        }
+    }
+    pivots.sort_by_key(|&idx| counts[idx]);
+    // Build reverse index
+    let mut revidx = HashMap::<usize, Vec<usize>>::new();
+    for &p in &pivots {
+        revidx.insert(p, vec![]);
+    }
+    for (ridx, r) in rels.iter().enumerate() {
+        for &(x, _) in &r.1 {
+            if counts[x as usize] as usize <= maxmult {
+                revidx.get_mut(&(x as usize)).unwrap().push(ridx);
+            }
+        }
+    }
+    let weight = |rel: &SMRel| -> usize {
+        let mut res = 0;
+        for &(x, _) in &rel.1 {
+            if counts[x as usize] < DENSE_LIMIT {
+                res += 1;
+            }
+        }
+        res
+    };
+    // Perform merge
+    let mut pivoted = vec![false; ncols];
+    let mut n_pivoted = 0;
+    let n_pivots = pivots.len();
+    for p in pivots {
+        if pivoted[p] {
+            continue;
+        }
+        let prels = revidx.get_mut(&p).unwrap();
+        prels.retain(|&ridx| rels[ridx].1.len() > 0);
+        if prels.len() == 0 {
+            continue; // all eliminated
+        }
+        prels.sort_by_key(|&ridx| weight(&rels[ridx]));
+        // Smallest relation is the pivot
+        let pividx = prels[0];
+        let piv = rels[pividx].clone(); // FIXME: avoid clone?
+        assert!(piv.1.len() > 0);
+        // Only pivot if coefficient is ±1
+        let piv_coef = piv.1.iter().find(|&&(idx, _)| idx == p as u32).unwrap().1;
+        if piv_coef.abs() != 1 {
+            continue;
+        }
+        //assert!(piv.1.contains(&(p as i32)));
+        for &tgt in &prels[1..] {
+            let rel_tgt = &mut rels[tgt];
+            let tgt_coef =
+                if let Some(tgt_pair) = rel_tgt.1.iter().find(|&&(idx, _)| idx == p as u32) {
+                    -piv_coef * tgt_pair.1
+                } else {
+                    continue; // cannot pivot.
+                };
+            rel_tgt.0 += tgt_coef * &piv.0;
+            for &(idx, c) in &piv.1 {
+                rel_tgt.1.push((idx, c * tgt_coef));
+            }
+            simplify_rel_int(&mut rel_tgt.1);
+        }
+        // Clear pivot
+        for (x, _) in piv.1 {
+            pivoted[x as usize] = true;
+        }
+        rels[pividx].0 = BigInt::ZERO;
+        rels[pividx].1.clear();
+        n_pivoted += 1;
+    }
+    rels.retain(|r| r.1.len() > 0);
+    logfunc(format!(
+        "{maxmult}-merge: {nc} columns {nr} rows excess={} pivots={n_pivoted}/{n_pivots}",
+        nr - nc
+    ));
+}
+
+fn simplify_rel_int(rel: &mut Vec<(u32, i32)>) {
+    // Invariant: each key appears at most 2 times in rel.
+    rel.sort();
+    for i in 1..rel.len() {
+        // Merge duplicates
+        if rel[i - 1].0 == rel[i].0 {
+            rel[i - 1].1 += rel[i].1;
+            rel[i] = (0, 0);
+        }
+    }
+    rel.retain(|&(_, y)| y != 0);
+}
+
+fn clear_excess_sm<F>(rels: &mut Vec<SMRel>, ncols: usize, logfunc: F) -> usize
+where
+    F: Fn(String),
+{
+    let mut counts = vec![0_u32; ncols];
+    for r in rels.iter() {
+        for &(x, _) in &r.1 {
+            counts[x as usize] += 1;
+        }
+    }
+    let nr = rels.len();
+    let nc = counts.iter().filter(|&&n| n != 0).count();
+    let excess = nr - nc;
+    if excess <= MIN_EXCESS {
+        return 0;
+    }
+
+    let weight = |rel: &SMRel| -> usize {
+        let mut res = 0;
+        for &(x, _) in &rel.1 {
+            if counts[x as usize] < DENSE_LIMIT {
+                res += 1;
+            }
+        }
+        res
+    };
+    let mut idx: Vec<usize> = (0..rels.len()).collect();
+    idx.sort_by_key(|&ridx| weight(&rels[ridx]));
+    let to_remove = excess - MIN_EXCESS;
+    let score_min = weight(&rels[idx[idx.len().saturating_sub(to_remove)]]);
+    let score_max = weight(&rels[idx[idx.len() - 1]]);
+    for &i in &idx[idx.len().saturating_sub(to_remove)..] {
+        rels[i].1.clear()
+    }
+    rels.retain(|r| !r.1.is_empty());
+    logfunc(format!(
+        "Purged {to_remove} relations with score {score_min}..{score_max}"
+    ));
+    to_remove
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_simplify_rel() {
+        let mut r1 = vec![-5, -2, 1, 4, 7, 9, -3, -2, 0, 1, 5, 7, 8];
+        simplify_rel(&mut r1);
+        assert_eq!(r1, vec![-5, -3, 0, 4, 5, 8, 9]);
+    }
+
+    #[test]
+    fn test_simplify_rel_int() {
+        let mut r1 = vec![
+            (1, 1),
+            (4, 1),
+            (7, 5),
+            (9, 1),
+            (12, 1),
+            (15, 1),
+            (0, 1),
+            (1, 3),
+            (5, 2),
+            (7, -5),
+            (8, 3),
+            (12, -2),
+            (13, 1),
+        ];
+        simplify_rel_int(&mut r1);
+        assert_eq!(
+            r1,
+            vec![
+                (0, 1),
+                (1, 4),
+                (4, 1),
+                (5, 2),
+                (8, 3),
+                (9, 1),
+                (12, -1),
+                (13, 1),
+                (15, 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_merge() {
+        const DIM: usize = 10000;
+        let modulus = BigInt::parse_bytes(b"269586243877523190733764390472237692791", 10).unwrap();
+        // Secret kernel vector
+        let mut kernel = vec![-BigInt::ONE];
+        let mut buf = [0u8; 8];
+        for _ in 1..DIM {
+            rand::fill(&mut buf);
+            let x = BigInt::from_bytes_be(num_bigint::Sign::Plus, &buf);
+            kernel.push(x);
+        }
+        // Generate relations with 30 coefficients
+        let mut rels: Vec<SMRel> = vec![];
+        for _ in 0..DIM + 32 {
+            let mut r1 = vec![];
+            let mut x = BigInt::ZERO;
+            for _ in 0..10 {
+                let r = rand::random_range(1..DIM * DIM).isqrt();
+                let c = if rand::random_bool(0.5) { -1 } else { 1 };
+                x += c * &kernel[r];
+                r1.push((r as u32, c));
+            }
+            assert_eq!(
+                &r1[..]
+                    .iter()
+                    .map(|&(x, c)| c * &kernel[x as usize])
+                    .sum::<BigInt>(),
+                &x
+            );
+            rels.push((x % &modulus, r1));
+        }
+        // Perform merge
+        merge_sm(&mut rels, DIM, |s: String| println!("{s}"));
+        // Check output
+        for (r0, r1) in rels {
+            let r1k = r1
+                .into_iter()
+                .map(|(x, c)| c * &kernel[x as usize])
+                .sum::<BigInt>();
+            assert_eq!(r1k, r0);
+        }
+    }
 }

@@ -28,6 +28,16 @@ mod nefelis_rust {
     use super::sieve_squares;
 
     #[pymodule]
+    mod filter {
+        #[pymodule_export]
+        use super::merge_relations;
+        #[pymodule_export]
+        use super::prune_relations;
+        #[pymodule_export]
+        use crate::merge_relations_sm;
+    }
+
+    #[pymodule]
     mod polys {
         use pyo3::prelude::*;
 
@@ -125,6 +135,55 @@ fn merge_relations(
 
     let filtered_packed: Vec<Vec<u8>> = filtered.into_iter().map(filter::le32_vector).collect();
     (filtered_packed, zrels).into_py_any(py)
+}
+
+#[pyfunction]
+#[pyo3(signature=(filename, sm_root, ell, logger=None),
+        text_signature="(filename: str, sm_root: int, ell: int, logger=None)")]
+fn merge_relations_sm(
+    py: Python<'_>,
+    filename: &str,
+    sm_root: BigInt,
+    ell: BigInt,
+    logger: Option<Py<PyAny>>,
+) -> PyResult<Py<PyAny>> {
+    let logfunc = |s: String| {
+        if let Some(l) = &logger {
+            let _ = l.call_method1(py, "info", (s,));
+        }
+    };
+    let (basis, mut rels) = filter::parse_with_sm(filename, &sm_root, &ell)
+        .map_err(|e| PyValueError::new_err(format!("Could not parse file: {e}")))?;
+
+    filter::merge_sm(&mut rels, basis.len(), logfunc);
+    // Round modulo l
+    for r in rels.iter_mut() {
+        r.0 %= &ell;
+    }
+
+    // Reuse the same string keys for all dictionaries.
+    let mut pybasis: Vec<Py<PyAny>> = vec![];
+    for b in basis {
+        pybasis.push(b.into_py_any(py)?);
+    }
+    let sm_key = "SM".into_py_any(py)?;
+
+    let mut result = vec![];
+    for rel in rels {
+        let d = pyo3::types::PyDict::new(py);
+        d.set_item(&sm_key, rel.0)?;
+        for (k, v) in rel.1 {
+            d.set_item(&pybasis[k as usize], v)?;
+        }
+        result.push(d)
+    }
+    // FIXME: export to file?
+    //filter::write_filtered(&format!("{filename}.filtered"), &filtered)
+    //    .map_err(|e| PyValueError::new_err(format!("Could not parse file: {e}")))?;
+
+    //let filtered_packed: Vec<Vec<u8>> = filtered.into_iter().map(filter::le32_vector).collect();
+    //(filtered_packed, zrels).into_py_any(py)
+    result.into_py_any(py)
 }
 
 #[pyfunction]

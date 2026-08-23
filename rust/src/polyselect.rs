@@ -270,7 +270,7 @@ static FIELDS: LazyLock<[FpPowers; SMALLPRIMES.len()]> = LazyLock::new(|| {
 static SQUARES: LazyLock<[Vec<bool>; SMALLPRIMES.len()]> = LazyLock::new(|| {
     SMALLPRIMES.map(|l| {
         let mut v = vec![false; l as usize];
-        for x in 0..l / 2 + 1{
+        for x in 0..l / 2 + 1 {
             let x2 = (x * x) % l;
             v[x2 as usize] = true;
         }
@@ -289,7 +289,9 @@ pub(crate) fn alpha<const D: usize>(poly: &[BigInt; D]) -> f64 {
             BigInt::from(l.pow(2))
         };
         let mut disc_modl: i32 = (&disc % l).try_into().unwrap();
-        if disc_modl < 0 { disc_modl += l };
+        if disc_modl < 0 {
+            disc_modl += l
+        };
         let al = if disc_modl != 0 && D == 3 && l > 2 {
             // Quadratic polynomial, number of roots is known.
             let n = 2 * usize::from(SQUARES[lidx][disc_modl as usize]);
@@ -584,10 +586,7 @@ pub(crate) fn murphy<const DF: usize, const DG: usize>(
             2 => f[1] * x + f[0] * y,
             3 => f[2] * xx + f[1] * xy + f[0] * yy,
             4 => (f[3] * x + f[2] * y) * xx + (f[1] * x + f[0] * y) * yy,
-            5 => {
-                (f[4] * xx + f[3] * xy + f[2] * yy) * xx
-                    + (f[1] * xy + f[0] * yy) * yy
-            }
+            5 => (f[4] * xx + f[3] * xy + f[2] * yy) * xx + (f[1] * xy + f[0] * yy) * yy,
             6 => {
                 (f[5] * xx * x + f[4] * xx * y + f[3] * x * yy + f[2] * y * yy) * xx
                     + (f[1] * x * yy + f[0] * y * yy) * yy

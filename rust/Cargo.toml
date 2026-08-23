@@ -20,6 +20,11 @@ num-bigint = "0.4" # consistency with pyo3
 num-integer = "0.1"
 num-traits = "0.2"
 petgraph = "0.8"
+rayon = "1.12"
+
+
+[dev-dependencies]
+rand = { version = "0.10", features = ["thread_rng"] }
 
 [profile.release]
 debug = 2
