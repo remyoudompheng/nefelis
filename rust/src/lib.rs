@@ -233,6 +233,15 @@ fn murphy(
             f[..].try_into().unwrap(), g[..].try_into().unwrap(),
             alpha_f, alpha_g, area, bf, bg, skew,
         )),
+        // Joux-Lercier
+        (3, 2) => Ok(murphy::<3, 2>(
+            f[..].try_into().unwrap(), g[..].try_into().unwrap(),
+            alpha_f, alpha_g, area, bf, bg, skew,
+        )),
+        (4, 3) => Ok(murphy::<4, 3>(
+            f[..].try_into().unwrap(), g[..].try_into().unwrap(),
+            alpha_f, alpha_g, area, bf, bg, skew,
+        )),
         (lf, lg) => Err(PyValueError::new_err(format!(
             "Polynomials have unsupported degrees {},{}",
             lf as i64 - 1,
