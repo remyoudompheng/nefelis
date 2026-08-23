@@ -2,7 +2,7 @@ import argparse
 import logging
 import math
 import time
-from multiprocessing import Pool
+from multiprocessing import Pool, Value
 
 import flint
 from nefelis_rust import polys
@@ -30,9 +30,11 @@ smallvectors = [
 
 
 class Polyselect:
-    def __init__(self, N, l):
+    def __init__(self, N, l, area, bf, bg, global_best):
         # Baseline score: we should always do better
         self.best = math.log2(N) / 3.0
+        self.global_best = global_best
+        self.area, self.bf, self.bg = area, bf, bg
         self.Zmod = flint.fmpz_mod_ctx(N)
         self.N = N
         self.ell = l
@@ -52,6 +54,11 @@ class Polyselect:
             self.j3 = pow(g3, (N - 1) // 3, N)
             assert pow(self.g3, (N - 1) // self.n3, N) == 1
 
+    def murphy(self, f, g, af, ag):
+        if self.area is None:
+            return None
+        return polys.murphy(f, g, af, ag, self.area, self.bf, self.bg, 1.0)
+
     def _cbrt(self, x: flint.fmpz_mod) -> [flint.fmpz_mod]:
         """
         Cubic roots modulo N
@@ -66,7 +73,7 @@ class Polyselect:
             y *= self.g3
         return [y, y * self.j3, y * self.j3 * self.j3]
 
-    def process(self, D: int, a: int, b: int, c: int, d: int, global_best: float = 1e9):
+    def process(self, D: int, a: int, b: int, c: int, d: int):
         """
         Tries pairs of polynomials with f=ax³+bx²+cx+d.
         """
@@ -101,6 +108,7 @@ class Polyselect:
 
         f = [a, b, c, d]
         g = None
+        best_efg = 0.0
         # Norm for degree 3 polynomials
         fsize = polys.l2norm(f)
         fbits = math.log2(fsize) / 2
@@ -121,14 +129,23 @@ class Polyselect:
             # Using typical parameters, the smoothness probability
             # is ~30% less sensitive to the lognorm of f than to the lognorm of g.
             score = gbits + ag + 0.7 * (fbits + af)
-            if score < self.best and score < global_best:
+            self.best = min(self.best, score)
+            if score > self.best + 2.0:
+                continue
+
+            efg = self.murphy(f, thisg, af, ag) or -score
+            if efg > self.global_best.value:
+                with self.global_best.get_lock():
+                    self.global_best.value = max(self.global_best.value, efg)
+
                 logger.debug(
                     f"GOOD! {D=} {f} "
                     f"fsize={math.log2(fsize) / 2:.1f} a(f)={af:.2f} normf={fbits:.2f} "
-                    f"a(g)={ag:.2f} normg={gbits:.2f} score {score:.2f}"
+                    f"a(g)={ag:.2f} normg={gbits:.2f} score {score:.2f} E={efg:.4g}"
                 )
+
                 # FIXME: handle bad primes to avoid this
-                if bads := bad_ideals([d, c, b, a]):
+                if bads := bad_ideals(f):
                     logger.warning(
                         f"Skipping interesting polynomial f {f} with bad primes {bads}"
                     )
@@ -138,8 +155,8 @@ class Polyselect:
                         f"Skipping interesting polynomial g {[w, v, u]} with bad primes {badg}"
                     )
                     continue
-                self.best = score
-                g = [u, v, w]
+
+                g, best_efg = thisg, efg
                 if self.ell is None:
                     # Check number of real roots
                     roots_f = flint.fmpz_poly(f).complex_roots()
@@ -150,22 +167,29 @@ class Polyselect:
 
         if g is None:
             return None
-        return f, g, self.best
+        return f, g, best_efg
 
 
 WORKER = None
 
 
-def worker_init(N: int, l: int):
+def worker_init(N: int, l: int, area, bf, bg, global_best):
     global WORKER
-    WORKER = Polyselect(N, l)
+    WORKER = Polyselect(N, l, area, bf, bg, global_best)
 
 
 def worker_do(args):
     return WORKER.process(*args)
 
 
-def polyselect(N: int, bound: int | None = None, ell: int | None = None):
+def polyselect(
+    N: int,
+    area: float | None = None,
+    bf: float | None = None,
+    bg: float | None = None,
+    bound: int | None = None,
+    ell: int | None = None,
+):
     """
     Select a good cubic polynomial for discrete logarithm modulo N,
     with coefficient smaller than given bound.
@@ -181,7 +205,7 @@ def polyselect(N: int, bound: int | None = None, ell: int | None = None):
         assert flint.fmpz(ell).is_probable_prime()
 
     counter = 0
-    best = 1e9
+    best = None
     best_fg = None
 
     def irreducibles():
@@ -221,25 +245,28 @@ def polyselect(N: int, bound: int | None = None, ell: int | None = None):
                             continue
 
                         counter += 1
-                        yield D, a, b, c, d, best
+                        yield D, a, b, c, d
 
     logger.info(f"Starting polynomial selection with degree 3 and bound {bound}")
     logger.info(f"Base score {N.bit_length() // 3}")
 
-    pool = Pool(initializer=worker_init, initargs=(N, ell))
+    shared_best = Value("d", -1e9)
+    pool = Pool(initializer=worker_init, initargs=(N, ell, area, bf, bg, shared_best))
 
     t0 = time.monotonic()
     for item in pool.imap_unordered(worker_do, irreducibles(), chunksize=32):
         if item is None:
             continue
         f, g, score = item
-        if score < best:
-            logger.info(f"Found polynomials {f=} {g=} {score=:.2f}")
+        if best is None or score > best:
+            logger.info(f"Found polynomials {f=} {g=} score={abs(score):.3g}")
             best = score
             best_fg = f, g
 
     dt = time.monotonic() - t0
     logger.info(f"Scanned {counter} polynomials of degree 3 in {dt:.3f}s")
+    if area is not None:
+        logger.info(f"Best MurphyE(Bf={bf:.4g},Bg={bg:.4g},area={area:.4g})={best:.4g}")
     return best_fg
 
 
@@ -290,7 +317,7 @@ def main():
     args = argp.parse_args()
 
     nefelis.logging.setup(logging.DEBUG if args.v else logging.INFO)
-    f, g = polyselect(args.N, args.bound)
+    f, g = polyselect(args.N, bound=args.bound)
     print("f", f)
     print("g", g)
 

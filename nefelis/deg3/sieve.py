@@ -226,14 +226,16 @@ def main_impl(args):
         # FIXME: process all large factors of N-1
         logger.info(f"Computing dlog modulo {ell}")
 
+    # For MurphyE score: use bounds 2B1 for g (actual sieve) and B2 for f (no sieve)
+    sieve_area = 2 * qmin * 2 ** (2 * I + 2)
     if args.poly:
         with open(args.poly) as fd:
             poly_n, f, g = cadocompat.import_polys(fd)
         assert N == poly_n, f"polynomial file has N={poly_n}"
     elif args.nosm:
-        f, g = polyselect(N)
+        f, g = polyselect(N, area=sieve_area, bf=2**B2f, bg=2 * B1g)
     else:
-        f, g = polyselect(N, ell=ell)
+        f, g = polyselect(N, area=sieve_area, bf=2**B2f, bg=2 * B1g, ell=ell)
 
     C, B, A = g
     for r, _ in flint.fmpz_mod_poly(f, flint.fmpz_mod_poly_ctx(N)).roots():
