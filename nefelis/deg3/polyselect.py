@@ -117,11 +117,10 @@ class Polyselect:
             if u.bit_length() + v.bit_length() + w.bit_length() < N.bit_length() // 2:
                 # the polynomial was not irreducible over Q
                 return None
+            # We want to avoid real quadratic fields (positive discriminants)
             Dg = v * v - 4 * u * w
-            if self.ell is None:
-                # We want to avoid real quadratic fields (positive discriminants)
-                if Dg >= 0:
-                    continue
+            if Dg >= 0:
+                continue
             thisg = [u, v, w]
             ag = polys.alpha(Dg, thisg)
             gsize = float(3 * (u * u + w * w) + 2 * u * w + v * v) / 6.0
@@ -150,19 +149,19 @@ class Polyselect:
                         f"Skipping interesting polynomial f {f} with bad primes {bads}"
                     )
                     continue
-                if badg := bad_ideals(thisg):
+                if badg := bad_ideals([w, v, u]):
                     logger.warning(
                         f"Skipping interesting polynomial g {[w, v, u]} with bad primes {badg}"
                     )
                     continue
 
                 g, best_efg = thisg, efg
-                if self.ell is None:
-                    # Check number of real roots
-                    roots_f = flint.fmpz_poly(f).complex_roots()
-                    assert sum(1 for r, _ in roots_f if r.imag == 0) == 1
-                    roots_g = flint.fmpz_poly(g).complex_roots()
-                    assert sum(1 for r, _ in roots_g if r.imag == 0) == 0
+                # Check number of real roots
+                roots_f = flint.fmpz_poly(f).complex_roots()
+                assert sum(1 for r, _ in roots_f if r.imag == 0) == 1
+                # Kg must be a complex quadratic field.
+                roots_g = flint.fmpz_poly(g).complex_roots()
+                assert sum(1 for r, _ in roots_g if r.imag == 0) == 0
                 assert u * r * r + v * r + w == 0
 
         if g is None:
@@ -227,14 +226,13 @@ def polyselect(
                             - 4 * ac * cc
                             - 27 * ad * ad
                         )
+                        # We want only 1 real root to have a rank 1 unit group
+                        if D >= 0:
+                            continue
                         if ell is not None:
                             # We want a root modulo l, the easiest way is to
                             # have jacobi(D, l)==-1
                             if flint.fmpz(D).jacobi(ell) != -1:
-                                continue
-                        else:
-                            # No-SM mode, we want only 1 real root to keep the group of units small
-                            if D >= 0:
                                 continue
                         # We want a root modulo N, they are easier to compute
                         # if -3D is a square
