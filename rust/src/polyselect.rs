@@ -2,6 +2,7 @@
 #![allow(clippy::too_many_arguments)]
 
 use std::collections::HashSet;
+use std::sync::LazyLock;
 
 use num_bigint::BigInt;
 use num_integer::Integer;
@@ -252,7 +253,7 @@ static SMALLPRIMES: [i32; 30] = [
 ];
 
 type FpPowers = [Vec<i32>; 5]; // arrays of x, x², x³, x^4, x^5 mod l
-static FIELDS: std::sync::LazyLock<[FpPowers; 30]> = std::sync::LazyLock::new(|| {
+static FIELDS: LazyLock<[FpPowers; SMALLPRIMES.len()]> = LazyLock::new(|| {
     SMALLPRIMES.map(|l| {
         let mut pows = std::array::from_fn(|_| vec![0i32; l as usize]);
         for x in 0..l {
@@ -266,6 +267,17 @@ static FIELDS: std::sync::LazyLock<[FpPowers; 30]> = std::sync::LazyLock::new(||
     })
 });
 
+static SQUARES: LazyLock<[Vec<bool>; SMALLPRIMES.len()]> = LazyLock::new(|| {
+    SMALLPRIMES.map(|l| {
+        let mut v = vec![false; l as usize];
+        for x in 0..l / 2 + 1{
+            let x2 = (x * x) % l;
+            v[x2 as usize] = true;
+        }
+        v
+    })
+});
+
 /// Compute α(poly) in base 2 (log2 instead of log).
 pub(crate) fn alpha<const D: usize>(poly: &[BigInt; D]) -> f64 {
     let mut a = 0.0;
@@ -276,12 +288,23 @@ pub(crate) fn alpha<const D: usize>(poly: &[BigInt; D]) -> f64 {
         } else {
             BigInt::from(l.pow(2))
         };
-        let mut f: [i32; D] =
-            std::array::from_fn(|i| poly[i].rem_euclid(&lbig).try_into().unwrap());
-        if f[D - 1] % l == 0 {
-            f.reverse();
-        }
-        let al = avgval(lidx, &f, &disc % l == BigInt::ZERO);
+        let mut disc_modl: i32 = (&disc % l).try_into().unwrap();
+        if disc_modl < 0 { disc_modl += l };
+        let al = if disc_modl != 0 && D == 3 && l > 2 {
+            // Quadratic polynomial, number of roots is known.
+            let n = 2 * usize::from(SQUARES[lidx][disc_modl as usize]);
+            n as f64 / (l - 1) as f64
+        } else if disc_modl != 0 && D == 4 && !SQUARES[lidx][disc_modl as usize] {
+            // Cubic polynomial with non-square discriminant has 1 root
+            1.0 / (l - 1) as f64
+        } else {
+            let mut f: [i32; D] =
+                std::array::from_fn(|i| poly[i].rem_euclid(&lbig).try_into().unwrap());
+            if f[D - 1] % l == 0 {
+                f.reverse();
+            }
+            avgval(lidx, &f, disc_modl == 0)
+        };
         let lf = l as f64;
         let alpha_l = lf.log2() * (1. / (lf - 1.) - al * lf / (lf + 1.));
         //println!("{l} {alpha_l} {al}");
@@ -597,7 +620,7 @@ pub(crate) fn murphy<const DF: usize, const DG: usize>(
 }
 
 // Precomputed trigonometric values for sin((k+0.5)π/512)
-static SINES: std::sync::LazyLock<[f64; 512]> = std::sync::LazyLock::new(|| {
+static SINES: LazyLock<[f64; 512]> = LazyLock::new(|| {
     std::array::from_fn(|idx| (std::f64::consts::PI / 1024.0 * (idx as f64 + 0.5)).sin())
 });
 
@@ -676,6 +699,13 @@ mod tests {
 
     #[test]
     fn test_alpha() {
+        use std::f64::consts::LN_2;
+
+        // expect alpha = 1.4351 / log2
+        let a = alpha(&[1, -1, 1].map(BigInt::from));
+        println!("α = {a}");
+        assert!(1.435 / LN_2 < a && a < 1.436 / LN_2, "{a}");
+
         // expect alpha = 1.91
         let a = alpha(&[2, 2, 3, 1].map(BigInt::from));
         println!("α = {a}");

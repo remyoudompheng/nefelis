@@ -39,6 +39,11 @@ mod nefelis_rust {
             crate::polyselect::discriminant(&f)
         }
 
+        #[pyfunction]
+        fn l2norm(f: Vec<f64>) -> f64 {
+            crate::polyselect::skew_l2norm(&f, 1.0)
+        }
+
         #[pymodule_export]
         use super::super::murphy;
     }
