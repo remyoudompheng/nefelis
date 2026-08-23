@@ -4,8 +4,9 @@ import math
 from multiprocessing import Pool
 
 import flint
+from nefelis_rust import polys
 
-from nefelis import polys
+from nefelis.polys import bad_ideals
 
 logger = logging.getLogger("poly")
 
@@ -23,10 +24,10 @@ class Polyselect:
         self.best = min(self.best, global_best)
 
         N = self.N
-        alph = polys.alpha2(D, a, b, c)
+        f = [a, b, c]
+        alph = polys.alpha(D, f)
         ainv = pow(2 * a, -1, N)
         rs = [(-b - rD) * ainv % N, (-b + rD) * ainv % N]
-        f = [a, b, c]
         fsize = (3 * (a * a + c * c) + 2 * a * c + b * b) / 6
         fbits = math.log2(fsize) / 2 + alph
 
@@ -53,7 +54,7 @@ class Polyselect:
                         f"fsize={math.log2(fsize) / 2:.1f} a(f)={alph:.2f} normf={fbits:.2f} "
                         f"g {gsize:.2f} score {score:.2f}"
                     )
-                    if bads := polys.bad_ideals(f):
+                    if bads := bad_ideals(f):
                         logger.warning(
                             f"Skipping interesting polynomial f {f} with bad primes {bads}"
                         )
