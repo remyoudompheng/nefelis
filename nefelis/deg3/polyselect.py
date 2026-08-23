@@ -9,7 +9,7 @@ from nefelis_rust import polys
 
 from nefelis.polys import bad_ideals
 
-logger = logging.getLogger("polyselect")
+logger = logging.getLogger("poly")
 
 
 smallvectors = [
@@ -219,8 +219,8 @@ def polyselect(N: int, bound: int | None = None, ell: int | None = None):
                         counter += 1
                         yield D, a, b, c, d, best
 
-    logging.info(f"Starting polynomial selection with degree 3 and bound {bound}")
-    logging.info(f"Base score {N.bit_length() // 3}")
+    logger.info(f"Starting polynomial selection with degree 3 and bound {bound}")
+    logger.info(f"Base score {N.bit_length() // 3}")
 
     pool = Pool(initializer=worker_init, initargs=(N, ell))
 
@@ -230,12 +230,12 @@ def polyselect(N: int, bound: int | None = None, ell: int | None = None):
             continue
         f, g, score = item
         if score < best:
-            logging.info(f"Found polynomials {f=} {g=} {score=:.2f}")
+            logger.info(f"Found polynomials {f=} {g=} {score=:.2f}")
             best = score
             best_fg = f, g
 
     dt = time.monotonic() - t0
-    logging.info(f"Scanned {counter} polynomials of degree 3 in {dt:.3f}s")
+    logger.info(f"Scanned {counter} polynomials of degree 3 in {dt:.3f}s")
     return best_fg
 
 
@@ -277,11 +277,15 @@ def polyselect_g(N: int, f: list[int], r: int) -> list[int] | None:
 
 
 def main():
+    import nefelis.logging
+
     argp = argparse.ArgumentParser()
+    argp.add_argument("-v", action="store_true")
     argp.add_argument("N", type=int)
     argp.add_argument("bound", nargs="?", type=int)
     args = argp.parse_args()
 
+    nefelis.logging.setup(logging.DEBUG if args.v else logging.INFO)
     f, g = polyselect(args.N, args.bound)
     print("f", f)
     print("g", g)

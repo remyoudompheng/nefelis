@@ -170,6 +170,7 @@ def get_params2(N):
 
 def main():
     argp = argparse.ArgumentParser()
+    argp.add_argument("--poly", help="Use a custom polynomial (Cado-NFS .poly format)")
     argp.add_argument(
         "--nogpufactor", action="store_true", help="Don't perform trial division on GPU"
     )
@@ -218,13 +219,20 @@ def main_impl(args):
             logger.info(f"Computing dlog modulo composite factor {ell}")
         else:
             logger.info(f"Computing dlog modulo prime factor {ell}")
-        f, g = polyselect(N)
     else:
         # When using Schirokauer maps, we must know the modulus ell
         ell = factor(N - 1)[-1][0]
         assert flint.fmpz(ell).is_probable_prime()
         # FIXME: process all large factors of N-1
         logger.info(f"Computing dlog modulo {ell}")
+
+    if args.poly:
+        with open(args.poly) as fd:
+            poly_n, f, g = cadocompat.import_polys(fd)
+        assert N == poly_n, f"polynomial file has N={poly_n}"
+    elif args.nosm:
+        f, g = polyselect(N)
+    else:
         f, g = polyselect(N, ell=ell)
 
     C, B, A = g
