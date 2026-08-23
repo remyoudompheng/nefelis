@@ -5,8 +5,9 @@ import time
 from multiprocessing import Pool
 
 import flint
+from nefelis_rust import polys
 
-from nefelis import polys
+from nefelis.polys import bad_ideals
 
 logger = logging.getLogger("polyselect")
 
@@ -101,9 +102,9 @@ class Polyselect:
         f = [a, b, c, d]
         g = None
         # Norm for degree 3 polynomials
-        fsize = float(5 * (a * a + d * d) + 2 * (a * c + b * d) + b * b + c * c) / 8.0
+        fsize = polys.l2norm(f)
         fbits = math.log2(fsize) / 2
-        af = polys.alpha3(D, a, b, c, d)
+        af = polys.alpha(D, f)
         for r, w, v, u in allg():
             if u.bit_length() + v.bit_length() + w.bit_length() < N.bit_length() // 2:
                 # the polynomial was not irreducible over Q
@@ -112,7 +113,7 @@ class Polyselect:
             Dg = v * v - 4 * u * w
             if Dg >= 0:
                 continue
-            ag = polys.alpha2(Dg, u, v, w)
+            ag = polys.alpha(Dg, [u, v, w])
             gsize = float(3 * (u * u + w * w) + 2 * u * w + v * v) / 6.0
             gbits = math.log2(gsize) / 2
             # Using typical parameters, the smoothness probability
@@ -125,12 +126,12 @@ class Polyselect:
                     f"a(g)={ag:.2f} normg={gbits:.2f} score {score:.2f}"
                 )
                 # FIXME: handle bad primes to avoid this
-                if bads := polys.bad_ideals([d, c, b, a]):
+                if bads := bad_ideals([d, c, b, a]):
                     logger.warning(
                         f"Skipping interesting polynomial f {f} with bad primes {bads}"
                     )
                     continue
-                if badg := polys.bad_ideals([w, v, u]):
+                if badg := bad_ideals([w, v, u]):
                     logger.warning(
                         f"Skipping interesting polynomial g {[w, v, u]} with bad primes {badg}"
                     )
@@ -255,7 +256,7 @@ def polyselect_g(N: int, f: list[int], r: int) -> list[int] | None:
         Dg = v * v - 4 * u * w
         if Dg >= 0:
             continue
-        ag = polys.alpha2(Dg, u, v, w)
+        ag = polys.alpha(Dg, [u, v, w])
         gsize = float(3 * (u * u + w * w) + 2 * u * w + v * v) / 6.0
         gbits = math.log2(gsize) / 2
         score = gbits + ag
