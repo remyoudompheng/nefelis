@@ -1,3 +1,4 @@
+#![allow(non_snake_case)]
 #![allow(clippy::too_many_arguments)]
 
 use anyhow::Result;
@@ -7,6 +8,8 @@ use pyo3::prelude::*;
 use pyo3::IntoPyObjectExt;
 
 mod filter;
+mod gf2x;
+mod lingen_gf2;
 mod math;
 mod polyselect;
 
@@ -35,6 +38,60 @@ mod nefelis_rust {
         use super::prune_relations;
         #[pymodule_export]
         use crate::merge_relations_sm;
+    }
+
+    #[pymodule]
+    mod lingen {
+        use num_bigint::BigUint;
+        use pyo3::prelude::*;
+
+        fn mslgdc_impl<const M: usize, const MN: usize>(
+            E: Vec<Vec<BigUint>>,
+            delta: Vec<u32>,
+            b: usize,
+        ) -> Vec<Vec<BigUint>> {
+            // Transpose input
+            let mut Earr: Box<[[BigUint; M]; MN]> = Box::new(std::array::from_fn(|j| {
+                std::array::from_fn(|i| E[i][j].clone())
+            }));
+            let darr: [u32; MN] = delta.try_into().unwrap();
+            let p = crate::lingen_gf2::mslgdc(&mut Earr, &darr, b, 0);
+            // Transpose output
+            let mut result = vec![vec![]; MN];
+            for col in p.into_iter() {
+                for (i, cij) in col.into_iter().enumerate() {
+                    result[i].push(cij);
+                }
+            }
+            result
+        }
+
+        #[pyfunction]
+        fn mslgdc_gf2(E: Vec<Vec<BigUint>>, delta: Vec<u32>, b: usize) -> Vec<Vec<BigUint>> {
+            // Input shape is E: (m, mn)
+            let m = E.len();
+            let mn = E[0].len();
+            assert!(matches!(m, 4 | 16 | 32 | 64));
+            assert_eq!(mn, delta.len());
+            assert_eq!(mn, m + m);
+            match (m, mn - m) {
+                (4, 4) => mslgdc_impl::<4, 8>(E, delta, b),
+                (16, 16) => mslgdc_impl::<16, 32>(E, delta, b),
+                (32, 32) => mslgdc_impl::<32, 64>(E, delta, b),
+                (64, 64) => mslgdc_impl::<64, 128>(E, delta, b),
+                _ => panic!("not supported m={m} n={}", mn - m),
+            }
+        }
+
+        #[pyfunction]
+        fn clmul(x: BigUint, y: BigUint) -> BigUint {
+            crate::gf2x::mul(&x, &y)
+        }
+
+        #[pyfunction]
+        fn matmul_gf2(a: Vec<Vec<BigUint>>, b: Vec<Vec<BigUint>>) -> Vec<Vec<BigUint>> {
+            crate::gf2x::matmul(&a, &b)
+        }
     }
 
     #[pymodule]

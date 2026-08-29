@@ -26,11 +26,14 @@ import numpy.typing as npt
 
 from nefelis.backends.kompute.lingen_gf2 import mslgdc as mslgdc_gpu
 
+import nefelis_rust
+
 DEBUG_LINGEN = False
-
 DEBUG_CHECK_LINGEN = False
-
 DEBUG_TIMINGS = True
+DEBUG_FORCE_CPU_LINGEN = False
+DEBUG_FORCE_PYTHON_CLMUL = False
+DEBUG_FORCE_PYTHON_MSLGDC = False
 
 logger = logging.getLogger("lingen")
 
@@ -159,12 +162,19 @@ def lingen_mat(mats, N: int):
 
             # Compute matrix product E = (M @ F) >> m
             E = numpy.zeros((m, m + EXTRA), dtype=object)
-            for i in range(m):
-                for j in range(m + EXTRA):
-                    eij = 0
-                    for k in range(n):
-                        eij ^= clmul(M[i, k], F[k, j]) >> t0
-                    E[i, j] = eij
+            if not DEBUG_FORCE_PYTHON_CLMUL:
+                MF = nefelis_rust.lingen.matmul_gf2(M, F)
+                for i in range(m):
+                    for j in range(m + EXTRA):
+                        E[i, j] = MF[i][j] >> t0
+                del MF
+            else:
+                for i in range(m):
+                    for j in range(m + EXTRA):
+                        eij = 0
+                        for k in range(n):
+                            eij ^= clmul(M[i, k], F[k, j]) >> t0
+                        E[i, j] = eij
 
             # Now find a nonsingular submatrix
             E0 = (E & 1).astype(numpy.uint8)
@@ -212,7 +222,10 @@ def lingen_mat(mats, N: int):
             print(f"before E[{i},{j}]", hex(E[i, j]))
 
     tm2 = time.monotonic()
-    if N < 1000:
+    if not DEBUG_FORCE_PYTHON_MSLGDC:
+        P = nefelis_rust.lingen.mslgdc_gf2(E, delta, N // m + N // n + EXTRA_ITERS)
+        P = numpy.array(P, dtype=object)
+    elif N < 1000 or DEBUG_FORCE_CPU_LINGEN:
         # Don't switch to GPU for tiny inputs
         P = mslgdc(E, delta, N // m + N // n + EXTRA_ITERS)
     else:
@@ -228,16 +241,21 @@ def lingen_mat(mats, N: int):
 
     tm3 = time.monotonic()
     # Compute (F @ P)
-    FP = numpy.zeros((n, n + m), dtype=object)
-    degree = 0
-    for i in range(m):
-        for j in range(n + m):
-            fij = 0
-            for k in range(n + m):
-                fij ^= clmul(P[k, j], F[i, k])
-            if j < n:
-                degree = max(degree, fij.bit_length())
-            FP[i, j] = fij
+    if not DEBUG_FORCE_PYTHON_CLMUL:
+        FP = nefelis_rust.lingen.matmul_gf2(F, P)
+        FP = numpy.array(FP, dtype=object)
+        degree = max(fij.bit_length() for row in FP for fij in row[:n])
+    else:
+        FP = numpy.zeros((n, n + m), dtype=object)
+        degree = 0
+        for i in range(m):
+            for j in range(n + m):
+                fij = 0
+                for k in range(n + m):
+                    fij ^= clmul(P[k, j], F[i, k])
+                if j < n:
+                    degree = max(degree, fij.bit_length())
+                FP[i, j] = fij
     dt3 = time.monotonic() - tm3
 
     if DEBUG_CHECK_LINGEN:
@@ -326,6 +344,10 @@ def mslgdc(E, delta, b):
             f"mslgdc: sort {timings[0]:.3f}s elim {timings[1]:.3f}s shift {timings[2]:.3f}s"
         )
     return P
+
+
+if not DEBUG_FORCE_PYTHON_CLMUL:
+    clmul = nefelis_rust.lingen.clmul
 
 
 def lingen_step(
@@ -449,7 +471,7 @@ def benchmark_m1():
 def benchmark_mn():
     import time
 
-    for N in (1000, 2000, 4000, 20000):
+    for N in (1000, 2000, 4000, 20000, 50000):
         # random.seed(42)
         taps = [random.getrandbits(1) for _ in range(min(200, N))]
 
@@ -486,7 +508,26 @@ def benchmark_mn():
             print(f"lingen for {N=} {m=} n={m} in {dt:.3f}s")
 
 
+def benchmark_clmul():
+    import timeit
+
+    for x in (100, 1000, 10000, 100_000, 1000_000):
+        for y in (1000, 10000, 100_000, 1000_000):
+            if x > y:
+                continue
+            a = random.getrandbits(x)
+            b = random.getrandbits(y)
+            N = max(10, 10**9 // (x * y))
+            ctx = {"clmul": clmul, "a": a, "b": b}
+            timeit.timeit("clmul(a, b)", number=10, globals=ctx)
+            t = timeit.timeit("clmul(a, b)", number=N, globals=ctx)
+            print(f"{x}b x {y}b : {1e3 * t / N:.3f}ms")
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
     logging.getLogger().setLevel(level=logging.DEBUG)
+
+    # benchmark_m1()
+    benchmark_clmul()
     benchmark_mn()

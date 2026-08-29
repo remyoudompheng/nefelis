@@ -28,3 +28,4 @@ rand = { version = "0.10", features = ["thread_rng"] }
 
 [profile.release]
 debug = 2
+#debug-assertions = true
