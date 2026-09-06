@@ -470,20 +470,22 @@ def benchmark_m1():
 def benchmark_mn():
     import time
 
-    for N in (1000, 2000, 4000, 20000, 50000):
+    for N in (1000, 2000, 4000, 10000, 20000, 50000, 100000, 200000, 500000, 1000000):
         # random.seed(42)
-        taps = [random.getrandbits(1) for _ in range(min(200, N))]
+        # taps = [random.getrandbits(1) for _ in range(min(200, N))]
 
         # for m in (2, 3, 4, 16):
         for m in (4, 16, 32, 64):
+            if N > 10000 and m != 32:
+                continue
             # mn sequences of size N/m+N/n+O(1) for testing
             # First we build m sequences
             seqs = []
             for _ in range(m):
-                seq = [random.getrandbits(1) for _ in range(N)]
-                for _ in range(N):
-                    t = sum(a * seq[-N + i] for i, a in enumerate(taps)) & 1
-                    seq.append(t)
+                seq = [random.getrandbits(1) for _ in range(N + N // m)]
+                # for _ in range(N):
+                #    t = sum(a * seq[-N + i] for i, a in enumerate(taps)) & 1
+                #    seq.append(t)
                 seqs.append(seq)
             # Then we compute m projections
             projs = []
