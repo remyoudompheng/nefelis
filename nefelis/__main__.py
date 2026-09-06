@@ -4,7 +4,7 @@ import tempfile
 
 from opentelemetry import trace
 
-import nefelis.logging
+import nefelis.logs
 from nefelis import deg2, deg3, factor, fp2
 
 tracer = trace.get_tracer("main")
@@ -61,9 +61,9 @@ def main():
 
     # Logger names should have length <= 6 (poly, sieve, linalg, dlog)
     level = logging.DEBUG if args.verbose else logging.INFO
-    nefelis.logging.setup(level)
+    nefelis.logs.setup(level)
     if args.otlp:
-        nefelis.logging.setup_otlp()
+        nefelis.logs.setup_otlp()
 
     if args.WORKDIR is None:
         with tempfile.TemporaryDirectory(prefix="nefelis") as tmpdir:

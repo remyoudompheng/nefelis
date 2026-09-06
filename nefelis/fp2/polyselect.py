@@ -155,7 +155,7 @@ def main():
 
 
 if __name__ == "__main__":
-    import nefelis.logging
+    import nefelis.logs
 
-    nefelis.logging.setup(logging.DEBUG)
+    nefelis.logs.setup(logging.DEBUG)
     main()

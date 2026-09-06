@@ -411,7 +411,7 @@ def find_raw(N, d: int, ad, pmax: int, global_best: Value):
 
 
 def main():
-    import nefelis.logging
+    import nefelis.logs
 
     argp = argparse.ArgumentParser()
     argp.add_argument("-v", action="store_true")
@@ -420,9 +420,9 @@ def main():
     argp.add_argument("DEGREE", type=int)
     args = argp.parse_args()
 
-    nefelis.logging.setup(logging.DEBUG if args.v else logging.INFO)
+    nefelis.logs.setup(logging.DEBUG if args.v else logging.INFO)
     if args.otlp:
-        nefelis.logging.setup_otlp()
+        nefelis.logs.setup_otlp()
     f, g = polyselect(args.N, args.DEGREE)
     print("f", f)
     print("g", g)

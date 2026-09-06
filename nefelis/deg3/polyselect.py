@@ -308,7 +308,7 @@ def polyselect_g(N: int, f: list[int], r: int) -> list[int] | None:
 
 
 def main():
-    import nefelis.logging
+    import nefelis.logs
 
     argp = argparse.ArgumentParser()
     argp.add_argument("-v", action="store_true")
@@ -316,7 +316,7 @@ def main():
     argp.add_argument("bound", nargs="?", type=int)
     args = argp.parse_args()
 
-    nefelis.logging.setup(logging.DEBUG if args.v else logging.INFO)
+    nefelis.logs.setup(logging.DEBUG if args.v else logging.INFO)
     f, g = polyselect(args.N, bound=args.bound)
     print("f", f)
     print("g", g)
