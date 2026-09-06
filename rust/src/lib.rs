@@ -92,6 +92,11 @@ mod nefelis_rust {
         fn matmul_gf2(a: Vec<Vec<BigUint>>, b: Vec<Vec<BigUint>>) -> Vec<Vec<BigUint>> {
             crate::gf2x::matmul(&a, &b)
         }
+
+        #[pyfunction]
+        fn gf2x_from_bits(x: Vec<u32>) -> BigUint {
+            crate::gf2x::gf2x_from_bits(x)
+        }
     }
 
     #[pymodule]

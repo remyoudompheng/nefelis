@@ -21,14 +21,31 @@ use crate::gf2x;
 /// and delta is a valid profile.
 ///
 /// E has shape (m,m+n) represented by m integers with (m+n) bits
-fn lingen_step<const M: usize, const MN: usize>(
-    E: &mut [[u64; M]; MN],
+fn lingen_step32<const M: usize, const MN: usize>(
+    E: &mut [[u32; M]; MN],
     delta: &mut [u32; MN],
-    P: &mut [[u64; MN]; MN],
+    P: &mut [[u32; MN]; MN],
+    iter: usize,
 ) {
     // Sort columns
     for i in 0..MN {
-        let ii = (i..MN).min_by_key(|&idx| delta[idx as usize]).unwrap();
+        let ii = if iter > 0 {
+            // delta is almost sorted (deltaprev + {0,1} where deltaprev is sorted)
+            let mut ii = i;
+            for j in (i + 1)..MN {
+                if delta[j] < delta[i] {
+                    ii = j;
+                    break;
+                }
+                if delta[j] > delta[i] {
+                    break; // delta[jj > j] is always >= delta[i]
+                }
+            }
+            debug_assert_eq!(ii, (i..MN).min_by_key(|&idx| delta[idx as usize]).unwrap());
+            ii
+        } else {
+            (i..MN).min_by_key(|&idx| delta[idx as usize]).unwrap()
+        };
         if i < ii {
             // Swap columns
             delta.swap(i, ii);
@@ -91,12 +108,12 @@ pub(crate) fn mslgdc<const M: usize, const MN: usize>(
         for i in 0..MN {
             P[i][i] = 1;
         }
-        let mut esmall: [[u64; M]; MN] =
+        let mut esmall: [[u32; M]; MN] =
             std::array::from_fn(|j| std::array::from_fn(|i| (&E[j][i]).try_into().unwrap()));
         let delta_before = delta.iter().copied().sum::<u32>();
         let mut delta = *delta;
-        for _ in 0..b {
-            lingen_step(&mut esmall, &mut delta, &mut P);
+        for i in 0..b {
+            lingen_step32(&mut esmall, &mut delta, &mut P, i);
         }
         let delta_after = delta.iter().copied().sum::<u32>();
         assert!(delta_after - delta_before <= (M * b) as u32);

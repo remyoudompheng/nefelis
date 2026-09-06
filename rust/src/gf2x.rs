@@ -6,6 +6,15 @@ use num_bigint::BigUint;
 use rayon::iter::IntoParallelIterator;
 use rayon::prelude::ParallelIterator;
 
+pub(crate) fn gf2x_from_bits(x: Vec<u32>) -> BigUint {
+    let mut n = BigUint::ZERO;
+    for (i, b) in x.into_iter().enumerate() {
+        debug_assert!(b == 0 || b == 1);
+        n.set_bit(i as u64, b == 1);
+    }
+    n
+}
+
 /// Multiply 2 polynomial matrices (m,k) x (k,n) in row-major order
 pub(crate) fn matmul(x: &[Vec<BigUint>], y: &[Vec<BigUint>]) -> Vec<Vec<BigUint>> {
     assert!(x[..].iter().all(|row| row.len() == y.len()));

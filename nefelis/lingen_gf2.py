@@ -144,8 +144,7 @@ def lingen_mat(mats, N: int):
     tm0 = time.monotonic()
     for i in range(m):
         for j in range(n):
-            seq = mats[i][j]
-            M[i, j] = sum(1 << i for i, b in enumerate(seq) if b)
+            M[i, j] = nefelis_rust.lingen.gf2x_from_bits(mats[i][j])
     dt0 = time.monotonic() - tm0
 
     tm1 = time.monotonic()
