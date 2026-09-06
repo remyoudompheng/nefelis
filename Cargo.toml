@@ -8,6 +8,7 @@ license = "BSD3"
 
 [lib]
 name = "nefelis_rust"
+path = "rust/src/lib.rs"
 crate-type = ["cdylib"]
 
 [resolver]

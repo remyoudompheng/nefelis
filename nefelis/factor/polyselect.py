@@ -16,7 +16,7 @@ from opentelemetry import context, trace
 
 from nefelis import integers
 from nefelis.polys import bad_ideals
-from nefelis_rust import sieve_squares, root_sieve, polys, skewpoly
+from nefelis.nefelis_rust import sieve_squares, root_sieve, polys, skewpoly
 
 logger = logging.getLogger("poly")
 tracer = trace.get_tracer("poly")

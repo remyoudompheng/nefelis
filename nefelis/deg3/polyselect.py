@@ -5,8 +5,8 @@ import time
 from multiprocessing import Pool, Value
 
 import flint
-from nefelis_rust import polys
 
+from nefelis.nefelis_rust import polys
 from nefelis.polys import bad_ideals
 
 logger = logging.getLogger("poly")

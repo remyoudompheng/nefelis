@@ -25,8 +25,7 @@ import numpy
 import numpy.typing as npt
 
 from nefelis.backends.kompute.lingen_gf2 import mslgdc as mslgdc_gpu
-
-import nefelis_rust
+from nefelis import nefelis_rust
 
 DEBUG_LINGEN = False
 DEBUG_CHECK_LINGEN = False

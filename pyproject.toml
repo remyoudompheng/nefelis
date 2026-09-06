@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools", "cython"]
+requires = ["setuptools", "cython", "setuptools-rust"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -35,6 +35,10 @@ nefelis = "nefelis.__main__:main"
 
 [tool.setuptools]
 ext-modules = [{name = "nefelis_flint_extras", sources = ["nefelis/nefelis_flint_extras.pyx"], libraries = ["flint"]}]
+
+[[tool.setuptools-rust.ext-modules]]
+target = "nefelis.nefelis_rust"
+debug = false
 
 [tool.setuptools.packages.find]
 include = ['nefelis*']

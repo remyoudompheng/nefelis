@@ -17,11 +17,11 @@ import random
 import time
 
 import flint
-import nefelis_rust
 import numpy as np
 from opentelemetry import trace
 
 from nefelis import filter_disk, integers
+from nefelis import nefelis_rust
 from nefelis.factor import sqrt_arb, sqrt_padic
 from nefelis.linalg_gf2 import SpMV, SpMV_COO, SpMV_COO2
 
